@@ -124,21 +124,23 @@ export function asphalt(tex: Tex, o: AsphaltOpts): TextureData {
   tex.map((x, y, k) => {
     const c = stones(x, y);
     const gap = sstep(0.02, 0.3, c.f2 - c.f1);
+    // Cell samplers share one result object, so keep the stone before sampling the chips.
+    const stoneId = c.id;
     // Stones lose their binder film with age and traffic: old asphalt shows pale stones in a dark matrix.
     const ravel = sstep(0.15, 0.6, ravelArea(x, y) + (age - 0.6)) * age;
-    const stone = (c.id - 0.5) * contrast * (0.7 + ravel * 0.5) * gap - (1 - gap) * lerp(0.3, 0.2, age);
+    const stone = (stoneId - 0.5) * contrast * (0.7 + ravel * 0.5) * gap - (1 - gap) * lerp(0.3, 0.2, age);
     const grain = (hash2(k, 7, o.seed) - 0.5) * 0.1;
     const ch = chips(x, y);
     const chip = sstep(lerp(0.9, 0.6, age) - ravel * 0.15, 1, ch.id) * sstep(0.04, 0.22, ch.f2 - ch.f1);
     let m = 1 + stone + grain + chip * lerp(0.3, 0.75, age) + mottle(x, y) * 0.14 + mid(x, y) * 0.06 + zone(x, y) * 0.09 + drag(x, y) * 0.035 + ravel * 0.1;
-    let h = gap * 0.0011 * (0.5 + c.id) + chip * 0.0008;
+    let h = gap * 0.0011 * (0.5 + stoneId) + chip * 0.0008;
     let rough = 0.93 - chip * 0.12;
     // Pits where stones have come loose.
     const pit = ravel * sstep(0.8, 0.95, hash2(Math.floor(ch.id * 8192), 5, o.seed)) * sstep(0.03, 0.12, ch.f2 - ch.f1);
     m *= 1 - pit * 0.55;
     h -= pit * 0.004;
     // Stones are not all the same grey: some warm, some bluish.
-    const warm = ((hash2(Math.floor(c.id * 4096), 11, o.seed) - 0.5) * 0.12 + chip * 0.05) * gap * lerp(0.4, 1, age);
+    const warm = ((hash2(Math.floor(stoneId * 4096), 11, o.seed) - 0.5) * 0.12 + chip * 0.05) * gap * lerp(0.4, 1, age);
     if (o.lane) {
       const u = x / tex.mw - 0.5;
       m *= 1 + streak(x, y) * 0.07;
