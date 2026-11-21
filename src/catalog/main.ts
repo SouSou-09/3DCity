@@ -212,7 +212,7 @@ function open(kind: 'tex' | 'model', id: string): void {
     const size = data.max.map((v, i) => (v - data.min[i]).toFixed(1));
     $('title').textContent = spec.label;
     $('info').textContent = `${spec.id} ・ ${size[0]} × ${size[2]} m(高さ ${size[1]} m)・ ${data.triangles.toLocaleString()} 三角形 ・ ${data.parts.length} マテリアル`;
-    target = viewStage.show(modelGroup(data), data.min, data.max, viewDir ?? undefined, viewZoom);
+    target = viewStage.show(modelGroup(data), data.min, data.max, viewDir ?? defaultDir(spec), viewZoom);
   } else {
     const spec = textureSpec(id);
     const d = texData(id, 1);
@@ -286,11 +286,13 @@ function card(label: string, id: string, draw: (c: HTMLCanvasElement) => void, o
   observer.observe(el);
   return el;
 }
+/** Street furniture is looked at from the road, not from above. */
+const defaultDir = (spec: ModelSpec): [number, number, number] | undefined => (spec.category === 'signal' ? [0.4, 0.14, 1] : undefined);
 function modelThumb(spec: ModelSpec, c: HTMLCanvasElement): void {
   const data = spec.build();
   const group = modelGroup(data);
   thumbStage.camera.aspect = 480 / 300;
-  thumbStage.show(group, data.min, data.max);
+  thumbStage.show(group, data.min, data.max, defaultDir(spec));
   thumbStage.render(480, 300);
   c.width = 480;
   c.height = 300;

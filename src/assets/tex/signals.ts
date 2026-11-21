@@ -192,7 +192,7 @@ const PAINT: [string, string, RGB, number][] = [
   ['yellow', '黄', hex(0xd9a70f), 0.04], ['black', '黒', hex(0x18191a), 0.02], ['green', '深緑', hex(0x1e3b2d), 0.04], ['grey', '灰', hex(0x7c8083), 0.03],
   ['yellow-old', '黄・色あせ', hex(0xb99a3a), 0.3], ['black-old', '黒・色あせ', hex(0x33312f), 0.25],
 ];
-for (const [id, jp, paint, rust] of PAINT) add(`housing-${id}`, `灯器の筐体 ${jp}`, [1, 1], (t, s) => S.metal(t, { seed: s, paint, rust, streaks: rust * 2 }), tiled);
+for (const [id, jp, paint, rust] of PAINT) add(`housing-${id}`, `灯器の筐体 ${jp}`, [1, 1], (t, s) => S.metal(t, { seed: s, paint, rust, streaks: rust > 0.1 ? rust : 0 }), tiled);
 add('reflective-yellow', 'バックプレートの反射縁(黄)', [0.5, 0.5], (t, s) => S.metal(t, { seed: s, paint: hex(0xf2c500) }), tiled);
 const POLES: [string, string, S.MetalOpts | null][] = [
   ['black', '黒塗装', { seed: 0, paint: hex(0x1c1d1f), rust: 0.05, streaks: 0.2 }], ['green', '深緑塗装', { seed: 0, paint: hex(0x21402f), rust: 0.08, streaks: 0.3 }],
