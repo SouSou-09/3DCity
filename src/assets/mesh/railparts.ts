@@ -267,7 +267,7 @@ export function relayHouse(b: MeshBuilder, f: Pose, w = 2.4, d = 1.8, h = 2.4): 
   face(b, 'door/steel-grey', f, [-w / 4, 0.3 + 1.05, d / 2 + 0.004], 0.9, 2.1);
   face(b, 'trim/louver-grey', f, [w / 4, 0.3 + 1.7, d / 2 + 0.004], 0.6, 0.45);
   plate(b, R('warn-high-voltage'), f, [w / 4, 0.3 + 1.0, d / 2 + 0.008]);
-  for (let i = 0; i < 3; i++) box(b, 'trim/grate-black', f, [-w / 4, 0.1 * (i + 1) - 0.02, d / 2 + 0.2 + i * -0.0 + (2 - i) * 0.28], [0.5, 0.012, 0.14]);
+  box(b, 'concrete/walk-plain', f, [-w / 4, 0.1, d / 2 + 0.3], [0.6, 0.1, 0.3], 'Y');
   box(b, 'trim/ac-fan-grey', f, [w / 2 + 0.2, 0.3 + 1.5, 0], [0.2, 0.3, 0.4]);
 }
 
