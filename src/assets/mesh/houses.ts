@@ -89,10 +89,15 @@ export function house(b: MeshBuilder, o: HouseOpts): void {
   const dressing: Partial<Opening> = o.dress === 'sill' ? { sill: o.trim, depth: 0.12 } : { frame: o.trim, depth: 0.05 };
   const S = sides(0, 0, w, d);
   const [dw, dh] = textureSpec(o.door).meters;
-  const dx = w / 2 + (o.doorX ?? 0) * (w / 2 - dw / 2 - 0.9);
   const maxW = o.maxWin ?? 3;
   const g = o.garage;
   const gside = g?.side ?? 1;
+  let dx = w / 2 + (o.doorX ?? 0) * (w / 2 - dw / 2 - 0.9);
+  if (g && integral) {
+    // Keep the entrance clear of a garage door cut into the same wall.
+    const clear = 0.5 + textureSpec(g.door).meters[0] + 0.4 + dw / 2;
+    dx = gside > 0 ? Math.min(dx, w - clear) : Math.max(dx, clear);
+  }
   for (let i = 0; i < floors; i++) {
     const y0 = i === 0 ? 0 : base + i * fh;
     const h = i === 0 ? base + fh : fh;
