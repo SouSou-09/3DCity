@@ -21,8 +21,9 @@ import { addBoundaries } from './boundaries';
 import { addWaterfront } from './waterfront';
 import { addParks } from './parks';
 import { addInfra } from './infra';
+import { addCivic } from './civic';
 
-export type ModelCategory = 'segment' | 'highway' | 'slope' | 'curve' | 'junction' | 'roundabout' | 'sidewalk' | 'bridge' | 'elevated' | 'signal' | 'sign' | 'furniture' | 'plant' | 'house' | 'apartment' | 'shop' | 'office' | 'industrial' | 'buildpart' | 'track' | 'crossing' | 'station' | 'railpart' | 'boundary' | 'waterfront' | 'park' | 'infra';
+export type ModelCategory = 'segment' | 'highway' | 'slope' | 'curve' | 'junction' | 'roundabout' | 'sidewalk' | 'bridge' | 'elevated' | 'signal' | 'sign' | 'furniture' | 'plant' | 'house' | 'apartment' | 'shop' | 'office' | 'industrial' | 'buildpart' | 'track' | 'crossing' | 'station' | 'railpart' | 'boundary' | 'waterfront' | 'park' | 'infra' | 'civic';
 export const MODEL_CATEGORIES: [ModelCategory, string][] = [
   ['segment', '道路区間'],
   ['highway', '高速道路・ランプ'],
@@ -37,7 +38,7 @@ export const MODEL_CATEGORIES: [ModelCategory, string][] = [
   ['sign', '標識・工事用品'], ['furniture', '歩道設備'], ['plant', '樹木・植栽'],
   ['house', '戸建て住宅'], ['apartment', '集合住宅'], ['shop', '店舗・商業'], ['office', 'オフィス・高層'], ['industrial', '工場・倉庫'], ['buildpart', '建物の部品'],
   ['track', '線路'], ['crossing', '踏切'], ['station', '駅'], ['railpart', '鉄道設備'],
-  ['boundary', '境界・囲い'], ['waterfront', '水辺・港'], ['park', '公園・遊具・スポーツ'], ['infra', 'インフラ・駐車場'],
+  ['boundary', '境界・囲い'], ['waterfront', '水辺・港'], ['park', '公園・遊具・スポーツ'], ['infra', 'インフラ・駐車場'], ['civic', '公共施設'],
 ];
 
 export interface ModelSpec {
@@ -314,5 +315,6 @@ addBoundaries();
 addWaterfront();
 addParks();
 addInfra();
+addCivic();
 
 export const MODELS: readonly ModelSpec[] = models;
