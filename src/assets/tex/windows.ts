@@ -37,11 +37,11 @@ function interior(kind: Inside, id: number, seed: number, u: number, v: number, 
     const open = 0.12 + p * 0.38;
     if (u > open && u < 1 - open) return [DARK, 0];
     const c = CURTAINS[Math.floor(q * CURTAINS.length)];
-    const m = 0.7 + 0.3 * Math.sin(x * 90 + Math.sin(y * 3 + id) * 0.8);
+    const m = 0.8 + 0.2 * Math.sin(x * 50 + Math.sin(y * 3 + id) * 0.8);
     return [[c[0] * m, c[1] * m, c[2] * m], 1];
   }
   if (t < 0.9) {
-    const m = 0.8 + 0.2 * Math.sin(x * 70 + Math.sin(y * 2.5 + id) * 1.2);
+    const m = 0.86 + 0.14 * Math.sin(x * 40 + Math.sin(y * 2.5 + id) * 1.2);
     return [[0.86 * m, 0.86 * m, 0.83 * m], 0.6];
   }
   if (v < 0.35 + p * 0.5) return [DARK, 0];
@@ -49,7 +49,7 @@ function interior(kind: Inside, id: number, seed: number, u: number, v: number, 
 }
 /** Glass over `content`: darkens what is behind and adds the sky it mirrors, brighter towards the top. */
 function glaze(out: Px, content: RGB, cover: number, tint: RGB, up: number, cloud: number, mirror = 0): void {
-  const refl = clamp01(0.14 + 0.2 * up + cloud * 0.16 + mirror * 0.5);
+  const refl = clamp01(0.2 + 0.22 * up + cloud * 0.09 + mirror * 0.5);
   const see = (1 - mirror) * 0.72;
   for (let i = 0; i < 3; i++) out[i] = lerp(DARK[i], content[i] * see + DARK[i] * (1 - see), cover) * (1 - refl) + tint[i] * refl * (0.8 + mirror * 0.5);
 }
@@ -117,7 +117,7 @@ function windows(tex: Tex, seed: number, o: WinOpts): TextureData {
   const bars = winBars(o);
   const tint = o.tint ?? SKY;
   const age = o.age ?? 0.15;
-  const cloud = tex.noise(0.8, 0.5, seed, 3);
+  const cloud = tex.noise(1.6, 1, seed, 2);
   const grime = tex.noise(0.25, 0.25, seed + 1, 3);
   const streak = tex.noise(0.04, 0.6, seed + 2, 2);
   const grain = tex.noise(0.4, 0.008, seed + 3, 3);
@@ -155,7 +155,7 @@ function windows(tex: Tex, seed: number, o: WinOpts): TextureData {
       const bx = frac(lx / 0.19);
       const by = frac(y / 0.19);
       const joint = 1 - sstep(0.03, 0.06, Math.min(bx, 1 - bx, by, 1 - by));
-      const wave = 0.75 + 0.25 * Math.sin(bx * 19 + Math.sin(by * 12) * 1.5) * Math.sin(by * 17);
+      const wave = 0.85 + 0.15 * Math.sin(bx * 19 + Math.sin(by * 12) * 1.5) * Math.sin(by * 17);
       px[0] = lerp(0.42 * wave, 0.74, joint);
       px[1] = lerp(0.56 * wave, 0.74, joint);
       px[2] = lerp(0.56 * wave, 0.7, joint);
@@ -167,7 +167,7 @@ function windows(tex: Tex, seed: number, o: WinOpts): TextureData {
       const sx = Math.min(Math.abs(lx - 0.12), Math.abs(lx - (w - 0.12)));
       const sy = Math.abs(frac(y / 0.35) - 0.5) * 0.35;
       const screw = 1 - sstep(0.006, 0.01, Math.hypot(sx, sy));
-      const tag = age > 0.4 ? sstep(0.2, 0.24, cloud(x * 2.3, y * 1.7 + v)) * 0.85 : 0;
+      const tag = age > 0.4 ? (1 - sstep(0.012, 0.022, Math.abs(cloud(x * 1.7, y * 1.3 + v)))) * sstep(-0.1, 0.1, grime(x, y)) * 0.9 : 0;
       const m = (0.85 + g * 0.5 + hash2(v, 6, seed) * 0.2) * (1 - seam * 0.6) * (1 - screw * 0.7);
       px[0] = lerp(0.62 * m, v % 2 ? 0.08 : 0.55, tag);
       px[1] = lerp(0.5 * m, v % 2 ? 0.08 : 0.12, tag);
@@ -430,7 +430,7 @@ function shopfront(tex: Tex, seed: number, o: ShopOpts): TextureData {
         const ih = 0.45 + hash2(item, row + 31, seed) * 0.5;
         if (y - kick > 0.1 && row < 5 && sy < ih && sy > 0.06) {
           const c = WARES[Math.floor(hash2(item, row, seed + 7) * WARES.length)];
-          const depth = 0.35 + 0.25 * (1 - up);
+          const depth = 0.5 + 0.3 * (1 - up);
           content = [c[0] * depth, c[1] * depth, c[2] * depth];
           cover = 1;
         } else if (sy <= 0.06 && row < 6) {
