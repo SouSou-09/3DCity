@@ -481,6 +481,17 @@ export function buildRoadModel(city: City): RoadModel {
     return forks.get(n)!.includes(id);
   };
   const deferred: number[] = [];
+  /** Piers and walls stand on the graded ground, so they are built once that is known. */
+  const standing: (() => void)[] = [];
+  let graded: Float32Array | null = null;
+  const gAt = (f: Frame): number => {
+    if (!graded) return heightAt(t, f.p[0], f.p[2]);
+    const fx = clamp(f.p[0] / t.cell, 0, t.n - 1.001);
+    const fy = clamp(f.p[2] / t.cell, 0, t.n - 1.001);
+    const [i, j] = [Math.floor(fx), Math.floor(fy)];
+    const [u, v] = [fx - i, fy - j];
+    return mix(mix(graded[j * t.n + i], graded[j * t.n + i + 1], u), mix(graded[(j + 1) * t.n + i], graded[(j + 1) * t.n + i + 1], u), v);
+  };
   const build = (id: number): void => {
     const e = graph.edges[id];
     const lv = levels.edges[id];
@@ -601,7 +612,6 @@ export function buildRoadModel(city: City): RoadModel {
     lines[id] = line;
     const L = pathLength(path);
     const b3 = tile(pts[pts.length >> 1].x, pts[pts.length >> 1].y);
-    const gAt = (f: Frame): number => heightAt(t, f.p[0], f.p[2]);
     const crossings = crossingsOf.get(id) ?? [];
     const nearCrossing = (f: Frame, r: number): boolean => crossings.some((c) => Math.hypot(c.x - f.p[0], c.y - f.p[2]) < r);
 
@@ -611,9 +621,11 @@ export function buildRoadModel(city: City): RoadModel {
         const count = Math.floor(L / 26);
         for (let k = 1; k <= count; k++) {
           const f = frameAt(path, (L * k) / (count + 1));
-          if (f.p[1] - gAt(f) < 2.5) continue;
-          pier(b3, f, half[id] * 2, 1.2, gAt(f) - 0.6);
-          stats.piers++;
+          standing.push(() => {
+            if (f.p[1] - gAt(f) < 2.5) return;
+            pier(b3, f, half[id] * 2, 1.2, gAt(f) - 0.6);
+            stats.piers++;
+          });
         }
       } else {
         for (let k = 0; k + 1 < keep.length; k++) {
@@ -691,11 +703,14 @@ export function buildRoadModel(city: City): RoadModel {
     if (e.cls === 'highway') {
       for (let s = 15; s < L - 5; s += 30) {
         const f = frameAt(path, s);
-        const g = gAt(f);
-        if (f.p[1] - g < 3 || nearCrossing(f, 17) || railPts.some((p) => Math.hypot(p.x - f.p[0], p.y - f.p[2]) < 20)) continue;
+        if (nearCrossing(f, 17) || railPts.some((p) => Math.hypot(p.x - f.p[0], p.y - f.p[2]) < 20)) continue;
         if (Math.min(f.p[0], f.p[2], t.size - f.p[0], t.size - f.p[2]) < 0) continue;
-        pier(b3, f, half[id] * 2, deck, g - 0.6);
-        stats.piers++;
+        standing.push(() => {
+          const g = gAt(f);
+          if (f.p[1] - g < 3) return;
+          pier(b3, f, half[id] * 2, deck, g - 0.6);
+          stats.piers++;
+        });
       }
       return;
     }
@@ -712,14 +727,16 @@ export function buildRoadModel(city: City): RoadModel {
         segs.push({ ax: f0.p[0], ay: f0.p[2], ah: f0.p[1], ac: 0, bx: f1.p[0], by: f1.p[2], bh: f1.p[1], bc: 0, half: hc });
       }
       if (f0.p[1] - g0 < 0.6 || f1.p[1] - g1 < 0.6 || inFreeway || nearCrossing(f0, 15) || nearCrossing(f1, 15)) continue;
-      for (const sd of [1, -1] as const) {
-        const x = sd * (hc - 0.15);
-        const p0 = offset(f0, x, -0.3);
-        const p1 = offset(f1, x, -0.3);
-        const d0 = p0[1] - g0 + 0.8;
-        const d1 = p1[1] - g1 + 0.8;
-        b3.quadFacing('structure/wall-smooth', p0, p1, [p1[0], p1[1] - d1, p1[2]], [p0[0], p0[1] - d0, p0[2]], [f0.r[0] * sd, 0, f0.r[2] * sd], [[f0.s, 0], [f1.s, 0], [f1.s, d1], [f0.s, d0]]);
-      }
+      standing.push(() => {
+        for (const sd of [1, -1] as const) {
+          const x = sd * (hc - 0.15);
+          const p0 = offset(f0, x, -0.3);
+          const p1 = offset(f1, x, -0.3);
+          const d0 = Math.max(0.1, p0[1] - gAt(f0) + 0.8);
+          const d1 = Math.max(0.1, p1[1] - gAt(f1) + 0.8);
+          b3.quadFacing('structure/wall-smooth', p0, p1, [p1[0], p1[1] - d1, p1[2]], [p0[0], p0[1] - d0, p0[2]], [f0.r[0] * sd, 0, f0.r[2] * sd], [[f0.s, 0], [f1.s, 0], [f1.s, d1], [f0.s, d0]]);
+        }
+      });
     }
   };
   for (const id of order) {
@@ -740,7 +757,8 @@ export function buildRoadModel(city: City): RoadModel {
       segs.push({ ax: c.x, ay: c.y, ah: c.plane.h, ac: cross, bx, by, bh: c.plane.h + c.plane.gx * (bx - c.x) + c.plane.gy * (by - c.y), bc: cross, half: half[a.edge] });
     }
   }
-  const ground = gradeTerrain(city, segs);
+  const ground = (graded = gradeTerrain(city, segs));
+  for (const fn of standing) fn();
   const tiles = [...builders.values()].map((b) => b.build());
   stats.triangles = tiles.reduce((s, m) => s + m.triangles, 0);
   return { tiles, ground, levels, junctions: clusters.map(({ nodes, x, y, plane, arms, signal }) => ({ nodes, x, y, plane, arms, signal })), lines, cuts, stats };
