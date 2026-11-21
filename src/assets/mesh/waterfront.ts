@@ -225,7 +225,7 @@ export function addWaterfront(): void {
     ['kayak-yellow', 'カヤック 黄', 'kayak', { side: S('plastic-yellow') }],
     ['kayak-orange', 'カヤック オレンジ', 'kayak', { side: S('plastic-orange') }],
     ['kayak-blue', 'カヤック 青', 'kayak', { side: S('plastic-blue') }],
-    ['skiff-aluminium', '小型ボート アルミ 船外機', 'skiff', { side: S('hull-aluminium') }],
+    ['skiff-aluminium', '小型ボート アルミ 船外機', 'skiff', { side: 'trim/paint-galvanized', inside: 'trim/paint-galvanized' }],
     ['skiff-white', '小型ボート 白 船外機', 'skiff', { inside: 'trim/paint-white', s: 1.15 }],
     ['skiff-tarp', '小型ボート シートがけ', 'skiff', { side: S('hull-blue'), tarp: true }],
     ['rib-grey', 'ゴムボート 灰', 'rib', { side: 'trim/paint-grey' }],
@@ -294,7 +294,7 @@ export function addWaterfront(): void {
       }
     }
   };
-  A('container-stack-2', 'コンテナ 2段積み', (b, f) => stack(b, f, 1, 1, 3, 1, 1));
+  A('container-stack-3', 'コンテナ 3段積み', (b, f) => stack(b, f, 1, 1, 3, 1, 1));
   A('container-stack-small', 'コンテナの山 2×2', (b, f) => stack(b, f, 2, 2, 3, 1, 2));
   A('container-stack-row', 'コンテナの列 4列×3段', (b, f) => stack(b, f, 1, 4, 4, 2, 3));
   A('container-stack-yard', 'コンテナヤード 3×4 最大4段', (b, f) => stack(b, f, 3, 4, 5, 1, 4));
