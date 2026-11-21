@@ -404,13 +404,13 @@ export function addParks(): void {
   A('hoop-old', 'バスケットゴール 古い ネットなし', (b, f) => hoop(b, f, { post: 'structure/steel-galvanized-rusty', board: 'trim/paint-white-old', net: false }));
   A('hoop-low', 'バスケットゴール 子供用', (b, f) => hoop(b, f, { post: P('blue'), h: 2.4 }));
   (['court-basketball', 'court-basketball-green', 'court-basketball-worn'] as const).forEach((t, i) => A(`basketball-${['court', 'court-green', 'court-worn'][i]}`, `バスケットコート ${['赤', '緑', '古い'][i]}`, (b, f) => {
-    pad(b, S(t), f, 15.24, 14.33, 0.02, true);
+    pad(b, S(t), turn(f, 180), 15.24, 14.33, 0.02, true);
     hoop(b, turn(move(f, 0, 0, -14.33 / 2 + 1.2), 0), i === 2 ? { post: 'structure/steel-galvanized-rusty', net: false } : {});
     if (i === 1) chainlink(b, move(f, -7.62, 0, -7.17), 15.24, { h: 3 });
   }));
   A('basketball-full', 'バスケットコート 全面 フェンスつき', (b, f) => {
     for (const s of [0, 180]) {
-      pad(b, S('court-basketball'), turn(move(f, 0, 0, s ? 7.165 : -7.165), s), 15.24, 14.33, 0.02, true);
+      pad(b, S('court-basketball'), turn(move(f, 0, 0, s ? 7.165 : -7.165), s + 180), 15.24, 14.33, 0.02, true);
       hoop(b, turn(move(f, 0, 0, s ? 14.33 - 1.2 : -14.33 + 1.2), s));
     }
     for (const s of [0, 180]) chainlink(b, turn(move(f, s ? 7.8 : -7.8, 0, s ? 15 : -15), s), 15.6, { h: 3 });
