@@ -1,6 +1,6 @@
 import './style.css';
 import { MapView, Layers } from './debug/mapView';
-import { City, generateCity } from './gen/city';
+import { City, DEFAULT_CONFIG, generateCity } from './gen/city';
 import { CityView } from './view3d/cityView';
 
 const params = new URLSearchParams(location.search);
@@ -8,7 +8,7 @@ const canvas = document.getElementById('map') as HTMLCanvasElement;
 const seedInput = document.getElementById('seed') as HTMLInputElement;
 const statsEl = document.getElementById('stats')!;
 const view = new MapView(canvas);
-const size = Number(params.get('size')) || 2400;
+const size = Number(params.get('size')) || DEFAULT_CONFIG.size;
 let city: City;
 let view3d: CityView | null = null;
 let view3dSeed = -1;

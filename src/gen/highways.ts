@@ -3,7 +3,7 @@ import { catmullRom, cubicBezier, pointAt, polyLength, resample, segSeg, Segment
 import { Vec2, addScaled, angleDiff, clamp, dist, dot, norm, perp, sub } from '../core/vec2';
 import { Districts } from './districts';
 import { RoadBuilder } from './streamlines';
-import { Terrain, hillAt, inBounds, isWater, seaDistAt } from './terrain';
+import { REF_SIZE, Terrain, featureScale, hillAt, inBounds, isWater, seaDistAt } from './terrain';
 
 export interface Highways {
   /** Runs roughly parallel to the coast, behind downtown. */
@@ -12,6 +12,71 @@ export interface Highways {
   branch: Vec2[] | null;
   /** Arc length along `main` where the branch leaves. */
   branchS: number;
+  /** On maps bigger than REF_SIZE: leaves the main freeway, cuts inland across town and follows the foot of the hills out of the map. */
+  cross: Vec2[] | null;
+  /** Arc length along `main` where the cross-town freeway leaves. */
+  crossS: number;
+}
+
+/** Largest change of heading between consecutive segments, radians. */
+function sharpestTurn(pts: Vec2[]): number {
+  let maxTurn = 0;
+  for (let i = 2; i < pts.length; i++) {
+    const a1 = Math.atan2(pts[i - 1].y - pts[i - 2].y, pts[i - 1].x - pts[i - 2].x);
+    const a2 = Math.atan2(pts[i].y - pts[i - 1].y, pts[i].x - pts[i - 1].x);
+    maxTurn = Math.max(maxTurn, angleDiff(a1, a2));
+  }
+  return maxTurn;
+}
+
+/** Freeway that peels off `main` at arc length s0 on the inland side, heading away from sMid, then runs along the foothills to the map edge. */
+function traceCross(t: Terrain, main: Vec2[], s0: number, sMid: number, rng: Rng): Vec2[] | null {
+  const S = t.size;
+  const at = pointAt(main, s0);
+  const dirSign = s0 >= sMid ? 1 : -1;
+  const tan = { x: at.tan.x * dirSign, y: at.tan.y * dirSign };
+  let side = perp(tan);
+  if (dot(side, t.inland) < 0) side = { x: -side.x, y: -side.y };
+  const b0 = at.p;
+  const reach = rng.range(0.19, 0.25) * S;
+  const pts: Vec2[] = [addScaled(b0, tan, -120), b0, addScaled(addScaled(b0, tan, 130), side, 24), addScaled(addScaled(b0, tan, 250), side, 95)];
+  // Diagonal across town, then parallel to the main line; each waypoint backs off towards the coast until it is clear of the hills.
+  const offs: number[] = [];
+  for (let a = 520; a < 2.2 * S; a += 330) {
+    let b = Math.min(reach, 95 + (a - 250) * 0.95) + rng.range(-0.012, 0.012) * S;
+    let p = addScaled(addScaled(b0, tan, a), side, b);
+    for (let i = 0; i < 12 && b > 380 && hillAt(t, p.x, p.y) > 0.22; i++) {
+      b -= 0.02 * S;
+      p = addScaled(addScaled(b0, tan, a), side, b);
+    }
+    offs.push(b);
+    if (!inBounds(t, p.x, p.y, -200)) break;
+  }
+  // Even out the steps the hills forced, so the line sweeps instead of zigzagging.
+  for (let pass = 0; pass < 2; pass++) {
+    for (let i = 1; i + 1 < offs.length; i++) offs[i] = 0.25 * offs[i - 1] + 0.5 * offs[i] + 0.25 * offs[i + 1];
+  }
+  offs.forEach((b, i) => pts.push(addScaled(addScaled(b0, tan, 520 + i * 330), side, b)));
+  const curve = resample(catmullRom(pts, 24).slice(24), 10);
+  const out: Vec2[] = [];
+  let left = false;
+  for (const p of curve) {
+    if (!inBounds(t, p.x, p.y)) {
+      out.push({ x: clamp(p.x, 0, S), y: clamp(p.y, 0, S) });
+      left = true;
+      break;
+    }
+    if (seaDistAt(t, p.x, p.y) < 120 || hillAt(t, p.x, p.y) > 0.6) return null;
+    out.push(p);
+  }
+  // The last point is only the clamp to the map edge, so it says nothing about the curve.
+  if (!left || out.length < 120 || sharpestTurn(out.slice(0, -1)) > 0.09) return null;
+  // Must not drift back to the main line once it has left it.
+  for (let i = 70; i < out.length; i += 4) {
+    if (main.some((q) => dist(q, out[i]) < 220)) return null;
+  }
+  out[0] = b0;
+  return out;
 }
 
 function clipToBounds(t: Terrain, pts: Vec2[], anchor: number): Vec2[] {
@@ -42,10 +107,11 @@ function nearestIndex(pts: Vec2[], p: Vec2): number {
 export function generateHighways(t: Terrain, districts: Districts, rng: Rng): Highways {
   const S = t.size;
   const dt = districts.downtown.center;
-  let off = rng.range(0.11, 0.16) * S;
+  const F = featureScale(S);
+  let off = rng.range(0.11, 0.16) * F;
   let pm = addScaled(dt, t.inland, off);
-  while (hillAt(t, pm.x, pm.y) > 0.3 && off > 0.06 * S) {
-    off -= 0.02 * S;
+  while (hillAt(t, pm.x, pm.y) > 0.3 && off > 0.06 * F) {
+    off -= 0.02 * F;
     pm = addScaled(dt, t.inland, off);
   }
   const sd0 = seaDistAt(t, pm.x, pm.y);
@@ -87,7 +153,7 @@ export function generateHighways(t: Terrain, districts: Districts, rng: Rng): Hi
     let bestD = Infinity;
     if (nearD > 230) {
       const lead = nearD * rng.range(0.9, 1.3);
-      const options = [nearS - lead, nearS + lead].filter((s) => s > 160 && s < total - 160 && Math.abs(s - sMid) > 0.16 * S);
+      const options = [nearS - lead, nearS + lead].filter((s) => s > 160 && s < total - 160 && Math.abs(s - sMid) > 0.16 * F);
       if (options.length) {
         bestS = rng.pick(options);
         bestD = dist(pointAt(main, bestS).p, target);
@@ -116,21 +182,30 @@ export function generateHighways(t: Terrain, districts: Districts, rng: Rng): Hi
         if (!inBounds(t, p.x, p.y, 20) || seaDistAt(t, p.x, p.y) < 60) break;
         out.push(p);
       }
-      let maxTurn = 0;
-      for (let i = 2; i < out.length; i++) {
-        const a1 = Math.atan2(out[i - 1].y - out[i - 2].y, out[i - 1].x - out[i - 2].x);
-        const a2 = Math.atan2(out[i].y - out[i - 1].y, out[i].x - out[i - 1].x);
-        maxTurn = Math.max(maxTurn, angleDiff(a1, a2));
-      }
       // Freeways do not make tight turns (10 m samples: 0.09 rad = 110 m radius).
-      if (out.length > 35 && maxTurn < 0.09) {
+      if (out.length > 35 && sharpestTurn(out) < 0.09) {
         out[0] = b0;
         branch = out;
         branchS = bestS;
       }
     }
   }
-  return { main, branch, branchS };
+
+  let cross: Vec2[] | null = null;
+  let crossS = 0;
+  if (S >= 1.5 * REF_SIZE) {
+    const cRng = rng.fork('cross');
+    const total = polyLength(main);
+    const sMid = nearestIndex(main, pm) * 10;
+    for (let i = 0; i < 24 && !cross; i++) {
+      const s0 = sMid + cRng.sign() * cRng.range(0.12, 0.3) * F;
+      if (s0 < 300 || s0 > total - 300) continue;
+      if (branch && Math.abs(s0 - branchS) < 500) continue;
+      cross = traceCross(t, main, s0, sMid, cRng);
+      crossS = s0;
+    }
+  }
+  return { main, branch, branchS, cross, crossS };
 }
 
 interface Crossing {

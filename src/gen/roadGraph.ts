@@ -537,11 +537,13 @@ function splitBridges(g: Builder, t: Terrain): void {
     if (!e.alive) continue;
     const spans: [number, number][] = [];
     let start = -1;
-    for (let s = 0; s <= e.len; s += 3) {
+    // The last step is clamped to the end, so an edge that ends just inside the water is caught too.
+    for (let step = 0; step < e.len + 3; step += 3) {
+      const s = Math.min(step, e.len);
       const p = pointAt(e.pts, s).p;
       const wet = isWater(t, p.x, p.y);
       if (wet && start < 0) start = s;
-      if (start >= 0 && (!wet || s + 3 > e.len)) {
+      if (start >= 0 && (!wet || s >= e.len)) {
         const a = Math.max(0, start - ABUTMENT);
         const b = Math.min(e.len, (wet ? e.len : s) + ABUTMENT);
         const last = spans[spans.length - 1];

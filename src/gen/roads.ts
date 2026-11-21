@@ -58,13 +58,15 @@ function traceAvenue(builder: RoadBuilder, start: Vec2, angle: number, maxLen: n
 export function generateRoads(t: Terrain, districts: Districts, rng: Rng): RoadLines {
   const S = t.size;
   const highways = generateHighways(t, districts, rng.fork('highways'));
-  const hwLines = highways.branch ? [highways.main, highways.branch] : [highways.main];
+  const hwLines = [highways.main, highways.branch, highways.cross].filter((l): l is Vec2[] => !!l);
   const field = buildField(t, districts, hwLines, rng.fork('field'));
   const builder = new RoadBuilder(t, field);
   const style = (x: number, y: number) => districtAt(t, districts, x, y).style;
 
   const hwIds = [builder.addLine({ points: highways.main, cls: 'highway', family: -1, ends: ['bounds', 'bounds'] })];
-  if (highways.branch) hwIds.push(builder.addLine({ points: highways.branch, cls: 'highway', family: -1, ends: ['fixed', 'length'] }));
+  const branchId = highways.branch ? builder.addLine({ points: highways.branch, cls: 'highway', family: -1, ends: ['fixed', 'length'] }) : -1;
+  const crossId = highways.cross ? builder.addLine({ points: highways.cross, cls: 'highway', family: -1, ends: ['fixed', 'bounds'] }) : -1;
+  for (const id of [branchId, crossId]) if (id >= 0) hwIds.push(id);
 
   // Diagonal avenue through downtown.
   const dt = districts.downtown;
@@ -124,7 +126,9 @@ export function generateRoads(t: Terrain, districts: Districts, rng: Rng): RoadL
   );
   builder.joinEnds([avenue], () => 420, () => 0, aRng);
 
-  const forbidden = highways.branch ? [{ line: hwIds[0], s: highways.branchS }, { line: hwIds[1], s: 0 }] : [];
+  const forbidden: { line: number; s: number }[] = [];
+  if (branchId >= 0) forbidden.push({ line: hwIds[0], s: highways.branchS }, { line: branchId, s: 0 });
+  if (crossId >= 0) forbidden.push({ line: hwIds[0], s: highways.crossS }, { line: crossId, s: 0 });
   const interchanges = addRamps(builder, hwIds, forbidden);
 
   const cRng = rng.fork('collector');
@@ -147,7 +151,7 @@ export function generateRoads(t: Terrain, districts: Districts, rng: Rng): RoadL
   );
 
   // The branch freeway ends at the first street ahead of it.
-  if (highways.branch) builder.joinEnds([hwIds[1]], () => 380, () => 0, cRng);
+  if (branchId >= 0) builder.joinEnds([branchId], () => 380, () => 0, cRng);
 
   const lRng = rng.fork('local');
   builder.runPass(
