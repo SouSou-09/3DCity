@@ -146,8 +146,8 @@ export function addCrossings(): void {
   X('flashers-paved', '警報機 舗装のみ', { lats: one, panel: 'paved', w: 7, road: 'asphalt/plain-used-cracked', protect: 'flashers', style: 'wood-old', marks: 'faded' });
   X('flashers-walk', '警報機 歩道つき', { lats: one, panel: 'concrete-stained', w: 7, walk: 1.8, road: used, protect: 'flashers', style: 'concrete-stained', marks: 'worn' });
   for (const [g, jp] of [['up', '開'], ['down', '閉'], ['half', '作動中']] as ['up' | 'down' | 'half', string][]) {
-    X(`gates-rubber-${g}`, `遮断機 ゴムの敷板 ${jp}`, { lats: one, panel: 'rubber', w: 7, road: used, protect: 'gates', gate: g, style: 'concrete', marks: 'worn' });
-    X(`double-gates-${g}`, `複線 遮断機 コンクリートの敷板 ${jp}`, { lats: two, panel: 'concrete', w: 7.5, road: used, protect: 'gates', gate: g, style: 'concrete', marks: 'new' });
+    X(`gates-rubber-${g}`, `遮断機 ゴムの敷板 ${jp}`, { lats: one, panel: g === 'half' ? 'rubber-worn' : 'rubber', w: 7, road: g === 'half' ? worn : used, protect: 'gates', gate: g, style: 'concrete', marks: 'worn' });
+    X(`double-gates-${g}`, `複線 遮断機 コンクリートの敷板 ${jp}`, { lats: two, panel: g === 'half' ? 'concrete-stained' : 'concrete', w: 7.5, road: used, protect: 'gates', gate: g, style: g === 'half' ? 'concrete-stained' : 'concrete', marks: g === 'half' ? 'worn' : 'new' });
   }
   X('gates-concrete', '遮断機 コンクリートの敷板', { lats: one, panel: 'concrete', w: 7.5, road: 'asphalt/plain-fresh-clean', protect: 'gates', style: 'concrete', marks: 'new' });
   X('gates-timber', '遮断機 木の敷板', { lats: one, panel: 'timber', w: 7, road: worn, protect: 'gates', gate: 'down', style: 'wood', marks: 'faded', pole: 'signal/pole-galvanized' });

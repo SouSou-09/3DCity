@@ -384,8 +384,8 @@ export function addTracks(): void {
         if (k === 'siding' && lever === 'machine') continue;
         T(`turnout-${side}-${k}-${lever}`, `分岐器 ${jp} ${NAMES[k]} ${lever === 'machine' ? '電気転てつ機' : '手動転換器'}`, (b) => turnout(b, stand([-dir * 2, 0, -19]), { dir, len: 38, style: S[k], lever, R: k === 'siding' ? 110 : 150 }));
       }
-    T(`crossover-${side}`, `渡り線 ${jp}`, (b) => crossover(b, stand([-dir * 2, 0, -23]), dir, S.concrete));
-    T(`crossover-${side}-wood`, `渡り線 ${jp} 木枕木`, (b) => crossover(b, stand([-dir * 2, 0, -23]), dir, S.wood, 'stand'));
+    T(`crossover-${side}`, `渡り線 ${jp}`, (b) => crossover(b, stand([-dir * 2, 0, -23]), dir, dir > 0 ? S.concrete : S['concrete-stained']));
+    T(`crossover-${side}-wood`, `渡り線 ${jp} 木枕木`, (b) => crossover(b, stand([-dir * 2, 0, -23]), dir, dir > 0 ? S.wood : S['wood-old'], 'stand'));
     T(`siding-end-${side}`, `側線の分岐と車止め ${jp}`, (b) => {
       const f = stand([-dir * 2, 0, -24]);
       const o = { dir, len: 48, style: S.wood, lever: 'stand' as const, R: 110, divEnd: 3 + Math.sqrt(2 * 110 * 4) };

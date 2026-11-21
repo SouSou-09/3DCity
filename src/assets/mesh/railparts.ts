@@ -380,7 +380,7 @@ export function addRailParts(): void {
       board(b, O, tex, [0, h + 0.45, 0], { t: 0.1, rim: k === 'metro' ? 'trim/paint-black' : 'structure/steel-grey' });
     }
   });
-  A('relay-case', '信号リレー箱', (b) => cabinet(b, O, { door: 'cabinet-aluminium' }));
+  A('relay-case', '信号リレー箱', (b) => cabinet(b, O, { w: 0.9, h: 1.25, d: 0.5, door: 'cabinet-aluminium' }));
   A('relay-case-double', '信号リレー箱 2扉', (b) => cabinet(b, O, { w: 1.5, h: 1.7, d: 0.7, door: 'cabinet-aluminium', doors: 2 }));
   A('relay-case-tagged', '信号リレー箱 落書き', (b) => cabinet(b, O, { w: 1.1, h: 1.5, door: 'cabinet-tagged' }));
   A('relay-house', '信号機器室', (b) => relayHouse(b, O));

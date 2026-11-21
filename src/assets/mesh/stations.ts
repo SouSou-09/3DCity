@@ -170,9 +170,9 @@ export function stairs(b: MeshBuilder, f: Pose, rise: number, wdt: number, o: { 
   let [fz, fy] = [0, 0];
   for (let i = 0; i < n; i++) {
     const y = (i + 1) * r;
-    b.quad(tread, P(-hw, y - r, z), P(hw, y - r, z), P(hw, y, z), P(-hw, y, z), [[0, 0], [wdt, 0], [wdt, r], [0, r]]);
+    b.quad(tread, P(hw, y - r, z), P(-hw, y - r, z), P(-hw, y, z), P(hw, y, z), [[0, 0], [wdt, 0], [wdt, r], [0, r]]);
     const run = i === mid ? 1.5 : g;
-    b.quad(tread, P(-hw, y, z), P(hw, y, z), P(hw, y, z + run), P(-hw, y, z + run), [[0, 0], [wdt, 0], [wdt, run], [0, run]]);
+    b.quad(tread, P(hw, y, z), P(-hw, y, z), P(-hw, y, z + run), P(hw, y, z + run), [[0, 0], [wdt, 0], [wdt, run], [0, run]]);
     if (i === mid) {
       flights.push([fz, fy, z, y]);
       flights.push([z, y, z + run, y]);
@@ -188,7 +188,7 @@ export function stairs(b: MeshBuilder, f: Pose, rise: number, wdt: number, o: { 
       else b.beam(steel, P(x, y0 - 0.12, z0), P(x, y1 - 0.12, z1 + (y1 === y0 ? 0 : g)), 0.06, 0.3);
       if (o.rail !== null) railing(b, o.rail ?? 'trim/rail-black', P(sx * hw, y0 + (y1 === y0 ? 0 : r), z0), P(sx * hw, y1, z1 + (y1 === y0 ? 0 : 0)), 1.0);
     }
-    if (!o.solid) b.quad('structure/deck-underside', P(hw, y0 - 0.2, z0), P(-hw, y0 - 0.2, z0), P(-hw, y1 - 0.2, z1 + (y1 === y0 ? 0 : g)), P(hw, y1 - 0.2, z1 + (y1 === y0 ? 0 : g)));
+    if (!o.solid) b.quad('structure/deck-underside', P(-hw, y0 - 0.2, z0), P(hw, y0 - 0.2, z0), P(hw, y1 - 0.2, z1 + (y1 === y0 ? 0 : g)), P(-hw, y1 - 0.2, z1 + (y1 === y0 ? 0 : g)));
   }
   if (mid >= 0 && !o.solid) {
     const [z0, y0] = [flights[1][0], flights[1][1]];
@@ -351,13 +351,16 @@ export function subwayEntrance(b: MeshBuilder, f: Pose, o: SubwayOpts): void {
   const down = turn(move(f, 0, -D, run), 180);
   stairs(b, down, D, hw * 2, { rail: null, solid: true, tread: 'concrete/walk-dark' });
   const P = (x: number, y: number, z: number): V3 => at(f, x, y, z);
-  b.quad('concrete/walk-dark', P(-hw, -D, run), P(hw, -D, run), P(hw, -D, L), P(-hw, -D, L), [[0, 0], [hw * 2, 0], [hw * 2, L - run], [0, L - run]]);
+  b.quad('concrete/walk-dark', P(hw, -D, run), P(-hw, -D, run), P(-hw, -D, L), P(hw, -D, L), [[0, 0], [hw * 2, 0], [hw * 2, L - run], [0, L - run]]);
   for (const sx of [-1, 1]) b.quadFacing(tile, P(sx * hw, -D, 0), P(sx * hw, -D, L), P(sx * hw, 0, L), P(sx * hw, 0, 0), v3.sub(P(-sx, 0, 0), P(0, 0, 0)), [[0, 0], [L, 0], [L, D], [0, D]]);
   b.quad('trim/paint-black', P(hw, -D, L), P(-hw, -D, L), P(-hw, -D + 2.5, L), P(hw, -D + 2.5, L));
   b.quad(tile, P(hw, -D + 2.5, L), P(-hw, -D + 2.5, L), P(-hw, 0, L), P(hw, 0, L), [[0, 2.5], [hw * 2, 2.5], [hw * 2, D], [0, D]]);
   face(b, R('way-trains'), turn(move(f, 0, 0, L), 180), [0, -D + 2.9, 0.01], 1.6, 0.36);
   // Shell that hides the well from outside when the model stands on its own.
-  box(b, 'structure/wall-old', f, [0, -D / 2 - 0.15, L / 2], [hw + 0.25, D / 2 + 0.15, L / 2 + 0.25], 'y');
+  box(b, 'structure/wall-smooth', f, [0, -D / 2 - 0.15, L / 2], [hw + 0.25, D / 2 + 0.15, L / 2 + 0.25], 'y');
+  // Sidewalk around the opening.
+  const m = 1.8;
+  for (const [x0, x1, z0, z1] of [[-hw - m, -hw, -m, L + m], [hw, hw + m, -m, L + m], [-hw, hw, -m, 0], [-hw, hw, L, L + m]]) b.quadUp('concrete/walk-square-dirty', P(x0, 0, z0), P(x1, 0, z0), P(x1, 0, z1), P(x0, 0, z1), 0, [[x0, z0], [x1, z0], [x1, z1], [x0, z1]]);
   const curb = 'stone'.length ? 'wall/stone-granite-grey' : '';
   const sidesOf: [V3, V3][] = [[P(-hw - 0.12, 0, 0), P(-hw - 0.12, 0, L + 0.12)], [P(hw + 0.12, 0, 0), P(hw + 0.12, 0, L + 0.12)], [P(-hw - 0.12, 0, L + 0.12), P(hw + 0.12, 0, L + 0.12)]];
   const H = o.guard === 'kiosk' ? 2.9 : o.guard === 'wall' ? 1.05 : 0.2;
@@ -376,7 +379,7 @@ export function subwayEntrance(b: MeshBuilder, f: Pose, o: SubwayOpts): void {
     if (o.guard === 'kiosk') box(b, 'roof/seam-green', f, [0, y + 0.08, L / 2], [hw + 0.5, 0.08, L / 2 + 0.6]);
     else {
       box(b, steel, f, [0, y, L / 2], [hw + 0.25, 0.04, L / 2 + 0.2]);
-      b.quad('furniture/shelter-glass', P(-hw - 0.4, y + 0.06, -0.3), P(hw + 0.4, y + 0.06, -0.3), P(hw + 0.4, y + 0.06, L + 0.4), P(-hw - 0.4, y + 0.06, L + 0.4), [[0, 0], [hw * 2 + 0.8, 0], [hw * 2 + 0.8, L + 0.7], [0, L + 0.7]]);
+      sheet(b, 'furniture/shelter-glass', P(hw + 0.4, y + 0.06, -0.3), P(-hw - 0.4, y + 0.06, -0.3), P(-hw - 0.4, y + 0.06, L + 0.4), P(hw + 0.4, y + 0.06, L + 0.4), [[0, 0], [hw * 2 + 0.8, 0], [hw * 2 + 0.8, L + 0.7], [0, L + 0.7]]);
     }
   }
   if (o.sign) {
