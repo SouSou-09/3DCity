@@ -27,6 +27,8 @@ export interface RoadEdge {
   /** Crosses water. */
   bridge: boolean;
   district: number;
+  /** Added inside a block after the main network was finished. */
+  infill: boolean;
 }
 
 /** Place where a freeway or ramp passes over/under a street without connecting to it. */
@@ -795,7 +797,7 @@ export function buildRoadGraph(lines: RoadLine[], t: Terrain, districts: Distric
     if (!e.alive) continue;
     const id = edges.length;
     const m = pointAt(e.pts, e.len / 2).p;
-    edges.push({ id, a: nodeId[e.a], b: nodeId[e.b], cls: e.cls, points: e.pts, length: e.len, bridge: !!e.bridge, district: districtAt(t, districts, m.x, m.y).id });
+    edges.push({ id, a: nodeId[e.a], b: nodeId[e.b], cls: e.cls, points: e.pts, length: e.len, bridge: !!e.bridge, district: districtAt(t, districts, m.x, m.y).id, infill: false });
     nodes[nodeId[e.a]].edges.push(id);
     if (e.b !== e.a) nodes[nodeId[e.b]].edges.push(id);
   }

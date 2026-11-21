@@ -1,4 +1,5 @@
 import { Rng } from '../core/rng';
+import { InfillStats, addInfillRoads } from './blocks';
 import { Districts, generateDistricts } from './districts';
 import { Highways } from './highways';
 import { Rail, RailCrossing, RailIndex, railCrossings } from './rail';
@@ -26,6 +27,8 @@ export interface CityStats {
   /** Track length in metres, and how many streets cross it at grade. */
   rail: number;
   levelCrossings: number;
+  /** Roads added inside blocks that were too deep. */
+  infill: InfillStats;
   ms: number;
 }
 
@@ -55,11 +58,12 @@ export function generateCity(config: CityConfig = DEFAULT_CONFIG): City {
   const roads = generateRoads(terrain, districts, rng.fork('roads'));
   const railIndex = new RailIndex(roads.rail);
   const graph = buildRoadGraph(roads.lines, terrain, districts, rng.fork('graph'), railIndex);
+  const infill = addInfillRoads(graph, terrain, districts, roads.rail, rng.fork('infill'));
   const crossings = railCrossings(railIndex, graph);
 
   const degree = [0, 0, 0, 0, 0, 0, 0];
   for (const n of graph.nodes) degree[Math.min(6, n.degree)]++;
-  const length: Record<RoadClass, number> = { highway: 0, ramp: 0, arterial: 0, collector: 0, local: 0 };
+  const length: Record<RoadClass, number> = { highway: 0, ramp: 0, arterial: 0, collector: 0, local: 0, alley: 0, path: 0 };
   let bridges = 0;
   for (const e of graph.edges) {
     length[e.cls] += e.length;
@@ -74,6 +78,7 @@ export function generateCity(config: CityConfig = DEFAULT_CONFIG): City {
     interchanges: roads.interchanges,
     rail: roads.rail.lines.reduce((sum, l) => sum + l.length, 0),
     levelCrossings: crossings.filter((c) => c.kind === 'level').length,
+    infill,
     ms: performance.now() - t0,
   };
   return { config, terrain, districts, field: roads.field, highways: roads.highways, rail: roads.rail, railCrossings: crossings, lines: roads.lines, graph, stats };

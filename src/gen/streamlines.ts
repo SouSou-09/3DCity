@@ -5,8 +5,9 @@ import { RAIL_CLEARANCE, RailIndex } from './rail';
 import { TensorField, fieldAngle } from './tensorField';
 import { Terrain, heightAt, inBounds, isWater, riverBankAt, seaDistAt, waterDistAt } from './terrain';
 
-export type RoadClass = 'highway' | 'ramp' | 'arterial' | 'collector' | 'local';
-export const CLASS_RANK: Record<RoadClass, number> = { local: 1, collector: 2, arterial: 3, ramp: 4, highway: 5 };
+/** `alley` and `path` are only added inside blocks, after the main network is finished. */
+export type RoadClass = 'highway' | 'ramp' | 'arterial' | 'collector' | 'local' | 'alley' | 'path';
+export const CLASS_RANK: Record<RoadClass, number> = { path: 0, alley: 0.5, local: 1, collector: 2, arterial: 3, ramp: 4, highway: 5 };
 export const isStreet = (c: RoadClass) => c === 'arterial' || c === 'collector' || c === 'local';
 
 /** Why a traced line stopped; decides whether the end is later extended to the next road. */

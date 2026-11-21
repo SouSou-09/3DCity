@@ -12,13 +12,15 @@ export interface Layers {
 }
 
 const ROAD_STYLE: Record<RoadClass, { width: number; minPx: number; fill: string; casing: string }> = {
+  path: { width: 3, minPx: 0.6, fill: '#f3ead2', casing: '#b9a67c' },
+  alley: { width: 5.5, minPx: 0.8, fill: '#ffffff', casing: '#c9c4b8' },
   local: { width: 9, minPx: 1.2, fill: '#ffffff', casing: '#c9c4b8' },
   collector: { width: 13, minPx: 2, fill: '#ffffff', casing: '#b5afa0' },
   arterial: { width: 19, minPx: 3, fill: '#fff3b0', casing: '#c9a94a' },
   ramp: { width: 8, minPx: 1.5, fill: '#f9b45c', casing: '#b56d1c' },
   highway: { width: 26, minPx: 4, fill: '#f59a3c', casing: '#a9591a' },
 };
-const ORDER: RoadClass[] = ['local', 'collector', 'arterial', 'ramp', 'highway'];
+const ORDER: RoadClass[] = ['path', 'alley', 'local', 'collector', 'arterial', 'ramp', 'highway'];
 
 const DISTRICT_COLOR: Record<DistrictType, [number, number, number]> = {
   downtown: [214, 69, 65],
@@ -233,7 +235,7 @@ export class MapView {
     // Street fills go on top of all street casings so junctions look merged.
     ctx.globalCompositeOperation = 'destination-over';
     ctx.globalCompositeOperation = 'source-over';
-    for (const cls of ['local', 'collector', 'arterial'] as RoadClass[]) for (const b of [false, true]) stroke(cls, false, b);
+    for (const cls of ['path', 'alley', 'local', 'collector', 'arterial'] as RoadClass[]) for (const b of [false, true]) stroke(cls, false, b);
 
     // Railway: black-and-white ticked line; viaducts and bridges get a casing, tunnels are faint and dashed.
     for (const line of city.rail.lines) {
