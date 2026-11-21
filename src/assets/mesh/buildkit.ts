@@ -223,7 +223,8 @@ export function shed(b: MeshBuilder, f: Pose, len: number, span: number, o: Pitc
   box(b, fascia, f, [0, y1 - 0.07, z1 + 0.015], [lx, 0.09, 0.02]);
   for (const s of [1, -1]) b.beam(fascia, at(f, s * (lx - 0.02), y0 - 0.08, z0), at(f, s * (lx - 0.02), y1 - 0.08, z1), 0.04, 0.18);
   if (o.wall) {
-    for (const s of [1, -1]) pt(b, o.wall, f, [[(len / 2) * s, 0, (span / 2) * s], [(len / 2) * s, 0, (-span / 2) * s], [(len / 2) * s, o.rise, (-span / 2) * s]], [[0, 0], [span, 0], [span, o.rise]]);
+    pt(b, o.wall, f, [[len / 2, 0, span / 2], [len / 2, 0, -span / 2], [len / 2, o.rise, -span / 2]], [[0, 0], [span, 0], [span, o.rise]]);
+    pt(b, o.wall, f, [[-len / 2, 0, -span / 2], [-len / 2, 0, span / 2], [-len / 2, o.rise, -span / 2]], [[0, 0], [span, 0], [0, o.rise]]);
     pq(b, o.wall, f, [[len / 2, 0, -span / 2], [-len / 2, 0, -span / 2], [-len / 2, o.rise, -span / 2], [len / 2, o.rise, -span / 2]], [[0, 0], [len, 0], [len, o.rise], [0, o.rise]]);
   }
 }
