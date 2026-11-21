@@ -1,6 +1,7 @@
 import { Rng } from '../core/rng';
 import { SegmentIndex, pointSeg, polyLength, segSeg } from '../core/geom';
 import { Vec2 } from '../core/vec2';
+import { RAIL_CLEARANCE, RailIndex } from './rail';
 import { TensorField, fieldAngle } from './tensorField';
 import { Terrain, heightAt, inBounds, isWater, riverBankAt, seaDistAt, waterDistAt } from './terrain';
 
@@ -82,6 +83,7 @@ interface OwnSample {
 export const BRIDGE_APPROACH = 32;
 const FREEWAY_CLEARANCE = 24;
 const RAMP_CLEARANCE = 11;
+const RAIL_SIDE = 46;
 
 /**
  * Grows the street network by tracing streamlines through the tensor field
@@ -106,10 +108,33 @@ export class RoadBuilder {
   private readonly segs = new SegmentIndex(60);
   private readonly barriers = new SegmentIndex(60);
 
+  private rail: RailIndex | null = null;
+  /** Track samples per street family, so that streets parallel to the railway keep a row of lots away from it. */
+  private readonly railSide = [new SampleHash(40), new SampleHash(40)];
+
   constructor(
     readonly terrain: Terrain,
     readonly field: TensorField,
   ) {}
+
+  setRail(rail: RailIndex): void {
+    this.rail = rail;
+    for (const line of rail.rail.lines) {
+      for (let i = 0; i + 1 < line.points.length; i++) {
+        if (line.structure[i] === 'tunnel') continue;
+        const p = line.points[i];
+        const q = line.points[i + 1];
+        const c = Math.abs(Math.cos(fieldAngle(this.field, p.x, p.y, 0) - Math.atan2(q.y - p.y, q.x - p.x)));
+        if (c > 0.85) this.railSide[0].add(p.x, p.y);
+        else if (c < 0.53) this.railSide[1].add(p.x, p.y);
+      }
+    }
+  }
+
+  /** True if a street of this family would run closer beside the tracks than a lot is deep. */
+  private besideRail(x: number, y: number, family: number, sep: number): boolean {
+    return !this.railSide[family].free(x, y, Math.min(sep, RAIL_SIDE));
+  }
 
   addLine(line: RoadLine): number {
     const id = this.lines.length;
@@ -121,8 +146,10 @@ export class RoadBuilder {
   }
 
   /** Freeways and ramps are grade separated: small streets cannot run through them. */
-  blocked(x: number, y: number, cls: RoadClass): boolean {
-    if (cls === 'arterial' || !isStreet(cls)) return false;
+  blocked(x: number, y: number, cls: RoadClass, dx?: number, dy?: number): boolean {
+    if (!isStreet(cls)) return false;
+    if (this.rail?.blocks(x, y, cls === 'local', dx, dy)) return true;
+    if (cls === 'arterial') return false;
     let hit = false;
     this.barriers.query(x - FREEWAY_CLEARANCE, y - FREEWAY_CLEARANCE, x + FREEWAY_CLEARANCE, y + FREEWAY_CLEARANCE, (r) => {
       if (hit) return;
@@ -232,7 +259,7 @@ export class RoadBuilder {
       // Bridges span the river valley, so its banks do not count as a slope.
       const approach = opt.canBridge && riverBankAt(t, nx, ny) < BRIDGE_APPROACH;
       if (!approach && Math.abs(nh - h) / step > opt.maxGrade) return { pts, reason: 'steep' };
-      if (this.blocked(nx, ny, opt.cls)) {
+      if (this.blocked(nx, ny, opt.cls, ndx, ndy)) {
         pts.push({ x: nx, y: ny });
         return { pts, reason: 'barrier' };
       }
@@ -242,7 +269,7 @@ export class RoadBuilder {
         return { pts, reason: 'cross' };
       }
       const dtest = opt.testRatio * opt.sep(nx, ny, family);
-      if (!hash.free(nx, ny, dtest)) return { pts, reason: 'near' };
+      if (!hash.free(nx, ny, dtest) || this.besideRail(nx, ny, family, dtest)) return { pts, reason: 'near' };
       const cs = (s + step) * sign;
       const d2test = dtest * dtest;
       for (const o of own) {
@@ -264,6 +291,7 @@ export class RoadBuilder {
     const t = this.terrain;
     if (!inBounds(t, p.x, p.y, 2) || waterDistAt(t, p.x, p.y) < 8) return false;
     if (opt.cls === 'local' ? this.blocked(p.x, p.y, 'local') : this.barriers.nearest(p.x, p.y, 45) < 45) return false;
+    if (this.rail?.nearest(p.x, p.y, 2 * RAIL_CLEARANCE) || this.besideRail(p.x, p.y, family, opt.sep(p.x, p.y, family))) return false;
     return hash.free(p.x, p.y, opt.sep(p.x, p.y, family));
   }
 
@@ -359,7 +387,7 @@ export class RoadBuilder {
     for (let s = 4; s < d; s += 4) {
       const x = p.x + dir.x * s;
       const y = p.y + dir.y * s;
-      if (isWater(t, x, y) || this.blocked(x, y, cls)) return null;
+      if (isWater(t, x, y) || this.blocked(x, y, cls, dir.x, dir.y)) return null;
     }
     return hit;
   }

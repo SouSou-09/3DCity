@@ -1,6 +1,7 @@
 import { Rng } from '../core/rng';
 import { Districts, generateDistricts } from './districts';
 import { Highways } from './highways';
+import { Rail, RailCrossing, RailIndex, railCrossings } from './rail';
 import { RoadGraph, buildRoadGraph } from './roadGraph';
 import { generateRoads } from './roads';
 import { RoadClass, RoadLine } from './streamlines';
@@ -22,6 +23,9 @@ export interface CityStats {
   length: Record<RoadClass, number>;
   bridges: number;
   interchanges: number;
+  /** Track length in metres, and how many streets cross it at grade. */
+  rail: number;
+  levelCrossings: number;
   ms: number;
 }
 
@@ -31,6 +35,10 @@ export interface City {
   districts: Districts;
   field: TensorField;
   highways: Highways;
+  /** Railway centre lines; stations and trackside objects are not placed yet. */
+  rail: Rail;
+  /** Where roads and tracks cross. */
+  railCrossings: RailCrossing[];
   /** Centre lines as traced, before graph clean-up (debugging). */
   lines: RoadLine[];
   graph: RoadGraph;
@@ -45,7 +53,9 @@ export function generateCity(config: CityConfig = DEFAULT_CONFIG): City {
   const terrain = generateTerrain(config.size, rng.fork('terrain'));
   const districts = generateDistricts(terrain, rng.fork('districts'));
   const roads = generateRoads(terrain, districts, rng.fork('roads'));
-  const graph = buildRoadGraph(roads.lines, terrain, districts, rng.fork('graph'));
+  const railIndex = new RailIndex(roads.rail);
+  const graph = buildRoadGraph(roads.lines, terrain, districts, rng.fork('graph'), railIndex);
+  const crossings = railCrossings(railIndex, graph);
 
   const degree = [0, 0, 0, 0, 0, 0, 0];
   for (const n of graph.nodes) degree[Math.min(6, n.degree)]++;
@@ -62,7 +72,9 @@ export function generateCity(config: CityConfig = DEFAULT_CONFIG): City {
     length,
     bridges,
     interchanges: roads.interchanges,
+    rail: roads.rail.lines.reduce((sum, l) => sum + l.length, 0),
+    levelCrossings: crossings.filter((c) => c.kind === 'level').length,
     ms: performance.now() - t0,
   };
-  return { config, terrain, districts, field: roads.field, highways: roads.highways, lines: roads.lines, graph, stats };
+  return { config, terrain, districts, field: roads.field, highways: roads.highways, rail: roads.rail, railCrossings: crossings, lines: roads.lines, graph, stats };
 }

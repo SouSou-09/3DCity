@@ -2,6 +2,7 @@ import { Rng } from '../core/rng';
 import { SegmentIndex, pointAt, pointSeg, polyLength, resample, segSeg, simplify, subPath } from '../core/geom';
 import { Vec2, angleDiff, dist } from '../core/vec2';
 import { Districts, districtAt } from './districts';
+import { RailIndex } from './rail';
 import { BRIDGE_APPROACH, BRIDGE_SPACING, CLASS_RANK, RoadClass, RoadLine, isStreet, waterCrossings } from './streamlines';
 import { Terrain, heightAt, isWater, riverBankAt, seaDistAt, waterDistAt } from './terrain';
 
@@ -246,6 +247,7 @@ interface Ctx {
   rng: Rng;
   keepDeadEnd: Map<number, boolean>;
   bridges: Vec2[];
+  rail: RailIndex | null;
 }
 
 function nearEdge(t: Terrain, x: number, y: number): boolean {
@@ -349,6 +351,7 @@ function buildable(g: Builder, ctx: Ctx, a: Vec2, b: Vec2, cls: RoadClass, ignor
     const x = a.x + ((b.x - a.x) * s) / d;
     const y = a.y + ((b.y - a.y) * s) / d;
     if (seaDistAt(t, x, y) < 12) return { ok: false, water };
+    if (ctx.rail?.blocks(x, y, cls === 'local', (b.x - a.x) / d, (b.y - a.y) / d)) return { ok: false, water };
     const bank = riverBankAt(t, x, y);
     if (bank < 0) {
       if (ctx.bridges.some((q) => Math.hypot(q.x - x, q.y - y) < BRIDGE_SPACING)) return { ok: false, water };
@@ -704,10 +707,10 @@ function keepLargestComponent(g: Builder): void {
   });
 }
 
-export function buildRoadGraph(lines: RoadLine[], t: Terrain, districts: Districts, rng: Rng): RoadGraph {
+export function buildRoadGraph(lines: RoadLine[], t: Terrain, districts: Districts, rng: Rng, rail: RailIndex | null = null): RoadGraph {
   const g = new Builder();
   splitLines(lines, g);
-  const ctx: Ctx = { t, districts, rng, keepDeadEnd: new Map(), bridges: lines.flatMap((l) => waterCrossings(t, l.points)) };
+  const ctx: Ctx = { t, districts, rng, keepDeadEnd: new Map(), rail, bridges: lines.flatMap((l) => waterCrossings(t, l.points)) };
   const tidy = () => {
     pruneDeadEnds(g, ctx);
     mergeChains(g);
