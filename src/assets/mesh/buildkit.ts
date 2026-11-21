@@ -51,10 +51,35 @@ function fillUV(o: Opening): [number, number, number, number] {
   return [0, 0, spec.meters[0], spec.meters[1]];
 }
 
-/** Wall panel `w` by `h` with its lower left corner at the pose, facing +z, pierced by `holes`. */
-export function wall(b: MeshBuilder, material: string, f: Pose, w: number, h: number, holes: Opening[] = [], u0 = 0, v0 = 0): void {
-  if (w <= 0.001 || h <= 0.001) return;
-  const hs = holes.filter((o) => o.x >= -1e-6 && o.y >= -1e-6 && o.x + o.w <= w + 1e-6 && o.y + o.h <= h + 1e-6);
+// --- Weathering. Every wall gets stains, dirt at its foot and streaks below its sills, laid over the material. ---
+interface Weather { age: number; seed: number; n: number }
+const WEATHER = new WeakMap<MeshBuilder, Weather>();
+/** How neglected the building being built is, from 0 (just finished) to 1. Walls built before this is called are moderately dirty. */
+export function weathering(b: MeshBuilder, age: number, seed = 1): void {
+  WEATHER.set(b, { age, seed, n: 0 });
+}
+/** Weathering that differs from one building to the next: `seed` decides how long since it was last cleaned, and worn materials add to it. */
+export function weatherBySeed(b: MeshBuilder, seed: number, ...materials: (string | undefined)[]): void {
+  const r = Math.abs(Math.sin(seed * 91.7 + 3.1) * 43758.5453) % 1;
+  const worn = materials.some((m) => m && /old|sooty|peeling|dirty|rust|worn|weathered|stained|faded/.test(m));
+  weathering(b, Math.min(1, 0.22 + r * 0.6 + (worn ? 0.25 : 0)), seed);
+}
+const weatherOf = (b: MeshBuilder): Weather => {
+  let w = WEATHER.get(b);
+  if (!w) WEATHER.set(b, (w = { age: 0.55, seed: 1, n: 0 }));
+  return w;
+};
+const DARK = /charcoal|black|dark|navy|sooty|tinted|bronze|brutal/;
+/** Which strength of overlay suits this material: pale dust on dark walls, only a film on glass. */
+function soilFor(wt: Weather, material: string, boost = 0): string {
+  if (DARK.test(material)) return 'pale';
+  const a = wt.age + boost - (material.startsWith('window/') ? 0.3 : 0);
+  return a > 0.75 ? 'heavy' : a > 0.4 ? 'mid' : 'light';
+}
+const pick = (wt: Weather, n: number): number => 1 + (Math.floor(Math.abs(Math.sin(wt.seed * 12.9898 + ++wt.n * 78.233) * 43758.5453)) % n);
+
+/** The solid parts of a `w` by `h` panel around `hs`, as rectangles. */
+function solids(w: number, h: number, hs: Opening[], emit: (x0: number, y0: number, x1: number, y1: number) => void): void {
   const cuts = (vals: number[]): number[] => [...vals].sort((p, q) => p - q).filter((x, i, arr) => i === 0 || x - arr[i - 1] > 1e-5);
   const xs = cuts([0, w, ...hs.flatMap((o) => [o.x, o.x + o.w])]);
   const ys = cuts([0, h, ...hs.flatMap((o) => [o.y, o.y + o.h])]);
@@ -68,11 +93,47 @@ export function wall(b: MeshBuilder, material: string, f: Pose, w: number, h: nu
       if (!hole && start < 0) start = xs[i];
       const end = hole ? xs[i] : i + 2 === xs.length ? xs[i + 1] : -1;
       if (start >= 0 && end >= 0) {
-        if (end > start) pq(b, material, f, [[start, y0, 0], [end, y0, 0], [end, y1, 0], [start, y1, 0]], [[u0 + start, v0 + y0], [u0 + end, v0 + y0], [u0 + end, v0 + y1], [u0 + start, v0 + y1]]);
+        if (end > start) emit(start, y0, end, y1);
         start = -1;
       }
     }
   }
+}
+
+/** Stains over the whole panel, a dirty foot where it meets the ground and streaks under each sill. */
+function weatherWall(b: MeshBuilder, material: string, f: Pose, w: number, h: number, hs: Opening[], v0: number): void {
+  const wt = weatherOf(b);
+  if (wt.age <= 0.05 || textureSpec(material).decal) return;
+  const kind = soilFor(wt, material);
+  const rect = (tex: string, layer: number, x0: number, y0: number, x1: number, y1: number, uv: [number, number, number, number]): void =>
+    pq(b, tex, f, [[x0, y0, 0], [x1, y0, 0], [x1, y1, 0], [x0, y1, 0]], [[uv[0], uv[1]], [uv[2], uv[1]], [uv[2], uv[3]], [uv[0], uv[3]]], layer);
+  // Big walls get the pattern enlarged, so a tower does not show it repeating.
+  const k = h > 24 ? 3 : 1;
+  const [ou, ov] = [pick(wt, 97) * 0.83, pick(wt, 89) * 0.61];
+  const stain = `trim/stain-${kind}-${pick(wt, 3)}`;
+  solids(w, h, hs, (x0, y0, x1, y1) => rect(stain, 1, x0, y0, x1, y1, [ou + x0 / k, ov + (v0 + y0) / k, ou + x1 / k, ov + (v0 + y1) / k]));
+  if (Math.abs(at(f, 0, 0, 0)[1]) < 0.3 && h > 0.8) {
+    const foot = Math.min(h, 1.2);
+    const tex = `trim/splash-${kind === 'pale' ? 'pale' : soilFor(wt, material, 0.15)}-${pick(wt, 3)}`;
+    solids(w, foot, hs.filter((o) => o.y < foot).map((o) => ({ ...o, h: Math.min(o.h, foot - o.y) })), (x0, y0, x1, y1) => rect(tex, 2, x0, y0, x1, y1, [ou + x0, y0, ou + x1, y1]));
+  }
+  for (const o of hs) {
+    if (o.y < 0.35 || o.tex.startsWith('door/')) continue;
+    // Stop at whatever opening lies below, so that no streak hangs in front of it.
+    let floor = Math.max(0, o.y - 1.5);
+    for (const q of hs) if (q !== o && q.y + q.h <= o.y + 1e-6 && q.x < o.x + o.w + 0.1 && q.x + q.w > o.x - 0.1) floor = Math.max(floor, q.y + q.h + 0.12);
+    const top = o.y - (o.sill ? 0.07 : 0);
+    if (top - floor < 0.25) continue;
+    rect(`trim/drip-${kind}-${pick(wt, 2)}`, 2, Math.max(0, o.x - 0.1), floor, Math.min(w, o.x + o.w + 0.1), top, [0, 1.6 - (top - floor), 1.6, 1.6]);
+  }
+}
+
+/** Wall panel `w` by `h` with its lower left corner at the pose, facing +z, pierced by `holes`. */
+export function wall(b: MeshBuilder, material: string, f: Pose, w: number, h: number, holes: Opening[] = [], u0 = 0, v0 = 0): void {
+  if (w <= 0.001 || h <= 0.001) return;
+  const hs = holes.filter((o) => o.x >= -1e-6 && o.y >= -1e-6 && o.x + o.w <= w + 1e-6 && o.y + o.h <= h + 1e-6);
+  solids(w, h, hs, (x0, y0, x1, y1) => pq(b, material, f, [[x0, y0, 0], [x1, y0, 0], [x1, y1, 0], [x0, y1, 0]], [[u0 + x0, v0 + y0], [u0 + x1, v0 + y0], [u0 + x1, v0 + y1], [u0 + x0, v0 + y1]]));
+  weatherWall(b, material, f, w, h, hs, v0);
   for (const o of hs) {
     const d = o.depth ?? 0.12;
     const rm = o.reveal ?? o.frame ?? material;
@@ -155,12 +216,24 @@ export interface FlatRoofOpts {
   inner?: string;
   coping?: string;
   thick?: number;
+  /** Material of the outside of the parapet, which decides how its rain streaks are tinted. */
+  outer?: string;
 }
 export function flatRoof(b: MeshBuilder, cx: number, cz: number, w: number, d: number, y: number, o: FlatRoofOpts): void {
   const p = o.parapet ?? 0;
   const t = p > 0 ? o.thick ?? 0.25 : 0;
   slab(b, o.mat, y, cx - w / 2 + t, cz - d / 2 + t, cx + w / 2 - t, cz + d / 2 - t);
+  const wt = weatherOf(b);
+  if (wt.age > 0.2) slab(b, `trim/pond-${pick(wt, 3)}`, y, cx - w / 2 + t, cz - d / 2 + t, cx + w / 2 - t, cz + d / 2 - t, 1);
   if (p <= 0) return;
+  if (wt.age > 0.3) {
+    // Rain carries the dirt on the coping down the face of the parapet.
+    const [drop, kind] = [Math.min(2, p + 0.45), soilFor(wt, o.outer ?? o.inner ?? '')];
+    for (const s of sides(cx, cz, w, d, y + p - drop)) {
+      const u = pick(wt, 50) * 0.7;
+      pq(b, `trim/runoff-${kind}-${pick(wt, 2)}`, s.f, [[0, 0, 0], [s.w, 0, 0], [s.w, drop, 0], [0, drop, 0]], [[u, 2 - drop], [u + s.w, 2 - drop], [u + s.w, 2], [u, 2]], 3);
+    }
+  }
   const inner = o.inner ?? 'structure/wall-old';
   for (const s of sides(cx, cz, w - 2 * t, d - 2 * t, y)) pq(b, inner, s.f, [[s.w, 0, 0], [0, 0, 0], [0, p, 0], [s.w, p, 0]], [[0, 0], [s.w, 0], [s.w, p], [0, p]]);
   const c = o.coping ?? 'trim/paint-grey';

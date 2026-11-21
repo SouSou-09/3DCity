@@ -8,7 +8,7 @@ import './catalog.css';
 const TEX_CATEGORIES: [string, string][] = [
   ['asphalt', 'アスファルト'], ['concrete', 'コンクリート'], ['paving', '舗装材'], ['curb', '縁石'], ['ground', '地面'],
   ['structure', '構造物'], ['line', '区画線'], ['crosswalk', '横断歩道・停止線'], ['symbol', '路面標示'], ['cover', '蓋・汚れ'],
-  ['sign', '標識面'], ['signal', '信号灯器・支柱'], ['furniture', '歩道設備'], ['plant', '樹皮・葉・花'], ['wall', '外壁'], ['roof', '屋根'], ['window', '窓・ガラス'], ['door', '扉・シャッター'], ['trim', '塗装・看板・手すり'],
+  ['sign', '標識面'], ['signal', '信号灯器・支柱'], ['furniture', '歩道設備'], ['plant', '樹皮・葉・花'], ['wall', '外壁'], ['roof', '屋根'], ['window', '窓・ガラス'], ['door', '扉・シャッター'], ['trim', '塗装・看板・手すり'], ['rail', '鉄道'],
 ];
 const params = new URLSearchParams(location.search);
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -309,7 +309,7 @@ function card(label: string, id: string, draw: (c: HTMLCanvasElement) => void, o
   return el;
 }
 /** Street furniture and buildings are looked at from the road, not from above. */
-const defaultDir = (spec: ModelSpec): [number, number, number] | undefined => (spec.category === 'signal' || spec.category === 'sign' ? [0.4, 0.14, 1] : spec.category === 'furniture' || spec.category === 'plant' ? [0.5, 0.28, 1] : ['house', 'apartment', 'shop', 'office', 'industrial', 'buildpart'].includes(spec.category) ? [0.75, 0.42, 1] : undefined);
+const defaultDir = (spec: ModelSpec): [number, number, number] | undefined => (spec.category === 'signal' || spec.category === 'sign' ? [0.4, 0.14, 1] : spec.category === 'furniture' || spec.category === 'plant' ? [0.5, 0.28, 1] : ['house', 'apartment', 'shop', 'office', 'industrial', 'buildpart', 'track', 'crossing', 'station', 'railpart'].includes(spec.category) ? [0.75, 0.42, 1] : undefined);
 function modelThumb(spec: ModelSpec, c: HTMLCanvasElement): void {
   const data = spec.build();
   const group = modelGroup(data);

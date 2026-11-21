@@ -16,7 +16,7 @@ const BLACK: RGB = hex(0x141414);
 const mul = (c: RGB, k: number): RGB => [c[0] * k, c[1] * k, c[2] * k];
 
 /** Flat artwork: coloured shapes and lettering over a base coat, then dirt. */
-class Art {
+export class Art {
   readonly L: Layers;
   readonly w: number;
   readonly h: number;

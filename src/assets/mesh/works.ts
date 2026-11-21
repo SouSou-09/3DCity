@@ -1,6 +1,6 @@
 import { Rand, textureSpec } from '../tex';
 import { MeshBuilder } from './builder';
-import { Opening, acUnit, antenna, awning, balcony, barrel, billboard, blade, chimney, duct, flatRoof, sawtooth, sides, sign, skylight, stoop, vent, wall, waterTank } from './buildkit';
+import { acUnit, antenna, awning, balcony, barrel, billboard, blade, chimney, duct, flatRoof, Opening, pq, sawtooth, sides, sign, skylight, slab, stoop, vent, wall, waterTank, weatherBySeed } from './buildkit';
 import { block, roofPlant } from './blocks';
 import { RoofOpts, roofOn, spread } from './houses';
 import { box, face, lathe, pipe, stand } from './kit';
@@ -47,6 +47,7 @@ interface WarehouseOpts {
 }
 function warehouse(b: MeshBuilder, o: WarehouseOpts): void {
   const rnd = new Rand(o.seed);
+  weatherBySeed(b, o.seed, (o as { wall?: string }).wall);
   const { w, d, h } = o;
   const off = o.office ?? 0;
   const front: Opening[] = [];
@@ -93,6 +94,7 @@ function warehouse(b: MeshBuilder, o: WarehouseOpts): void {
 /** Half-cylinder hut of corrugated iron standing straight on the ground. */
 function quonset(b: MeshBuilder, o: { seed: number; w: number; d: number; mat: string; end: string; door: string }): void {
   const rnd = new Rand(o.seed);
+  weatherBySeed(b, o.seed, (o as { wall?: string }).wall);
   box(b, 'structure/wall-smooth', stand(), [0, 0.12, 0], [o.w / 2 + 0.1, 0.12, o.d / 2 + 0.1]);
   barrel(b, stand([0, 0.24, 0], 90), o.d, o.w, { mat: o.mat, end: o.end, rise: o.w / 2, segs: 16 });
   const dw = Math.min(3.6, o.w * 0.4);
@@ -106,6 +108,7 @@ function quonset(b: MeshBuilder, o: { seed: number; w: number; d: number; mat: s
 /** Rows of roll-up doors along both long sides. */
 function storage(b: MeshBuilder, o: { seed: number; n: number; wall: string; trim: string; doors: string[]; roof: string; floors: number }): void {
   const rnd = new Rand(o.seed);
+  weatherBySeed(b, o.seed, (o as { wall?: string }).wall);
   const [w, d, fh] = [o.n * 3.2 + 0.8, 9, 3];
   const h = fh * o.floors;
   const rowOf = (y: number): Opening[] => Array.from({ length: o.n }, (_, i) => ({ x: 0.8 + i * 3.2, y, w: 2.4, h: 2.4, tex: rnd.pick(o.doors), depth: 0.1, frame: o.trim }));
@@ -118,6 +121,7 @@ function storage(b: MeshBuilder, o: { seed: number; n: number; wall: string; tri
 /** Storage tanks and silos on a concrete pad. */
 function tanks(b: MeshBuilder, o: { seed: number; n: number; r: number; h: number; mat: string; cone?: boolean; legs?: boolean }): void {
   const rnd = new Rand(o.seed);
+  weatherBySeed(b, o.seed, (o as { wall?: string }).wall);
   const pitch = o.r * 2 + 0.8;
   box(b, 'structure/wall-smooth', stand(), [0, 0.1, 0], [(o.n * pitch) / 2 + 0.6, 0.1, o.r + 1]);
   for (let i = 0; i < o.n; i++) {
@@ -141,10 +145,14 @@ function tanks(b: MeshBuilder, o: { seed: number; n: number; r: number; h: numbe
 /** Filling station: canopy over pump islands, with a kiosk behind. */
 function gasStation(b: MeshBuilder, o: { seed: number; canopy: string; islands: number; kiosk: string; trim: string; sign: string; shop: string; pump: string }): void {
   const rnd = new Rand(o.seed);
+  weatherBySeed(b, o.seed, (o as { wall?: string }).wall);
   const [cw, cd, ch] = [o.islands * 7 + 3, 9, 5.2];
   const cz = 9;
   box(b, T('white'), stand(), [0, ch + 0.45, cz], [cw / 2, 0.45, cd / 2]);
   for (const s of sides(0, cz, cw + 0.02, cd + 0.02, ch)) face(b, o.canopy, s.f, [s.w / 2, 0.45, 0], s.w, 0.9, [0, 0, s.w, 0.9]);
+  // Dust settles on the canopy roof and washes down its fascia.
+  slab(b, `trim/pond-${1 + (o.seed % 3)}`, ch + 0.9, -cw / 2, cz - cd / 2, cw / 2, cz + cd / 2, 1);
+  for (const s of sides(0, cz, cw + 0.02, cd + 0.02, ch)) pq(b, `trim/runoff-light-${1 + (o.seed % 2)}`, s.f, [[0, 0, 0], [s.w, 0, 0], [s.w, 0.9, 0], [0, 0.9, 0]], [[0, 1.1], [s.w, 1.1], [s.w, 2], [0, 2]], 2);
   box(b, T('white'), stand(), [0, ch - 0.02, cz], [cw / 2 - 0.3, 0.02, cd / 2 - 0.3]);
   for (let i = 0; i < o.islands; i++) {
     const x = (i - (o.islands - 1) / 2) * 7;
@@ -178,6 +186,7 @@ function gasStation(b: MeshBuilder, o: { seed: number; canopy: string; islands: 
 /** Free-standing shop with glazing all round: fast food, diners and banks. */
 function pavilion(b: MeshBuilder, o: { seed: number; w: number; d: number; h: number; wall: string; trim: string; win: string; door: string; roof: RoofOpts['kind']; roofMat: string; rise: number; sign?: string; pole?: string; stripe?: string; blade?: string; columns?: number; lift?: number; drive?: boolean }): void {
   const rnd = new Rand(o.seed);
+  weatherBySeed(b, o.seed, (o as { wall?: string }).wall);
   const { w, d, h } = o;
   const lift = o.lift ?? 0;
   const wh = textureSpec(o.win).meters[1];
@@ -216,6 +225,7 @@ function pavilion(b: MeshBuilder, o: { seed: number; w: number; d: number; h: nu
 /** Retail shed with a tall entrance feature and a long blank front. */
 function bigBox(b: MeshBuilder, o: { seed: number; w: number; d: number; wall: string; trim: string; stripe: string; sign: string; feature: string }): void {
   const rnd = new Rand(o.seed);
+  weatherBySeed(b, o.seed, (o as { wall?: string }).wall);
   const { w, d } = o;
   const h = 8.5;
   const [ew, eh, ed] = [16, 11, 3];
@@ -235,6 +245,7 @@ function bigBox(b: MeshBuilder, o: { seed: number; w: number; d: number; wall: s
 /** Two-storey apartment house with the flats raised over open parking. */
 function dingbat(b: MeshBuilder, o: { seed: number; w: number; d: number; wall: string; trim: string; win: string; accent: string; rail: string }): void {
   const rnd = new Rand(o.seed);
+  weatherBySeed(b, o.seed, (o as { wall?: string }).wall);
   const { w, d } = o;
   const [gh, fh] = [2.7, 2.9];
   const rear = d * 0.5;
@@ -259,6 +270,7 @@ function dingbat(b: MeshBuilder, o: { seed: number; w: number; d: number; wall: 
 /** Two-storey range of rooms reached from an outside walkway. */
 function motel(b: MeshBuilder, o: { seed: number; units: number; wall: string; trim: string; win: string; doors: string[]; rail: string; roof: RoofOpts['kind']; roofMat: string; blade?: string }): void {
   const rnd = new Rand(o.seed);
+  weatherBySeed(b, o.seed, (o as { wall?: string }).wall);
   const [uw, d, fh] = [3.8, 8, 2.9];
   const w = o.units * uw;
   const front: Opening[] = [];
