@@ -16,15 +16,20 @@ npm run stats   # 複数シードの道路統計
 npm run build
 ```
 
-URLパラメータ: `?seed=4`、`&view=3d`、`&layers=districts,nodes,field,raw`。
+URLパラメータ: `?seed=4`、`&view=3d`、`&layers=districts,nodes,field,raw`、`&size=2400`(一辺の長さ、既定は4800 m)。
+
+街の広さは一辺4.8 km(約23 km²)。地区・公園・入り江の大きさはメートルで決めているので、広くしても引き伸ばされず、
+数が増えます(支流と2本目の高速道路も加わります)。
+
+建物・設備の配置計画(未実装)は [docs/placement-plan.md](docs/placement-plan.md) にあります。
 
 ## M1 地形と道路網
 
 | 段階 | 内容 | ファイル |
 |---|---|---|
-| 地形 | 海岸線(湾と岬)、蛇行する川、丘 | `src/gen/terrain.ts` |
-| 地区 | 都心・旧市街・住宅地・郊外・丘陵・工業・ビーチ。地区ごとに街路の向き・間隔・曲がり方・袋小路の割合が違う | `src/gen/districts.ts` |
-| 高速道路 | 海岸に沿う本線、港への支線、幹線との交差部にインターチェンジ | `src/gen/highways.ts` |
+| 地形 | 海岸線(複数の入り江と岬)、蛇行する川と支流、丘 | `src/gen/terrain.ts` |
+| 地区 | 都心・副都心・旧市街・住宅地・郊外・丘陵・工業・ビーチ。地区ごとに街路の向き・間隔・曲がり方・袋小路の割合が違う | `src/gen/districts.ts` |
+| 高速道路 | 海岸に沿う本線、港への支線、内陸へ抜ける2本目、幹線との交差部にインターチェンジ | `src/gen/highways.ts` |
 | 方向場 | 地区の向き・海岸線・川岸・等高線・高速道路を合成したテンソル場 | `src/gen/tensorField.ts` |
 | 街路 | 方向場に沿った流線を幹線→補助幹線→生活道路の順に引く。川には橋を架ける | `src/gen/streamlines.ts`, `src/gen/roads.ts` |
 | グラフ | 交差点で分割、鋭角・極小区間の除去、行き止まりの延長と整理、公園、孤立部分の接続、橋の切り出し | `src/gen/roadGraph.ts` |

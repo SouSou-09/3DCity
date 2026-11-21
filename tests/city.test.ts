@@ -1,15 +1,22 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { segSeg } from '../src/core/geom';
 import { angleDiff } from '../src/core/vec2';
-import { City, generateCity } from '../src/gen/city';
+import { City, DEFAULT_CONFIG, generateCity } from '../src/gen/city';
 import { isStreet } from '../src/gen/streamlines';
-import { isWater } from '../src/gen/terrain';
+import { REF_SIZE, isWater } from '../src/gen/terrain';
 
 const SEEDS = [1, 2, 3, 4, 5, 6, 7, 8, 16, 21];
+// Generating a full-size city takes several seconds.
+vi.setConfig({ testTimeout: 120_000 });
+
+const SIZE = DEFAULT_CONFIG.size;
+/** Map side and area relative to the size the generator was first tuned for. */
+const SCALE = SIZE / REF_SIZE;
+const AREA = SCALE ** 2;
 const cities = new Map<number, City>();
 const city = (seed: number): City => {
   let c = cities.get(seed);
-  if (!c) cities.set(seed, (c = generateCity({ seed, size: 2400 })));
+  if (!c) cities.set(seed, (c = generateCity({ seed, size: SIZE })));
   return c;
 };
 
@@ -24,10 +31,23 @@ function leaveAngle(c: City, edge: number, node: number): number {
 
 describe('city generation', () => {
   it('is deterministic for a seed', () => {
-    const a = generateCity({ seed: 3, size: 2400 });
+    const a = generateCity({ seed: 3, size: SIZE });
     const b = city(3);
     expect(a.graph.nodes).toEqual(b.graph.nodes);
     expect(a.graph.edges).toEqual(b.graph.edges);
+  });
+
+  it('adds districts, parks, a tributary and a second freeway on a bigger map instead of stretching the small one', () => {
+    const small = generateCity({ seed: 3, size: REF_SIZE });
+    const big = city(3);
+    expect(small.terrain.streams).toEqual([]);
+    expect(small.highways.cross).toBeNull();
+    expect(big.districts.list.length).toBeGreaterThan(small.districts.list.length * 0.6 * AREA);
+    expect(big.districts.parks.length).toBeGreaterThan(small.districts.parks.length);
+    if (SIZE >= 1.5 * REF_SIZE) {
+      expect(big.terrain.streams.length).toBeGreaterThan(0);
+      expect(big.highways.cross).not.toBeNull();
+    }
   });
 
   it('gives different cities for different seeds', () => {
@@ -69,7 +89,7 @@ describe('city generation', () => {
       }
       expect(seen.size).toBe(nodes.length);
       const s = city(seed).stats;
-      expect(s.length.highway).toBeGreaterThan(1500);
+      expect(s.length.highway).toBeGreaterThan(1500 * SCALE);
       expect(s.interchanges).toBeGreaterThanOrEqual(2);
     });
 
@@ -97,9 +117,9 @@ describe('city generation', () => {
 
     it('has every road class and enough streets', () => {
       const s = city(seed).stats;
-      expect(s.length.arterial).toBeGreaterThan(8000);
-      expect(s.length.collector).toBeGreaterThan(5000);
-      expect(s.length.local).toBeGreaterThan(10000);
+      expect(s.length.arterial).toBeGreaterThan(8000 * AREA);
+      expect(s.length.collector).toBeGreaterThan(5000 * AREA);
+      expect(s.length.local).toBeGreaterThan(10000 * AREA);
       expect(s.bridges).toBeGreaterThanOrEqual(2);
     });
 

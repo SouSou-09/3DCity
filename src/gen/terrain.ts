@@ -17,6 +17,8 @@ export interface Terrain {
   /** 0..1 hill mask. */
   hill: Float32Array;
   river: Vec2[];
+  /** Tributaries, each running from where it joins the river up towards its source. */
+  streams: Vec2[][];
   /** Unit vector pointing from the sea towards the hills. */
   inland: Vec2;
   /** Unit vector along the coast. */
@@ -24,6 +26,10 @@ export interface Terrain {
 }
 
 export const TERRAIN_CELL = 8;
+/** Map side the generator was first tuned for. Feature sizes in metres are tied to it, so a bigger map gets more features instead of stretched ones. */
+export const REF_SIZE = 2400;
+/** Length scale for features that should grow with the map, but slower than the map itself. */
+export const featureScale = (size: number): number => REF_SIZE * Math.sqrt(Math.max(1, size / REF_SIZE));
 
 export function sample(t: Terrain, arr: Float32Array, x: number, y: number): number {
   const n = t.n;
@@ -130,14 +136,19 @@ export function generateTerrain(size: number, rng: Rng): Terrain {
   const along = perp(inland);
   const c = S / 2;
 
-  // Coast: a wavy line with one bay and one headland.
-  const bayV = rng.range(-0.28, 0.28) * S;
-  const bayDepth = rng.range(0.07, 0.14) * S;
-  const bayW = rng.range(0.12, 0.2) * S;
-  const headV = bayV + rng.sign() * rng.range(0.3, 0.45) * S;
-  const headDepth = rng.range(0.03, 0.08) * S;
-  const headW = rng.range(0.1, 0.16) * S;
-  const coastBase = -rng.range(0.27, 0.33) * S;
+  // Coast: a wavy line with a bay and a headland per REF_SIZE of shore.
+  const F = featureScale(S);
+  const coves = Math.max(1, Math.round(S / REF_SIZE));
+  const bays: { v: number; depth: number; w: number }[] = [];
+  const heads: { v: number; depth: number; w: number }[] = [];
+  for (let i = 0; i < coves; i++) {
+    const slot = ((i + 0.5) / coves - 0.5) * S;
+    const v = slot + (rng.range(-0.28, 0.28) * S) / coves;
+    bays.push({ v, depth: rng.range(0.07, 0.14) * F, w: rng.range(0.12, 0.2) * F });
+    const hv = v + (rng.sign() * rng.range(0.3, 0.45) * S) / coves;
+    heads.push({ v: hv, depth: rng.range(0.03, 0.08) * F, w: rng.range(0.1, 0.16) * F });
+  }
+  const coastBase = -(0.5 * S - (0.5 - rng.range(0.27, 0.33)) * F);
   const hillSide = rng.sign() * rng.range(0.1, 0.3);
   const uv = (x: number, y: number) => ({
     u: (x - c) * inland.x + (y - c) * inland.y,
@@ -145,12 +156,9 @@ export function generateTerrain(size: number, rng: Rng): Terrain {
   });
   const seaRaw = (x: number, y: number): number => {
     const { u, v } = uv(x, y);
-    const coastU =
-      coastBase +
-      0.07 * S * noise.fbm(v / 900 + 10, 3.3, 3) +
-      bayDepth * Math.exp(-(((v - bayV) / bayW) ** 2)) -
-      headDepth * Math.exp(-(((v - headV) / headW) ** 2)) +
-      0.02 * S * noise.fbm(x / 260, y / 260, 3);
+    let coastU = coastBase + 0.07 * F * noise.fbm(v / 900 + 10, 3.3, 3) + 0.02 * F * noise.fbm(x / 260, y / 260, 3);
+    for (const q of bays) coastU += q.depth * Math.exp(-(((v - q.v) / q.w) ** 2));
+    for (const q of heads) coastU -= q.depth * Math.exp(-(((v - q.v) / q.w) ** 2));
     return u - coastU;
   };
 
@@ -168,7 +176,35 @@ export function generateTerrain(size: number, rng: Rng): Terrain {
     if (seaRaw(rp.x, rp.y) < -80) break;
   }
   const river = resample(riverRaw, 15);
-  const halfWidth = (frac: number) => mix(14, 30, frac);
+  const mouthHalf = 30 + 10 * (S / REF_SIZE - 1);
+  const halfWidth = (frac: number) => mix(14, mouthHalf, frac);
+
+  // Bigger maps get tributaries: each leaves the river at a shallow angle and wanders up into the hills.
+  const streams: Vec2[][] = [];
+  const sRng = rng.fork('streams');
+  for (let i = 0; i < coves - 1; i++) {
+    const at = Math.floor(river.length * sRng.range(0.3, 0.55));
+    const j = river[at];
+    const up = Math.atan2(river[at - 1].y - j.y, river[at - 1].x - j.x);
+    const side = uv(j.x, j.y).v > 0 ? -1 : 1;
+    const out = Math.atan2(inland.y * 0.8 + along.y * side, inland.x * 0.8 + along.x * side);
+    // Start between "upstream" and "towards the open side" so the confluence is a Y, not a T.
+    let dir = up + clamp(Math.atan2(Math.sin(out - up), Math.cos(out - up)), -1.1, 1.1) * 0.75;
+    const p1 = sRng.range(0, 6.28);
+    const p2 = sRng.range(0, 6.28);
+    let p = j;
+    const raw: Vec2[] = [p];
+    for (let d = 0; d < 1.6 * S; d += 15) {
+      const pull = Math.atan2(Math.sin(out - dir), Math.cos(out - dir));
+      dir += clamp(pull, -0.02, 0.02);
+      const a = dir + 0.5 * Math.sin(d / 170 + p1) + 0.25 * Math.sin(d / 71 + p2);
+      p = { x: p.x + Math.cos(a) * 15, y: p.y + Math.sin(a) * 15 };
+      if (seaRaw(p.x, p.y) < 150) break;
+      raw.push(p);
+      if (p.x < -60 || p.y < -60 || p.x > S + 60 || p.y > S + 60) break;
+    }
+    if (raw.length > 30) streams.push(resample(raw, 15));
+  }
 
   const land = new Uint8Array(n * n);
   const water = new Uint8Array(n * n);
@@ -206,26 +242,46 @@ export function generateTerrain(size: number, rng: Rng): Terrain {
           bestS = s + r.t;
         }
       }
-      const bank = best - halfWidth(bestS / lastSeg);
+      let bank = best - halfWidth(bestS / lastSeg);
+      for (const st of streams) {
+        let bs = Infinity;
+        let bt = 0;
+        for (let q = 0; q + 1 < st.length; q++) {
+          const a = st[q];
+          if (Math.abs(a.x - x) - 16 > bs || Math.abs(a.y - y) - 16 > bs) continue;
+          const r = pointSeg(x, y, a, st[q + 1]);
+          if (r.d < bs) {
+            bs = r.d;
+            bt = q + r.t;
+          }
+        }
+        // Widest at the confluence, a brook at the source.
+        bank = Math.min(bank, bs - mix(12, 8, bt / (st.length - 1)));
+      }
       riverBank[k] = bank;
 
       const { u, v } = uv(x, y);
       const hm = smoothstep(0.2 * S, 0.46 * S, u + 0.1 * S * noise.fbm(x / 800 + 40, y / 800, 3) + hillSide * v);
-      const hl = hm * smoothstep(20, 220, bank);
+      const hl = hm * smoothstep(20, (220 * F) / REF_SIZE, bank);
       hill[k] = hl;
 
       const sd = seaDist[k];
       let h = clamp(sd * 0.03, -15, 3.5);
       if (sd > 0) {
         h += smoothstep(60, 300, sd) * (2.5 + 2.5 * noise.fbm(x / 600, y / 600 + 7, 3));
-        h += 0.012 * Math.max(0, sd - 150);
+        // The plain rises inland, but the river stays at sea level, so the land also falls gently
+        // towards it. Without this the banks far inland would drop like a wall.
+        const rise = 0.012 * Math.max(0, sd - 150);
+        const valley = 0.045 * Math.max(0, bank - 10);
+        const w = clamp(0.5 + (valley - rise) / 12, 0, 1);
+        h += Math.max(0, mix(valley, rise, w) - 6 * w * (1 - w));
         const ridge = 0.5 + 0.5 * noise.fbm(x / 420 + 3, y / 420 + 9, 4);
-        h += Math.pow(hl, 1.5) * (25 + 85 * ridge);
+        h += Math.pow(hl, 1.5) * (25 + 85 * ridge) * (F / REF_SIZE);
         if (bank < 15) h = mix(-1.5, h, smoothstep(-3, 15, bank));
       }
       height[k] = h;
     }
   }
 
-  return { size, cell, n, height, seaDist, riverBank, hill, river, inland, along };
+  return { size, cell, n, height, seaDist, riverBank, hill, river, streams, inland, along };
 }

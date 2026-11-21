@@ -37,7 +37,7 @@ export interface City {
   stats: CityStats;
 }
 
-export const DEFAULT_CONFIG: CityConfig = { seed: 1, size: 2400 };
+export const DEFAULT_CONFIG: CityConfig = { seed: 1, size: 4800 };
 
 export function generateCity(config: CityConfig = DEFAULT_CONFIG): City {
   const t0 = performance.now();

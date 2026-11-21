@@ -1,7 +1,7 @@
 import { Noise2D } from '../core/noise';
 import { Rng } from '../core/rng';
 import { Vec2, dist } from '../core/vec2';
-import { Terrain, gradient, hillAt, inBounds, riverBankAt, seaDistAt } from './terrain';
+import { REF_SIZE, Terrain, featureScale, gradient, hillAt, inBounds, riverBankAt, seaDistAt } from './terrain';
 
 export type DistrictType = 'downtown' | 'midtown' | 'oldtown' | 'residential' | 'suburb' | 'hills' | 'industrial' | 'beach';
 
@@ -64,6 +64,9 @@ export function districtAt(t: Terrain, d: Districts, x: number, y: number): Dist
 
 export function generateDistricts(t: Terrain, rng: Rng): Districts {
   const S = t.size;
+  // District and park sizes stay in metres; a bigger map gets more of them.
+  const F = featureScale(S);
+  const area = (S / REF_SIZE) ** 2;
   const noise = new Noise2D(rng.fork('warp'));
   const warp = (x: number, y: number): Vec2 => ({
     x: x + 75 * noise.fbm(x / 330, y / 330, 2),
@@ -80,7 +83,7 @@ export function generateDistricts(t: Terrain, rng: Rng): Districts {
     if (!buildable(p, 0.2 * S)) continue;
     const v = (p.x - c) * t.along.x + (p.y - c) * t.along.y;
     const score =
-      -2 * Math.abs(seaDistAt(t, p.x, p.y) - 0.24 * S) / S -
+      -2 * Math.abs(seaDistAt(t, p.x, p.y) - 0.24 * F) / S -
       1.2 * Math.abs(v) / S -
       3 * hillAt(t, p.x, p.y) -
       (riverBankAt(t, p.x, p.y) < 220 ? 1 : 0);
@@ -91,8 +94,9 @@ export function generateDistricts(t: Terrain, rng: Rng): Districts {
   }
 
   const sites: Vec2[] = [best];
-  const minDist = 0.165 * S;
-  for (let i = 0; i < 6000 && sites.length < 40; i++) {
+  const minDist = 0.165 * REF_SIZE * (F / REF_SIZE) ** 0.4;
+  const maxSites = Math.min(250, Math.round(40 * area));
+  for (let i = 0; i < 6000 * area && sites.length < maxSites; i++) {
     const p = { x: rng.range(0.03, 0.97) * S, y: rng.range(0.03, 0.97) * S };
     if (!buildable(p, 0)) continue;
     if (sites.some((s) => dist(s, p) < minDist)) continue;
@@ -111,18 +115,25 @@ export function generateDistricts(t: Terrain, rng: Rng): Districts {
   const coastal: number[] = [];
   const inner: number[] = [];
   const outer: number[] = [];
+  /** Dense neighbourhoods between the inner city and the suburbs; only a map bigger than REF_SIZE has room for it. */
+  const ring: number[] = [];
+  const innerR = 0.29 * F;
+  const ringR = innerR + 0.3 * (S - REF_SIZE);
   for (let i = 1; i < sites.length; i++) {
     const p = sites[i];
     if (hillAt(t, p.x, p.y) > 0.45) types[i] = 'hills';
-    else if (seaDistAt(t, p.x, p.y) < 0.13 * S) coastal.push(i);
-    else if (dist(p, best) < 0.29 * S) inner.push(i);
+    else if (seaDistAt(t, p.x, p.y) < 0.13 * F) coastal.push(i);
+    else if (dist(p, best) < innerR) inner.push(i);
+    else if (dist(p, best) < ringR) ring.push(i);
     else outer.push(i);
   }
   if (coastal.length >= 2) {
     const mouth = t.river[t.river.length - 1];
     coastal.sort((a, b) => dist(sites[a], mouth) - dist(sites[b], mouth));
-    types[coastal[0]] = 'industrial';
-    for (const i of coastal.slice(1)) types[i] = 'beach';
+    // The port grows with the map: the districts nearest the river mouth.
+    const port = Math.min(coastal.length - 1, Math.round(S / REF_SIZE));
+    for (const i of coastal.slice(0, port)) types[i] = 'industrial';
+    for (const i of coastal.slice(port)) types[i] = 'beach';
   } else {
     for (const i of coastal) types[i] = 'beach';
   }
@@ -130,6 +141,30 @@ export function generateDistricts(t: Terrain, rng: Rng): Districts {
   inner.forEach((i, k) => (types[i] = k === 0 ? 'midtown' : k === 1 && inner.length >= 3 ? 'oldtown' : k % 2 ? 'midtown' : 'residential'));
   outer.forEach((i, k) => (types[i] = k % 3 === 0 ? 'residential' : 'suburb'));
   if (outer.length >= 2 && (coastal.length < 2 || rng.chance(0.4))) types[rng.pick(outer)] = 'industrial';
+  if (ring.length) {
+    const rRng = rng.fork('ring');
+    ring.forEach((i) => (types[i] = rRng.chance(0.7) ? 'residential' : 'suburb'));
+    // Sub-centres: a second, smaller core with its own main-street district next to it.
+    const centres: number[] = [];
+    const want = Math.round(S / REF_SIZE) - 1;
+    for (let k = 0; k < 200 && centres.length < want; k++) {
+      const i = rRng.pick(ring);
+      if (dist(sites[i], best) < innerR + 0.5 * (ringR - innerR)) continue;
+      if (centres.some((j) => dist(sites[i], sites[j]) < 0.5 * S)) continue;
+      centres.push(i);
+      types[i] = 'midtown';
+      const near = ring.filter((j) => j !== i && types[j] !== 'midtown').sort((a, b) => dist(sites[a], sites[i]) - dist(sites[b], sites[i]));
+      near.slice(0, 2).forEach((j, n) => (types[j] = n ? 'residential' : 'midtown'));
+    }
+    // Every city this size has an old quarter: fall back to the dense district nearest downtown.
+    if (!types.includes('oldtown')) {
+      const cand = [...inner, ...ring].filter((i) => types[i] === 'residential').sort((a, b) => dist(sites[a], best) - dist(sites[b], best));
+      if (cand.length) types[cand[0]] = 'oldtown';
+    }
+    // A second industrial area inland, away from the centre.
+    const far = [...ring, ...outer].filter((i) => types[i] === 'suburb' && dist(sites[i], best) > ringR * 0.8);
+    if (far.length) types[rRng.pick(far)] = 'industrial';
+  }
 
   const list: District[] = sites.map((center, id) => {
     const type = types[id];
@@ -170,12 +205,16 @@ export function generateDistricts(t: Terrain, rng: Rng): Districts {
       if (!buildable(p, radius + 60) || seaDistAt(t, p.x, p.y) < radius + 120) continue;
       if (hillAt(t, p.x, p.y) > 0.3 || riverBankAt(t, p.x, p.y) < radius + 40) continue;
       if (parks.some((q) => dist(q.center, p) < q.radius + radius + 250)) continue;
+      if (list.some((d) => d.radial && dist(d.center, p) < radius + 260)) continue;
       parks.push({ center: p, radius });
       return;
     }
   };
-  tryPark(120, 165, 0.14, 0.24);
-  tryPark(70, 100, 0.28, 0.42);
+  const k = F / REF_SIZE;
+  tryPark(120 * Math.sqrt(k), 165 * Math.sqrt(k), (0.14 * F) / S, (0.24 * F) / S);
+  tryPark(70, 100, (0.28 * F) / S, (0.42 * F) / S);
+  // Neighbourhood parks across the rest of a bigger map.
+  for (let i = 0; i < Math.round(2 * area) - 2; i++) tryPark(60, 115, (0.42 * F) / S, 0.75);
 
   return { list, downtown: list[0], map, parks, warp };
 }
