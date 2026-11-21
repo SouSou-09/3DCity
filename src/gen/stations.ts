@@ -43,7 +43,7 @@ export function placeStations(rail: Rail, t: Terrain, districts: Districts, rng:
   const best = (from: number, to: number, extra: (i: number) => number): number => {
     let bi = -1;
     let bc = Infinity;
-    for (let i = Math.max(0, from); i <= Math.min(n - 1, to); i++) {
+    for (let i = Math.max(0, Math.ceil(from)); i <= Math.min(n - 1, Math.floor(to)); i++) {
       const c = cost(i) + extra(i);
       if (c < bc) {
         bc = c;
@@ -72,7 +72,7 @@ export function placeStations(rail: Rail, t: Terrain, districts: Districts, rng:
       const i = best(Math.min(lo, hi), Math.max(lo, hi), (k) => Math.abs(k - target) * 0.3);
       if (i < 0) {
         // Nothing usable in this stretch (tunnel, bridge, map edge): look further on.
-        at += (dir * SPACING[0]) / RAIL_STEP / 2;
+        at += Math.round((dir * SPACING[0]) / RAIL_STEP / 2);
         if (at < 0 || at >= n) break;
         continue;
       }
