@@ -507,7 +507,7 @@ const DIRT: RGB = [0.13, 0.12, 0.1];
 const DUST: RGB = [0.74, 0.7, 0.63];
 const ALGAE: RGB = [0.16, 0.2, 0.11];
 type Soil = 'light' | 'mid' | 'heavy' | 'pale';
-const SOIL: Record<Soil, [number, string]> = { light: [0.22, '薄い'], mid: [0.36, '中'], heavy: [0.52, '濃い'], pale: [0.26, '白っぽい'] };
+const SOIL: Record<Soil, [number, string]> = { light: [0.27, '薄い'], mid: [0.36, '中'], heavy: [0.52, '濃い'], pale: [0.26, '白っぽい'] };
 /** An overlay whose opacity is `fn`, tinted with patches of green where water lingers. */
 function soil(tex: Tex, seed: number, kind: Soil, fn: (x: number, y: number) => number, green = 0.5): TextureData {
   const base = kind === 'pale' ? DUST : DIRT;
