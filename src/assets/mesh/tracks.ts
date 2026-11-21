@@ -46,14 +46,14 @@ function cantilever(w: Way, s: number, x0: number, lat: number): void {
   const top = at(f, x0, WIRE_Y + 1.75, 0);
   const low = at(f, x0, WIRE_Y + 0.35, 0);
   const mess = at(f, lat, WIRE_Y + 1.3, 0);
-  const k = 0.55;
-  const mid: V3 = [low[0] + (mess[0] - low[0]) * k, low[1] + (mess[1] - low[1]) * k, low[2] + (mess[2] - low[2]) * k];
+  // Height (above the track) where the drop strut meets the lower tube.
+  const midY = WIRE_Y + 0.35 + (1.3 - 0.35) * 0.55;
   const dir = Math.sign(lat - x0) || 1;
   const reg = at(f, lat + dir * 0.9, WIRE_Y + 0.28, 0);
   pipe(w.b, STEEL, [top, mess], 0.024, 6);
   pipe(w.b, STEEL, [low, mess], 0.028, 6);
   pipe(w.b, STEEL, [at(f, x0, WIRE_Y + 0.28, 0), reg], 0.02, 6);
-  pipe(w.b, STEEL, [reg, at(f, lat + dir * 0.9, mid[1] + 0.25, 0)], 0.012, 5);
+  pipe(w.b, STEEL, [reg, at(f, lat + dir * 0.9, midY + 0.25, 0)], 0.012, 5);
   pipe(w.b, STEEL, [reg, at(f, lat, WIRE_Y + 0.02, 0)], 0.012, 5);
   insulator(w.b, top, mess);
   insulator(w.b, low, mess);
