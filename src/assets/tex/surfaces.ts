@@ -77,6 +77,12 @@ export function asphalt(tex: Tex, o: AsphaltOpts): TextureData {
   const oilWave = tex.noise(4, 0.9, o.seed + 4, 2);
   const contrast = lerp(0.35, 1.0, age);
   const tone = tex.field(1);
+  // Larger chips that show as the binder wears off, areas losing stones, and broad tonal zones.
+  const chips = tex.cells(0.026 * (o.coarse ?? 1), o.seed + 20);
+  const zone = tex.noise(2.3, 2.3, o.seed + 21, 2);
+  const ravelArea = tex.noise(0.8, 0.8, o.seed + 22, 3);
+  const drag = tex.noise(0.05, 3.5, o.seed + 23, 2);
+  const edge = tex.noise(0.09, 0.09, o.seed + 24, 2);
 
   // Newer or older asphalt in repair patches.
   const patch = tex.field();
@@ -88,9 +94,14 @@ export function asphalt(tex: Tex, o: AsphaltOpts): TextureData {
     const x = rnd.range(0, tex.mw);
     const y = rnd.range(0, tex.mh);
     const m = tex.field();
-    tex.rect(m, x, y, x + w, y + h, 1, 0.012);
+    // Hand-cut edges are never quite straight.
+    tex.sdf(m, x - 0.1, y - 0.1, x + w + 0.1, y + h + 0.1, (px, py) => Math.max(Math.abs(px - x - w / 2) - w / 2, Math.abs(py - y - h / 2) - h / 2) + edge(px, py) * 0.018, 1, 0.012);
     patchTone.push({ mask: m, factor: rnd.chance(0.7) ? rnd.range(0.6, 0.85) : rnd.range(1.1, 1.25) });
-    if (rnd.chance(0.6)) tex.stroke(seal, [[x, y], [x + w, y], [x + w, y + h], [x, y + h], [x, y]], rnd.range(0.012, 0.022));
+    if (rnd.chance(0.4)) {
+      const sw = rnd.range(0.008, 0.016);
+      const ph = rnd.range(0, 6);
+      tex.stroke(seal, [[x, y], [x + w, y], [x + w, y + h], [x, y + h], [x, y]], (t) => sw * (0.6 + 0.5 * Math.sin(t * 31 + ph)));
+    }
     for (let k = 0; k < tex.n; k++) patch[k] = Math.max(patch[k], m[k]);
   }
   if (o.trench) {
@@ -113,11 +124,21 @@ export function asphalt(tex: Tex, o: AsphaltOpts): TextureData {
   tex.map((x, y, k) => {
     const c = stones(x, y);
     const gap = sstep(0.02, 0.3, c.f2 - c.f1);
-    const stone = (c.id - 0.5) * contrast * 0.55 * gap - (1 - gap) * 0.22;
+    // Stones lose their binder film with age and traffic: old asphalt shows pale stones in a dark matrix.
+    const ravel = sstep(0.15, 0.6, ravelArea(x, y) + (age - 0.6)) * age;
+    const stone = (c.id - 0.5) * contrast * (0.7 + ravel * 0.5) * gap - (1 - gap) * lerp(0.3, 0.2, age);
     const grain = (hash2(k, 7, o.seed) - 0.5) * 0.1;
-    let m = 1 + stone + grain + mottle(x, y) * 0.16 + mid(x, y) * 0.06;
-    let h = gap * 0.0011 * (0.5 + c.id);
-    let rough = 0.93;
+    const ch = chips(x, y);
+    const chip = sstep(lerp(0.9, 0.6, age) - ravel * 0.15, 1, ch.id) * sstep(0.04, 0.22, ch.f2 - ch.f1);
+    let m = 1 + stone + grain + chip * lerp(0.3, 0.75, age) + mottle(x, y) * 0.14 + mid(x, y) * 0.06 + zone(x, y) * 0.09 + drag(x, y) * 0.035 + ravel * 0.1;
+    let h = gap * 0.0011 * (0.5 + c.id) + chip * 0.0008;
+    let rough = 0.93 - chip * 0.12;
+    // Pits where stones have come loose.
+    const pit = ravel * sstep(0.8, 0.95, hash2(Math.floor(ch.id * 8192), 5, o.seed)) * sstep(0.03, 0.12, ch.f2 - ch.f1);
+    m *= 1 - pit * 0.55;
+    h -= pit * 0.004;
+    // Stones are not all the same grey: some warm, some bluish.
+    const warm = ((hash2(Math.floor(c.id * 4096), 11, o.seed) - 0.5) * 0.12 + chip * 0.05) * gap * lerp(0.4, 1, age);
     if (o.lane) {
       const u = x / tex.mw - 0.5;
       m *= 1 + streak(x, y) * 0.07;
@@ -136,9 +157,9 @@ export function asphalt(tex: Tex, o: AsphaltOpts): TextureData {
       }
     }
     m *= tone[k];
-    L.r[k] *= m;
-    L.g[k] *= m;
-    L.b[k] *= m;
+    L.r[k] *= m * (1 + warm);
+    L.g[k] *= m * (1 + warm * 0.3);
+    L.b[k] *= m * (1 - warm);
     L.height[k] = h + patch[k] * 0.003;
     L.rough[k] = rough;
     return 0;
@@ -156,15 +177,20 @@ export function asphalt(tex: Tex, o: AsphaltOpts): TextureData {
 
   // Long cracks, some of them sealed with tar.
   const crack = tex.field();
+  const halo = tex.field();
   const count = Math.round((o.cracks ?? 0) * 7);
   for (let i = 0; i < count; i++) {
     const line = part(wander(tex, rnd, rnd.chance(0.6), rnd.range(0.05, 0.3), rnd.range(0.4, 1)), rnd, 0.35);
     if (rnd.chance(o.sealed ?? 0)) {
       const w = rnd.range(0.014, 0.03);
       const ws = rnd.range(0, 6);
-      tex.stroke(seal, line, (t) => w * (0.75 + 0.35 * Math.sin(t * 40 + ws)));
+      tex.stroke(seal, line, (t) => w * (0.8 + 0.14 * Math.sin(t * 40 + ws) + 0.1 * Math.sin(t * 97 + ws * 2)));
     } else {
-      tex.stroke(crack, line, rnd.range(0.003, 0.007));
+      const cw = rnd.range(0.003, 0.008);
+      const cp = rnd.range(0, 6);
+      // Cracks open and close along their length; fines wash out and bleach the edges.
+      tex.stroke(crack, line, (t) => cw * (0.35 + 0.65 * Math.abs(Math.sin(t * 19 + cp)) + 0.3 * Math.sin(t * 71 + cp)));
+      tex.stroke(halo, line, (t) => cw * (4 + 3 * Math.sin(t * 13 + cp)));
       if (rnd.chance(0.5)) {
         const a = rnd.int(0, line.length - 1);
         const [bx, by] = line[a];
@@ -175,18 +201,36 @@ export function asphalt(tex: Tex, o: AsphaltOpts): TextureData {
       }
     }
   }
+  const haloTone = lerp(1.25, 1.12, age);
+  tex.map((x, y, k) => {
+    const a = halo[k] * (0.5 + 0.5 * edge(x, y)) * 0.6;
+    if (a > 0) {
+      L.r[k] *= lerp(1, haloTone, a);
+      L.g[k] *= lerp(1, haloTone, a);
+      L.b[k] *= lerp(1, haloTone * 0.97, a);
+    }
+    // Ragged edges instead of a ruled line.
+    crack[k] = clamp01(crack[k] * (1.15 + edge(x * 3, y * 3) * 0.6));
+    seal[k] = clamp01(seal[k] * (1.1 + edge(x * 2, y * 2) * 0.35));
+    return 0;
+  });
   L.paint(crack, [base * 0.25, base * 0.24, base * 0.23], { height: -0.006, rough: 0.97 });
-  L.paint(seal, [0.035, 0.035, 0.04], { height: 0.0012, rough: 0.38, opacity: 0.95 });
+  // Fresh tar is black and glossy; it greys and dulls with age.
+  const tar = lerp(0.03, 0.085, age);
+  L.paint(seal, [tar, tar, tar * 1.08], { height: 0.0012, rough: lerp(0.35, 0.6, age), opacity: 0.94 });
 
   if (o.stains) {
     const oil = blotches(tex, rnd, Math.round(o.stains * 14), 0.04, 0.28, 1.8);
-    for (let k = 0; k < tex.n; k++) {
-      const m = oil[k] * 0.6;
+    // Soaked into the texture of the surface: broken edges and a darker core, not a soft blob.
+    const soak = tex.noise(0.06, 0.06, o.seed + 25, 3);
+    tex.map((x, y, k) => {
+      const m = clamp01((oil[k] * (0.85 + soak(x, y) * 0.75) - 0.16) * 2.4) * (0.35 + 0.3 * oil[k]);
       L.r[k] *= 1 - m;
       L.g[k] *= 1 - m;
-      L.b[k] *= 1 - m * 0.95;
-      L.rough[k] -= m * 0.45;
-    }
+      L.b[k] *= 1 - m * 0.93;
+      L.rough[k] -= m * 0.5;
+      return 0;
+    });
   }
   return L.finish();
 }
