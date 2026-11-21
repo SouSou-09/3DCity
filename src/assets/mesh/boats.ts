@@ -277,13 +277,13 @@ export function container(b: MeshBuilder, f: Pose, color: string, units: 1 | 2 =
     for (const sz of [1, -1]) face(b, sideT, sz > 0 ? move(f, cx, 0, 0) : turn(move(f, cx, 0, 0), 180), [0, H / 2 + 0.02, W / 2], 6.06, H);
     b.quadUp(sideT, at(f, cx - 3.03, H + 0.02, W / 2), at(f, cx + 3.03, H + 0.02, W / 2), at(f, cx + 3.03, H + 0.02, -W / 2), at(f, cx - 3.03, H + 0.02, -W / 2), 0, [[0.3, 1.7], [5.7, 1.7], [5.7, 2.5], [0.3, 2.5]]);
   }
-  face(b, sideT, turn(f, 90), [0, H / 2 + 0.02, L / 2], W, H, [0.2, 0, 2.64, 2.59]);
+  face(b, sideT, turn(f, -90), [0, H / 2 + 0.02, L / 2], W, H, [0.2, 0, 2.64, 2.59]);
   if (o.open) {
     for (const sz of [-1, 1]) face(b, doorT, turn(move(f, L / 2, 0, (sz * W) / 2), -90 + sz * 100), [(sz * W) / 4, H / 2 + 0.02, 0], W / 2, H, sz < 0 ? [0, 0, 1.22, 2.59] : [1.22, 0, 2.44, 2.59]);
     for (const sz of [-1, 1]) face(b, 'trim/paint-charcoal', turn(move(f, L / 2, 0, (sz * W) / 2), -90 + sz * 100 + 180), [(-sz * W) / 4, H / 2 + 0.02, 0], W / 2, H);
     box(b, 'furniture/bag-black', f, [L / 2 - 1.5, H / 2, 0], [1.45, H / 2 - 0.1, W / 2 - 0.06], 'x');
     box(b, 'wall/plywood-tan', f, [L / 2 - 1.2, 0.5, 0.3], [0.6, 0.45, 0.5]);
-  } else face(b, doorT, turn(f, -90), [0, H / 2 + 0.02, L / 2], W, H);
+  } else face(b, doorT, turn(f, 90), [0, H / 2 + 0.02, L / 2], W, H);
   box(b, 'trim/paint-charcoal', f, [0, 0.01, 0], [L / 2 - 0.02, 0.01, W / 2 - 0.02]);
 }
 /** Refrigeration unit on the -x end of a container. */
