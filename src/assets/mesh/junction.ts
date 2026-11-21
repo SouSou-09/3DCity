@@ -75,7 +75,7 @@ function norm(v: P2): P2 {
 const sideTex = (s: Side): string => s.walk?.tex ?? s.verge?.tex ?? s.ground?.tex ?? 'concrete/walk-plain';
 
 /** Kerb and pavement band between a kerb line and the line behind it. */
-function band(b: MeshBuilder, curb: P2[], back: P2[], y: number, curbTex: string | undefined, tex: string, roadSide: (k: number) => P2): void {
+export function band(b: MeshBuilder, curb: P2[], back: P2[], y: number, curbTex: string | undefined, tex: string, roadSide: (k: number) => P2): void {
   const inset = curb.map((c, k) => {
     const dir = norm([back[k][0] - c[0], back[k][1] - c[1]]);
     return add(c, dir, Math.min(0.15, dist(c, back[k])));

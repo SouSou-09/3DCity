@@ -2,6 +2,7 @@ import { MeshBuilder, ModelData, Path, arc, grade, hump, sCurve, straight, throu
 import { Arm, Control, junction, roundabout } from './junction';
 import { Age, StreetOpts, highway, plainTex, street } from './presets';
 import { Section, edgeElement, layout, stamp, sweepSection } from './section';
+import { addStructures } from './structures';
 
 export type ModelCategory = 'segment' | 'highway' | 'slope' | 'curve' | 'junction' | 'roundabout' | 'sidewalk' | 'bridge' | 'elevated';
 export const MODEL_CATEGORIES: [ModelCategory, string][] = [
@@ -268,5 +269,7 @@ RB('plaza-6', '広場のロータリー 6方向', { arms: [0, 60, 120, 180, 240,
 RB('culdesac', '袋小路の転回広場', { arms: [{ angle: 0, section: localP(), control: 'none', crosswalk: null, length: 18 }], radius: 11, ring: 11, floor: plainTex('used', 'cracked') });
 RB('culdesac-island', '袋小路 植栽島つき', { arms: [{ angle: 0, section: local('used'), control: 'none', crosswalk: null, length: 18 }], radius: 13, ring: 7, island: 'ground/grass-lush', floor: plainTex('used') });
 RB('culdesac-small', '袋小路 小(郊外)', { arms: [{ angle: 0, section: street({ lanes: 1, laneW: 3.2, centre: null, walk: null, verge: 'ground/grass-mown', vergeW: 2, age: 'fresh' }), control: 'none', crosswalk: null, length: 18 }], radius: 9, ring: 9, floor: plainTex('fresh') });
+
+addStructures();
 
 export const MODELS: readonly ModelSpec[] = models;
