@@ -79,5 +79,6 @@ seedInput.addEventListener('keydown', (e) => {
 document.getElementById('mode2d')!.addEventListener('click', () => setMode('2d'));
 document.getElementById('mode3d')!.addEventListener('click', () => setMode('3d'));
 
-generate(Number(params.get('seed')) || 1);
+const seedParam = Number(params.get('seed') || NaN);
+generate(Number.isFinite(seedParam) ? seedParam : 1);
 setMode(params.get('view') === '3d' ? '3d' : '2d');
