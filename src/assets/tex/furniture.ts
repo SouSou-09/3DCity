@@ -799,4 +799,29 @@ add('flowers-red', '花壇 赤', [0.6, 0.6], (t, s) => foliage(t, s, hex(0x24401
 add('flowers-yellow', '花壇 黄', [0.6, 0.6], (t, s) => foliage(t, s, hex(0x24401c), hex(0x4a7030), hex(0xe8c020)), tiled);
 add('flowers-purple', '花壇 紫', [0.6, 0.6], (t, s) => foliage(t, s, hex(0x24401c), hex(0x4a7030), hex(0x8a3ab0)), tiled);
 
+function clock(tex: Tex, seed: number, hour: number, minute: number, age: number): TextureData {
+  const a = new Art(tex, hex(0x2a2a2a), 0.4);
+  const [c, r] = [a.w / 2, a.w / 2];
+  a.disc(hex(0xe8e4d4), c, c, r * 0.94, { rough: 0.25 });
+  for (let i = 0; i < 60; i++) {
+    const an = (i / 60) * Math.PI * 2;
+    const [r0, half] = i % 5 ? [0.86, 0.004] : [0.76, 0.014];
+    a.line(BLACK, [[c + Math.sin(an) * r * r0, c + Math.cos(an) * r * r0], [c + Math.sin(an) * r * 0.9, c + Math.cos(an) * r * 0.9]], r * half * 2);
+  }
+  for (const [n, h] of [['12', 0], ['3', 3], ['6', 6], ['9', 9]] as [string, number][]) {
+    const an = (h / 12) * Math.PI * 2;
+    a.text(BLACK, n, c + Math.sin(an) * r * 0.6, c + Math.cos(an) * r * 0.6 - r * 0.08, r * 0.17, { weight: 0.1 });
+  }
+  const hand = (turns: number, len: number, half: number): void => {
+    const an = turns * Math.PI * 2;
+    a.line(BLACK, [[c - Math.sin(an) * r * 0.12, c - Math.cos(an) * r * 0.12], [c + Math.sin(an) * r * len, c + Math.cos(an) * r * len]], r * half);
+  };
+  hand((hour + minute / 60) / 12, 0.48, 0.035);
+  hand(minute / 60, 0.74, 0.024);
+  a.disc(BLACK, c, c, r * 0.05);
+  return a.done(seed, age);
+}
+add('clock', '街頭時計の文字盤', [0.7, 0.7], (t, s) => clock(t, s, 10, 9, 0.1), { emissive: 0.35 });
+add('clock-old', '街頭時計の文字盤 古い', [0.7, 0.7], (t, s) => clock(t, s, 4, 37, 0.7));
+
 export const FURNITURE_TEXTURES: readonly TextureSpec[] = list;
