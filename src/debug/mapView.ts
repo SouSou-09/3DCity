@@ -41,6 +41,7 @@ export class MapView {
   layers: Layers = { districts: false, nodes: false, field: false, raw: false };
   /** Pixels per metre and pan offset in pixels. */
   private zoom = 1;
+  private needsFit = false;
   private ox = 0;
   private oy = 0;
 
@@ -84,6 +85,9 @@ export class MapView {
     if (!this.city) return;
     const w = this.canvas.clientWidth;
     const h = this.canvas.clientHeight;
+    // The canvas has no size while the 3D view is shown; fit on the next visible render instead.
+    this.needsFit = !w || !h;
+    if (this.needsFit) return;
     const s = this.city.config.size;
     this.zoom = (Math.min(w, h) * 0.96) / s;
     this.ox = (w - s * this.zoom) / 2;
@@ -155,6 +159,8 @@ export class MapView {
     const dpr = window.devicePixelRatio || 1;
     const w = canvas.clientWidth;
     const h = canvas.clientHeight;
+    if (!w || !h) return;
+    if (this.needsFit) this.fit();
     if (canvas.width !== w * dpr || canvas.height !== h * dpr) {
       canvas.width = w * dpr;
       canvas.height = h * dpr;
