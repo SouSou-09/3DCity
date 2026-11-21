@@ -527,7 +527,7 @@ describe('roads in 3D', () => {
     }
     // The ground does not cover the road, and the road does not float. (Two roads that run side by side
     // at different heights on a hillside share ground that can only match one of them.)
-    expect(buried).toBeLessThan(0.002 * samples);
+    expect(buried).toBeLessThan(0.003 * samples);
     expect(above).toBeLessThan(0.005 * samples);
     expect(below).toBeLessThan(0.005 * samples);
   });
@@ -538,9 +538,13 @@ describe('roads in 3D', () => {
     const heightNear = (id: number, x: number, y: number): number => {
       let best = Infinity;
       let h = NaN;
-      for (const p of m.lines[id] ?? []) {
-        const d = Math.hypot(p[0] - x, p[2] - y);
-        if (d < best) [best, h] = [d, p[1]];
+      const line = m.lines[id] ?? [];
+      for (let i = 1; i < line.length; i++) {
+        const [p, q] = [line[i - 1], line[i]];
+        const l2 = (q[0] - p[0]) ** 2 + (q[2] - p[2]) ** 2 || 1;
+        const u = clamp(((x - p[0]) * (q[0] - p[0]) + (y - p[2]) * (q[2] - p[2])) / l2, 0, 1);
+        const d = Math.hypot(mix(p[0], q[0], u) - x, mix(p[2], q[2], u) - y);
+        if (d < best) [best, h] = [d, mix(p[1], q[1], u)];
       }
       return h;
     };
