@@ -449,7 +449,7 @@ export class Layers {
   }
 }
 
-export type TextureCategory = 'asphalt' | 'concrete' | 'paving' | 'curb' | 'ground' | 'structure' | 'line' | 'crosswalk' | 'symbol' | 'cover' | 'sign' | 'signal' | 'furniture' | 'plant' | 'wall' | 'roof' | 'window' | 'door' | 'trim' | 'rail';
+export type TextureCategory = 'asphalt' | 'concrete' | 'paving' | 'curb' | 'ground' | 'structure' | 'line' | 'crosswalk' | 'symbol' | 'cover' | 'sign' | 'signal' | 'furniture' | 'plant' | 'wall' | 'roof' | 'window' | 'door' | 'trim' | 'rail' | 'site';
 
 export interface TextureSpec {
   id: string;
