@@ -98,6 +98,8 @@ export interface SweepOpts {
   /** Lane lines and symbols only from this distance on (after a crosswalk). */
   linesFrom?: number;
   linesTo?: number;
+  /** Lane lines and markings only where this holds for their distance from the centre line (the rest is hidden under another road). */
+  marksWhere?: (x0: number, x1: number) => boolean;
   /** Leave out the left or right side (where another piece attaches). */
   noLeft?: boolean;
   noRight?: boolean;
@@ -198,6 +200,7 @@ export function sweepSection(b: MeshBuilder, path: Path, sec: Section, opts: Swe
   const to = opts.linesTo ?? L;
   const marks: Strip[] = [];
   const edges: (() => void)[] = [];
+  const shown = (x0: number, x1: number): boolean => !opts.marksWhere || opts.marksWhere(x0, x1);
 
   // Left side, built outwards then reversed so that the outline runs left to right.
   const leftTop: [number, number][] = [];
@@ -258,9 +261,10 @@ export function sweepSection(b: MeshBuilder, path: Path, sec: Section, opts: Swe
     const w = b.part(mat, 2).mw;
     // Edge lines sit just inside the carriageway.
     const cx = i === 0 ? x + w * 0.5 - 0.05 : i === lay.lanes.length ? x - w * 0.5 + 0.05 : x;
-    sweep(b, linePath, [{ material: mat, layer: 2, pts: [[cx - w / 2, 0], [cx + w / 2, 0]], uv: 'tile', c: [0, w] }]);
+    if (shown(cx - w / 2, cx + w / 2)) sweep(b, linePath, [{ material: mat, layer: 2, pts: [[cx - w / 2, 0], [cx + w / 2, 0]], uv: 'tile', c: [0, w] }]);
   });
   for (const m of marks) {
+    if (!shown(m.pts[0][0], m.pts[m.pts.length - 1][0])) continue;
     if (m.fitTo) sweep(b, slicePath(path, m.fitTo[0], m.fitTo[1]), [m]);
     else sweep(b, linePath, [m]);
   }

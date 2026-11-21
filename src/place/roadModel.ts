@@ -5,7 +5,7 @@ import { Section, layout, reversed, sweepSection } from '../assets/mesh/section'
 import { pointSeg, resample } from '../core/geom';
 import { Vec2, clamp, mix, smoothstep } from '../core/vec2';
 import { City } from '../gen/city';
-import { NodePlane, RoadLevels, roadLevels } from '../gen/roadHeights';
+import { NodePlane, RoadLevels, freewayRun, roadLevels } from '../gen/roadHeights';
 import { RoadClass } from '../gen/streamlines';
 import { heightAt } from '../gen/terrain';
 import { HIGHWAY_DECK, RAMP_DECK, sectionFor, surface } from './roadSections3d';
@@ -19,6 +19,8 @@ const MERGE_MAX = 60;
 const MIN_GAP = (34 * Math.PI) / 180;
 /** How far a freeway that leaves the map sticks out past its edge before it is cut off. */
 export const EDGE_STUB = 30;
+/** How far below a freeway's surface a ramp or branch lies while it is still within the freeway's width. */
+const UNDER = 0.1;
 const RANK: Record<RoadClass, number> = { highway: 4, arterial: 3, collector: 2, ramp: 2, local: 1, alley: 0, path: 0 };
 
 export interface JunctionArm {
@@ -505,7 +507,9 @@ export function buildRoadModel(city: City): RoadModel {
     // Ends that leave a freeway: skip the part still inside the freeway's own lanes.
     const child = ([e.a, e.b] as const).map((node) => {
       if (!isHw[node] || (e.cls !== 'ramp' && !(e.cls === 'highway' && isBranch(id, node)))) return null;
-      return hwAt(node).filter((o) => o !== id && !(e.cls === 'highway' && isBranch(o, node)));
+      // A ramp runs beside the freeway for longer than the edge it leaves; a branch is measured against the carriageways it leaves.
+      if (e.cls === 'ramp') return freewayRun(graph, node);
+      return hwAt(node).filter((o) => o !== id && !isBranch(o, node));
     });
     let { i0, i1 } = sp;
     const near = lv.pts.map((p) => child.map((ids) => (ids && ids.length ? nearest(ids, p) : null)));
@@ -587,13 +591,13 @@ export function buildRoadModel(city: City): RoadModel {
       let c = 0;
       const rx = -tan[k].y;
       const ry = tan[k].x;
-      // Still on the freeway's deck: ride just above it.
+      // Still within the freeway's deck: just under it, so that the freeway's own lanes carry on and this road widens out from its edge.
       if (zone[k] >= 0) {
         near[zone[k]].forEach((nr) => {
           if (!nr) return;
           // A ramp's own level already follows the deck; a branching freeway is eased onto it.
-          if (e.cls === 'ramp') h += 0.03 * (1 - smoothstep(hp + hc, hp + hc + 6, nr.d));
-          else h = mix(nr.h + 0.03, h, smoothstep(hp + hc, hp + hc + 26, nr.d));
+          if (e.cls === 'ramp') h -= UNDER * (1 - smoothstep(hp + hc, hp + hc + 6, nr.d));
+          else h = mix(nr.h - UNDER, h, smoothstep(hp + hc, hp + hc + 26, nr.d));
         });
       }
       for (const [arm, cl, along] of [[a, ca, arc[k] / ease[0]], [b, cb, (end - arc[k]) / ease[1]]] as const) {
@@ -609,7 +613,19 @@ export function buildRoadModel(city: City): RoadModel {
 
     const keep = thin(pts.map((p, k) => [p.x, hs[k], p.y, cross[k] * 8]), e.cls === 'highway' ? 0.06 : 0.1);
     const line: V3[] = keep.map((k) => [pts[k].x, hs[k], pts[k].y]);
-    const path = frames(line, keep.map((k) => cross[k]), sp.p0 ? a!.dir : undefined, sp.p1 ? { x: -b!.dir.x, y: -b!.dir.y } : undefined);
+    // The two carriageways that run through a freeway node meet on one line across it.
+    const through = (node: number, end: 0 | 1): Vec2 | undefined => {
+      if (e.cls !== 'highway' || isBranch(id, node)) return undefined;
+      const pair = hwAt(node).filter((o) => !isBranch(o, node));
+      if (pair.length !== 2 || zone[end === 0 ? 0 : zone.length - 1] !== (end === 0 ? 0 : n - 1)) return undefined;
+      const [u, v] = pair.map((o) => {
+        const q = out(o, graph.edges[o].a === node ? 0 : 1);
+        return norm2(q[Math.min(2, q.length - 1)].x - q[0].x, q[Math.min(2, q.length - 1)].y - q[0].y);
+      });
+      const sgn = (pair[0] === id ? 1 : -1) * (end === 0 ? 1 : -1);
+      return norm2((u.x - v.x) * sgn, (u.y - v.y) * sgn);
+    };
+    const path = frames(line, keep.map((k) => cross[k]), sp.p0 ? a!.dir : through(e.a, 0), sp.p1 ? { x: -b!.dir.x, y: -b!.dir.y } : through(e.b, 1));
     lines[id] = line;
     const L = pathLength(path);
     const b3 = tile(pts[pts.length >> 1].x, pts[pts.length >> 1].y);
@@ -680,6 +696,20 @@ export function buildRoadModel(city: City): RoadModel {
     const shift = path[Math.max(0, keep.findIndex((i) => i >= first))].s - lv.s[zone[first]];
     const gaps = { left: open[id].left.map((g) => [g.s0 + shift, g.s1 + shift]), right: open[id].right.map((g) => [g.s0 + shift, g.s1 + shift]) };
     for (const o of [gaps.left, gaps.right]) for (const [s0, s1] of o) cutsAt.add(clamp(s0, 0, L)).add(clamp(s1, 0, L));
+    // While this road is still coming out from under the freeway, its markings start lane by lane as they clear the freeway's edge.
+    const distAt = (s: number, end: number): number => {
+      let best = Infinity;
+      let at = Infinity;
+      keep.forEach((k, j) => {
+        const nr = zone[k] >= 0 ? near[zone[k]][end] : null;
+        if (nr && Math.abs(path[j].s - s) < at) [at, best] = [Math.abs(path[j].s - s), nr.d];
+      });
+      return best;
+    };
+    clear.forEach((c, end) => {
+      if (!c) return;
+      for (let s = end === 0 ? 0 : c.sc; s < (end === 0 ? c.sc : L); s += 8) cutsAt.add(s);
+    });
     const marks = [...cutsAt].sort((x, y) => x - y).filter((s, i, arr) => i === 0 || s - arr[i - 1] > 0.5);
     if (marks[marks.length - 1] < L - 0.5) marks.push(L);
     else marks[marks.length - 1] = L;
@@ -698,7 +728,13 @@ export function buildRoadModel(city: City): RoadModel {
       });
       const startCap = k === 0 && zone[0] === -1;
       const endCap = k + 2 === marks.length && zone[zone.length - 1] === -1;
-      sweepSection(b3, slicePath(path, marks[k], marks[k + 1]), variant(sec, noL, noR, noM), { body: 'deck', deckDepth: deck, caps: [startCap, endCap] });
+      let marksWhere: ((x0: number, x1: number) => boolean) | undefined;
+      clear.forEach((c, end) => {
+        if (!c || !c.side || !(end === 0 ? mid < c.sc : mid > c.sc)) return;
+        const d = Math.min(distAt(marks[k], end), distAt(marks[k + 1], end));
+        marksWhere = (x0, x1) => d - Math.max(x0 * c.side, x1 * c.side) > hp + 0.1;
+      });
+      sweepSection(b3, slicePath(path, marks[k], marks[k + 1]), variant(sec, noL, noR, noM), { body: 'deck', deckDepth: deck, caps: [startCap, endCap], marksWhere });
     }
 
     if (e.cls === 'highway') {

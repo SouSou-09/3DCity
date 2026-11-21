@@ -51,6 +51,21 @@ function ground(t: Terrain, x: number, y: number, r = 8): number {
 
 const elevated = (e: RoadEdge): boolean => e.cls === 'highway' || e.cls === 'ramp';
 
+/** The freeway edges within `reach` metres of a node along the freeway: what a ramp leaving there runs beside. */
+export function freewayRun(graph: RoadGraph, node: number, reach = 420): number[] {
+  const found = new Set<number>();
+  const walk = (n: number, left: number): void => {
+    for (const id of graph.nodes[n].edges) {
+      const e = graph.edges[id];
+      if (e.cls !== 'highway' || found.has(id)) continue;
+      found.add(id);
+      if (e.length < left) walk(e.a === n ? e.b : e.a, left - e.length);
+    }
+  };
+  walk(node, reach);
+  return [...found];
+}
+
 /**
  * Vertical alignment of every road. Streets follow the (smoothed) ground and bridge water on a level deck;
  * freeways run on a viaduct above the streets and tracks they cross; ramps come down from it to the street.
@@ -237,7 +252,7 @@ export function roadLevels(graph: RoadGraph, t: Terrain, rail: Rail): RoadLevels
     const L = lv.s[n - 1] || 1;
     for (const end of [e.a, e.b]) {
       if (kind[end] !== 'highway') continue;
-      const hw = graph.nodes[end].edges.filter((id) => graph.edges[id].cls === 'highway');
+      const hw = freewayRun(graph, end);
       const at = (k: number): number => (end === e.a ? k : n - 1 - k);
       const deck = (p: Vec2): { d: number; h: number } => {
         let best = { d: Infinity, h: 0 };
