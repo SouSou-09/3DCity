@@ -416,7 +416,7 @@ export function addParks(): void {
     for (const s of [0, 180]) chainlink(b, turn(move(f, s ? 7.8 : -7.8, 0, s ? 15 : -15), s), 15.6, { h: 3 });
   });
   (['court-tennis', 'court-tennis-clay'] as const).forEach((t, i) => A(`tennis-${i ? 'clay' : 'court'}`, `テニスコート ${i ? 'クレー' : 'ハード'}`, (b, f) => {
-    pad(b, S(t), f, 18.29, 18.29 * 2, 0.02, false);
+    for (const r of [0, 180]) pad(b, S(t), turn(move(f, 0, 0, r ? -9.145 : 9.145), r), 18.29, 18.29, 0.02, true);
     netPosts(b, f, 12.8, 1.07, S('net-white'), i ? P('green') : P('black'));
     for (const s of [0, 180]) chainlink(b, turn(move(f, s ? 9.2 : -9.2, 0, s ? 18.3 : -18.3), s), 18.4, { h: 3.6, screen: i ? undefined : S('screen-green') });
   }));
