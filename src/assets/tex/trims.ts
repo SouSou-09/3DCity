@@ -530,7 +530,7 @@ function stain(tex: Tex, seed: number, kind: Soil): TextureData {
   const streak = tex.noise(0.16, 3, seed + 1, 3);
   const fine = tex.noise(0.25, 0.25, seed + 2, 2);
   const band = tex.noise(4, 0.5, seed + 3, 2);
-  return soil(tex, seed, kind, (x, y) => 0.12 + sstep(-0.15, 0.55, blotch(x, y)) * 0.55 + sstep(0.15, 0.65, streak(x, y)) * 0.34 * (0.5 + 0.5 * sstep(-0.3, 0.3, blotch(x, y))) + fine(x, y) * 0.12 + sstep(0.35, 0.7, band(x, y)) * 0.2);
+  return soil(tex, seed, kind, (x, y) => 0.1 + sstep(-0.15, 0.55, blotch(x, y)) * 0.75 + sstep(0.15, 0.65, streak(x, y)) * 0.34 * (0.5 + 0.5 * sstep(-0.3, 0.3, blotch(x, y))) + fine(x, y) * 0.12 + sstep(0.35, 0.7, band(x, y)) * 0.2);
 }
 /** Dirt thrown up from the pavement: densest at the foot of the wall, with a ragged upper edge. */
 function splash(tex: Tex, seed: number, kind: Soil): TextureData {
