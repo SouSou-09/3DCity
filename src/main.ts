@@ -54,6 +54,9 @@ function showStats(city: City): void {
     `高速 ${km(s.length.highway)} (IC ${s.interchanges})`,
     `幹線 ${km(s.length.arterial)} / 補助幹線 ${km(s.length.collector)}`,
     `生活道路 ${km(s.length.local)}`,
+    `路地 ${km(s.length.alley)} / 歩行者路 ${km(s.length.path)}`,
+    `街区内に追加 ${s.infill.alleys + s.infill.streets + s.infill.culDeSacs + s.infill.paths}本 (袋小路 ${s.infill.culDeSacs})`,
+    `鉄道 ${km(s.rail)} / 踏切 ${s.levelCrossings}`,
     `橋 ${s.bridges} / 生成 ${s.ms.toFixed(0)} ms`,
   ].join('\n');
 }
