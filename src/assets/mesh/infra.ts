@@ -596,7 +596,7 @@ export function addInfra(): void {
   });
   A('cable-reel', 'ケーブルドラム 木製', (b, f) => {
     const g = layZ(move(f, 0, 0.9, -0.5));
-    for (const y of [0, 0.94]) cyl(b, 'signal/pole-wood', g, [0, y, 0], 0.9, 0.06, 16);
+    for (const y of [0, 0.94]) cyl(b, 'wall/plywood-tan', g, [0, y, 0], 0.9, 0.06, 16);
     cyl(b, P('black'), g, [0, 0.06, 0], 0.5, 0.88, 14);
   });
   A('cable-reel-flat', 'ケーブルドラム 横倒し オレンジ管', (b, f) => {
@@ -606,8 +606,8 @@ export function addInfra(): void {
   A('pallet-stack', 'パレットの山', (b, f) => {
     for (let k = 0; k < 7; k++) {
       const g = turn(move(f, (hash(k, 7) - 0.5) * 0.08, k * 0.15, 0), (hash(k, 8) - 0.5) * 8);
-      for (const z of [-0.5, 0, 0.5]) box(b, 'signal/pole-wood', g, [0, 0.06, z], [0.6, 0.045, 0.05]);
-      for (let x = -0.52; x <= 0.53; x += 0.26) box(b, 'signal/pole-wood', g, [x, 0.127, 0], [0.05, 0.011, 0.5]);
+      for (const z of [-0.5, 0, 0.5]) box(b, 'wall/plywood-tan', g, [0, 0.06, z], [0.6, 0.045, 0.05]);
+      for (let x = -0.52; x <= 0.53; x += 0.26) box(b, 'wall/plywood-tan', g, [x, 0.127, 0], [0.05, 0.011, 0.5]);
     }
   });
 

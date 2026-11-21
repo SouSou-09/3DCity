@@ -84,7 +84,7 @@ add('hoarding-plywood', '工事仮囲い 合板', [2.44, 2.44], (t, s) => boards
 add('hoarding-blue', '工事仮囲い 青塗装', [2.44, 2.44], (t, s) => boards(t, s, PINE, { board: 1.22, age: 0.45, paint: hex(0x1c4a8c) }), { tile: 'x', density: 128 });
 add('hoarding-green', '工事仮囲い 緑塗装', [2.44, 2.44], (t, s) => boards(t, s, PINE, { board: 1.22, age: 0.5, paint: hex(0x1c5a3c) }), { tile: 'x', density: 128 });
 add('timber-crib', '枕木の土留め', [2.4, 1.0], (t, s) => S.masonry(t, { seed: s, block: [2.4, 0.25], colors: [hex(0x4a3828), hex(0x3c2e22), hex(0x54402c)], mortar: [0.08, 0.07, 0.06], rough: true, streaks: 0.5 }), tiled);
-add('timber-log', '丸太の土留め', [1.2, 1.2], (t, s) => boards(t, s, DARKWOOD, { board: 0.2, age: 0.5 }), tiled);
+add('timber-log', '丸太の土留め', [1.2, 1.2], (t, s) => boards(t, s, DARKWOOD, { board: 0.2, age: 0.5 }), { tile: 'x', density: 128 });
 
 // --- Metal fences and wire: cut out. ---
 type Iron = 'spear' | 'flat' | 'hoop' | 'ranch' | 'weld' | 'razor' | 'barbed' | 'net' | 'bars';
@@ -171,7 +171,7 @@ function fabric(tex: Tex, seed: number, c: RGB, o: { fade?: number; weave?: numb
     if (o.stripes && Math.floor(x / 0.25) % 2) col = o.stripes;
     const f = clamp01((o.fade ?? 0.2) * (0.6 + fade(x, y)));
     const g = (col[0] + col[1] + col[2]) / 3;
-    const m = (1 + fold(x, y) * 0.22 - weave) * (1 - clamp01((o.dirt ?? 0.2) * sstep(0, 0.6, dirt(x, y)) + sstep(0.3, 0, y) * (o.dirt ?? 0.2)) * 0.6);
+    const m = (1 + fold(x, y) * 0.22 - weave) * (1 - clamp01((o.dirt ?? 0.2) * sstep(0, 0.6, dirt(x, y))) * 0.6);
     L.r[k] = lerp(col[0], g * 1.15 + 0.08, f) * m;
     L.g[k] = lerp(col[1], g * 1.15 + 0.08, f) * m;
     L.b[k] = lerp(col[2], g * 1.15 + 0.08, f) * m;
@@ -614,7 +614,21 @@ add('safety-rubber-red', '遊び場のゴム舗装 赤', [1, 1], (t, s) => S.gra
 add('safety-rubber-green', '遊び場のゴム舗装 緑', [1, 1], (t, s) => S.gravel(t, { seed: s, size: 0.014, colors: [hex(0x3c7c4c), hex(0x346c40), hex(0x448c54)], soil: [0.12, 0.26, 0.15] }), { ...tiled, density: 256 });
 add('safety-rubber-blue', '遊び場のゴム舗装 青', [1, 1], (t, s) => S.gravel(t, { seed: s, size: 0.014, colors: [hex(0x2c5c9c), hex(0x285088), hex(0x3468a8)], soil: [0.1, 0.2, 0.34] }), { ...tiled, density: 256 });
 add('woodchips', '遊び場のウッドチップ', [1, 1], (t, s) => S.gravel(t, { seed: s, size: 0.03, colors: [hex(0x9c7448), hex(0x7c5834), hex(0xb48c5c), hex(0x64442c)], soil: [0.22, 0.15, 0.09] }), tiled);
-add('track-red', '陸上トラック 赤', [2.44, 2], (t, s) => { const a = new Art(t, hex(0xa8483c), 0.85); for (const x of [0, 1.22, 2.44]) a.rect(WHITE, x - 0.025, 0, x + 0.025, 2); return a.done(s, 0.2); }, { tile: 'xy', density: 96 });
+add('track-red', '陸上トラック 赤', [2.44, 2], (t, s) => {
+  const L = new Layers(t, hex(0xa8483c), 0.9);
+  const grit = t.noise(0.01, 0.01, s, 2);
+  const wear = t.noise(0.5, 0.5, s + 1, 3);
+  t.map((x, y, k) => {
+    const line = Math.min(x, 2.44 - x, Math.abs(x - 1.22)) < 0.025;
+    const m = 0.86 + grit(x, y) * 0.2 - wear(x, y) * 0.1;
+    const c = line ? WHITE : hex(0xa8483c);
+    L.r[k] = c[0] * m;
+    L.g[k] = c[1] * m;
+    L.b[k] = c[2] * m;
+    return 0;
+  });
+  return L.finish();
+}, { tile: 'xy', density: 96 });
 add('turf-lines', '人工芝 白線', [4, 4], (t, s) => { const a = new Art(t, hex(0x3c7c3c), 0.9); a.rect(hex(0x347034), 0, 0, 4, 2); a.rect(WHITE, 0, 1.94, 4, 2.06); return a.done(s, 0.1); }, { tile: 'xy', density: 64 });
 
 // --- Signs and markers. ---
