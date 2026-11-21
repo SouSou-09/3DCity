@@ -1,6 +1,6 @@
 import { MeshBuilder } from './builder';
 import { S } from './boundaries';
-import { PierOpts, floatDock, gangway, pier } from './marine';
+import { LightOpts, PierOpts, beacon, floatDock, gangway, lighthouse, pier, skeletonLight } from './marine';
 import { Pose, stand } from './kit';
 import { addModel } from './registry';
 
@@ -32,4 +32,29 @@ export function addWaterfront(): void {
     gangway(b, f, 9, 2.2);
     floatDock(b, stand([10.2, 0, -5], -90), 14, { pileSide: -1 });
   });
+  // Lighthouses and beacons.
+  const T = (c: string): string => S(`tower-${c}`);
+  const LIGHTS: [string, string, LightOpts][] = [
+    ['white', '灯台 白 円筒 24m', { h: 24, r0: 3.4, r1: 2, bands: [[T('white'), 1]], windows: 4, lit: true }],
+    ['red-white', '灯台 赤白の縞', { h: 28, r0: 3.6, r1: 2.1, bands: [[T('red'), 1], [T('white'), 1], [T('red'), 1], [T('white'), 1], [T('red'), 1]], windows: 4, trim: 'trim/paint-charcoal' }],
+    ['black-white', '灯台 黒白の縞 見張り室つき', { h: 30, r0: 3.8, r1: 2.3, bands: [[T('black'), 1], [T('white'), 1], [T('black'), 1], [T('white'), 1]], windows: 5, watch: true, lit: true }],
+    ['white-red-top', '灯台 白 赤い灯室', { h: 18, r0: 2.8, r1: 1.9, bands: [[T('white'), 5], [T('red'), 1]], windows: 3, trim: 'trim/paint-red', roof: 'trim/paint-red' }],
+    ['octagonal', '灯台 八角 白 銅屋根', { h: 20, r0: 3.2, r1: 2, sides: 8, bands: [[T('white'), 1]], windows: 3, roof: 'roof/seam-copper', roofKind: 'cone', lit: true }],
+    ['octagonal-green', '灯台 八角 緑白', { h: 16, r0: 2.8, r1: 1.9, sides: 8, bands: [[T('green'), 1], [T('white'), 2], [T('green'), 1]], windows: 2, trim: 'trim/paint-green' }],
+    ['square', '灯台 四角 白 低い', { h: 12, r0: 2.4, r1: 1.9, sides: 4, bands: [[T('white'), 1]], windows: 2, roof: 'trim/paint-red', roofKind: 'cone', lr: 1.2 }],
+    ['stone', '灯台 石積み', { h: 22, r0: 3.4, r1: 2.2, bands: [['structure/stone-ashlar', 1]], windows: 4, base: S('wall-rubble'), baseH: 2, watch: true }],
+    ['brick', '灯台 レンガ 白い灯室', { h: 20, r0: 3, r1: 2, bands: [['structure/brick-red', 1]], windows: 3, trim: 'trim/paint-white', roof: 'trim/paint-black' }],
+    ['rusty', '灯台 鉄製 さび', { h: 14, r0: 1.8, r1: 1.5, bands: [[T('rusty'), 1]], windows: 2, base: 'structure/wall-old', trim: 'trim/paint-rust', lr: 1.1 }],
+    ['short-red', '灯台 港口 赤 低い', { h: 9, r0: 1.6, r1: 1.3, bands: [[T('red'), 1]], base: 'structure/wall-smooth', baseH: 1.6, trim: 'trim/paint-red', lr: 0.95, lh: 1.2, lit: true }],
+    ['short-green', '灯台 港口 緑 低い', { h: 9, r0: 1.6, r1: 1.3, bands: [[T('green'), 1]], base: 'structure/wall-smooth', baseH: 1.6, trim: 'trim/paint-green', lr: 0.95, lh: 1.2 }],
+  ];
+  for (const [id, label, o] of LIGHTS) A(`lighthouse-${id}`, label, (b, f) => lighthouse(b, f, o));
+  A('lighthouse-skeleton', '灯台 鉄骨やぐら 白', (b, f) => skeletonLight(b, f, { h: 22, s0: 4.5, s1: 1.6, mat: 'trim/paint-white', tube: T('white'), legs: 6, lit: true, roof: 'trim/paint-red' }));
+  A('lighthouse-skeleton-red', '灯台 鉄骨やぐら 赤 4脚', (b, f) => skeletonLight(b, f, { h: 16, s0: 3.2, s1: 1.4, mat: 'structure/steel-red', tube: T('red') }));
+  A('lighthouse-skeleton-rusty', '灯台 鉄骨やぐら さび 筒なし', (b, f) => skeletonLight(b, f, { h: 12, s0: 2.6, s1: 1.3, mat: 'structure/steel-grey-rusty' }));
+  A('beacon-red', '防波堤灯標 赤', (b, f) => beacon(b, f, { h: 5, bands: [T('red')], lens: S('lens-fresnel-lit') }));
+  A('beacon-green', '防波堤灯標 緑', (b, f) => beacon(b, f, { h: 5, bands: [T('green')] }));
+  A('beacon-banded', '灯標 赤白 太陽電池つき', (b, f) => beacon(b, f, { h: 7, r: 0.55, bands: [T('red'), T('white'), T('red')], solar: true }));
+  A('beacon-pole', '灯標 細い柱 黄', (b, f) => beacon(b, f, { h: 4, r: 0.16, bands: [S('buoy-yellow')], rail: false, solar: true }));
+  A('beacon-black-yellow', '灯標 黒黄 方位標識', (b, f) => beacon(b, f, { h: 6, r: 0.5, bands: [T('black'), S('buoy-yellow'), T('black')] }));
 }
