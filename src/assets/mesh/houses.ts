@@ -120,7 +120,7 @@ export function house(b: MeshBuilder, o: HouseOpts): void {
     const shared = (k: number): boolean => !!g && !integral && i === 0 && ((gside > 0 && k === 1) || (gside < 0 && k === 3));
     for (const k of [1, 3]) wall(b, mat, { ...S[k].f, o: [S[k].f.o[0], y0, S[k].f.o[2]] }, d, h, shared(k) ? [] : lay(d), 0, y0);
     const back = lay(w);
-    if (i === 0 && back.length > 1) back[0] = { x: back[0].x, y: base, w: 0.9, h: 2.1, tex: 'door/front-white-1', depth: 0.08, frame: o.trim };
+    if (i === 0 && back.length > 1) back[0] = { x: back[0].x, y: base, w: 0.9, h: 2.1, tex: 'door/front-white-2', depth: 0.08, frame: o.trim };
     wall(b, mat, { ...S[2].f, o: [S[2].f.o[0], y0, S[2].f.o[2]] }, w, h, back, 0, y0);
     if (i > 0) S[0].f = { ...S[0].f };
     S[0].f = { ...S[0].f, o: [S[0].f.o[0], base + (i + 1) * fh, S[0].f.o[2]] };
@@ -227,13 +227,13 @@ export function addHouses(): void {
     ['siding-white', 'white', 'shingle-charcoal', 'front-black-0'], ['brick-red', 'white', 'slate-grey', 'front-white-2', { dress: 'sill' }], ['siding-cream', 'white', 'shingle-brown', 'front-green-0'],
     ['brick-painted-white', 'charcoal', 'shingle-charcoal', 'front-red-3', { dress: 'sill' }], ['siding-blue', 'white', 'shingle-grey', 'front-white-0'], ['siding-vinyl-beige', 'white', 'shingle-tan', 'front-brown-1'],
   ], (i) => ({
-    w: 11 + (i % 2) * 2, d: 8, floors: 2, base: 0.55, kind: i === 3 ? 'hip' : 'gable', rise: 2.4, over: 0.35, win: WIN(i % 2 ? 'sash-white' : 'sash-white-6over6'), door: '', doorX: 0, maxWin: 2,
+    w: 11 + (i % 2) * 2, d: 8, floors: 2, base: 0.55, kind: i === 3 ? 'hip' : 'gable', rise: 2.4, over: 0.35, win: WIN(i % 2 ? 'sash-white' : 'sash-white-6over6'), doorX: 0, maxWin: 2,
     ...(i % 2 ? { porch: 'entry' as const } : {}), chimney: i % 2 ? 'wall/brick-red' : 'wall/brick-brown', ...(i % 3 === 2 ? { garage: { door: D('garage-wide-white'), w: 6.2, back: 1.5 } } : {}), attic: 'trim/louver-white', rail: 'trim/rail-black',
   }));
 
   // Spanish revival: white stucco under clay tiles.
   each('spanish', 'スパニッシュ様式', [
-    ['stucco-white', 'brown', 'clay-terracotta', 'front-brown-4'], ['stucco-cream', 'brown', 'clay-mixed', 'front-brown-2'], ['stucco-peach', 'brown-old', 'clay-old', 'front-teal-4'],
+    ['stucco-white', 'brown', 'clay-terracotta', 'front-brown-4'], ['stucco-cream', 'brown', 'clay-mixed', 'front-brown-1'], ['stucco-peach', 'brown-old', 'clay-old', 'front-teal-4'],
     ['stucco-ochre', 'brown', 'clay-red', 'front-blue-4'], ['stucco-white-stained', 'brown-old', 'clay-old', 'front-brown-4'], ['stucco-salmon-old', 'white', 'clay-mixed', 'front-green-3'],
   ], (i) => ({
     w: 10 + (i % 3) * 2, d: 9, floors: 1 + (i % 2), base: 0.3, kind: i % 3 === 2 ? 'gable' : 'hip', rise: 1.3, over: 0.35, dress: 'sill',
@@ -243,7 +243,7 @@ export function addHouses(): void {
 
   // Modern: flat or single-pitch roofs, large glass, garage in the house.
   each('modern', 'モダン住宅', [
-    ['stucco-white', 'charcoal', 'flat-membrane-white', 'front-black-3'], ['stucco-charcoal', 'black', 'flat-gravel', 'front-yellow-3'], ['wood-cedar', 'charcoal', 'seam-grey', 'front-black-3'],
+    ['stucco-white', 'charcoal', 'flat-membrane-white', 'front-yellow-3'], ['stucco-charcoal', 'black', 'flat-gravel', 'front-yellow-3'], ['wood-cedar', 'charcoal', 'seam-grey', 'front-red-3'],
     ['concrete-boards', 'black', 'flat-gravel-light', 'front-red-3'], ['metal-panel-charcoal', 'black', 'seam-galvanized', 'front-green-3'], ['stucco-grey', 'white', 'flat-membrane-grey', 'front-teal-4'],
   ], (i) => ({
     w: 11 + (i % 2) * 2, d: 9, floors: 2, fh: 3, kind: i % 3 === 2 ? 'shed' : 'flat', rise: 1.4, over: 0.5, dress: 'sill',
@@ -254,7 +254,7 @@ export function addHouses(): void {
   // Victorian: tall, narrow, steep front gable and a porch.
   each('victorian', 'ヴィクトリア様式', [
     ['siding-yellow', 'white', 'shingle-charcoal', 'front-red-1'], ['siding-blue', 'cream', 'slate-grey', 'front-white-2'], ['siding-red', 'cream', 'shingle-grey', 'front-green-0'],
-    ['siding-sage', 'white', 'slate-green', 'front-brown-2'], ['siding-blue-peeling', 'white-old', 'shingle-old', 'front-brown-1'], ['siding-cream', 'teal', 'shingle-blue', 'front-teal-2'],
+    ['siding-sage', 'white', 'slate-green', 'front-brown-1'], ['siding-blue-peeling', 'white-old', 'shingle-old', 'front-brown-1'], ['siding-cream', 'teal', 'shingle-blue', 'front-teal-2'],
   ], (i, l) => ({
     w: 7 + (i % 2), d: 12, floors: 2, fh: 3.1, base: 0.9, kind: 'gable-front', rise: 3.2, over: 0.45, upper: i % 2 ? W('shingle-grey') : W(l[0]),
     win: WIN(i % 2 ? 'sash-tall-white' : 'sash-tall-black'), doorX: 0.55, porch: i % 3 === 2 ? 'entry' : 'full', rail: 'trim/rail-white', attic: 'window/arch-white', maxWin: 2, chimney: 'wall/brick-red',
@@ -268,7 +268,7 @@ export function addHouses(): void {
   // Suburban two-storey with a garage wing.
   each('suburban', '郊外の2階建て', [
     ['siding-vinyl-beige', 'white', 'shingle-brown', 'front-brown-1'], ['siding-vinyl-grey', 'white', 'shingle-charcoal', 'front-red-3'], ['stucco-sand', 'white', 'tile-flat-brown', 'front-white-0', { dress: 'sill' }],
-    ['siding-vinyl-white', 'charcoal', 'shingle-grey', 'front-blue-2'], ['stucco-beige-patched', 'cream', 'tile-flat-red', 'front-brown-2', { dress: 'sill' }], ['brick-brown', 'cream', 'shingle-tan', 'front-green-0', { dress: 'sill' }],
+    ['siding-vinyl-white', 'charcoal', 'shingle-grey', 'front-blue-2'], ['stucco-beige-patched', 'cream', 'tile-flat-red', 'front-brown-1', { dress: 'sill' }], ['brick-brown', 'cream', 'shingle-tan', 'front-green-0', { dress: 'sill' }],
   ], (i) => ({
     w: 8.5 + (i % 2), d: 9.5, floors: 2, base: 0.3, kind: i % 2 ? 'hip' : 'gable-front', rise: 2 + (i % 2) * -0.4, over: 0.4, win: WIN(['casement-white', 'slider-white', 'sash-wide-white'][i % 3]), winBig: WIN('picture-white-grid'),
     doorX: i % 2 ? 0.5 : -0.5, maxWin: 2, garage: { door: D(['garage-wide-white', 'garage-wide-grey', 'garage-wide-cream'][i % 3]), w: 6, back: -1.5 + (i % 3), side: i % 2 ? -1 : 1 }, porch: 'entry', attic: 'trim/louver-white',
