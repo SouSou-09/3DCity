@@ -327,7 +327,7 @@ export function addWaterfront(): void {
   (['red', 'yellow', 'green', 'purple'] as const).forEach((c, i) => A(`beach-flag-${c}`, `ビーチ旗 ${['赤 遊泳禁止', '黄 注意', '緑 遊泳可', '紫 危険生物'][i]}`, (b, f) => flagPole(b, f, 3 + (i % 2) * 0.6, S(`flag-${c}`))));
   const CANVAS = ['canvas-stripe-blue', 'canvas-stripe-yellow', 'canvas-stripe-red', 'canvas-white', 'canvas-red'];
   CANVAS.forEach((c, i) => A(`umbrella-${c.replace('canvas-', '')}`, `ビーチパラソル ${['青縞', '黄縞', '赤縞', '白', '赤'][i]}`, (b, f) => umbrella(b, f, S(c), { lean: 4 + i * 3, r: 1 + (i % 3) * 0.12 })));
-  A('umbrella-thatch', 'かやぶきパラソル', (b, f) => umbrella(b, f, 'ground/grass-dry', { thatch: true, r: 1.6, h: 2.3, lean: 0 }));
+  A('umbrella-thatch', 'かやぶきパラソル', (b, f) => umbrella(b, f, 'roof/shake-cedar', { thatch: true, r: 1.6, h: 2.3, lean: 0 }));
   A('umbrella-set', 'パラソルと寝いす2台', (b, f) => {
     umbrella(b, f, S('canvas-stripe-blue'), { r: 1.3 });
     lounger(b, move(f, 0.2, 0, 0.8), S('canvas-white'));
@@ -444,7 +444,7 @@ export function addWaterfront(): void {
   });
   A('net-pile', '漁網の山 浮き玉つき', (b, f) => {
     boulder(b, S('net-fishing'), f, [0, 0.25, 0], [1.3, 0.55, 1], 81, 6);
-    boulder(b, 'trim/paint-teal', f, [0, 0.22, 0], [1.2, 0.5, 0.92], 81, 6);
+    boulder(b, 'furniture/bag-black', f, [0, 0.22, 0], [1.2, 0.5, 0.92], 81, 6);
     for (let i = 0; i < 7; i++) ball(b, S(i % 2 ? 'buoy-orange' : 'buoy-yellow'), f, [Math.cos(i * 0.9) * 0.8, 0.45 + hash(i, 9) * 0.2, Math.sin(i * 0.9) * 0.6], 0.09, 6);
   });
   A('net-drying', '漁網の干し場', (b, f) => {
