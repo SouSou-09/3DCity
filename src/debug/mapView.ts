@@ -12,13 +12,15 @@ export interface Layers {
 }
 
 const ROAD_STYLE: Record<RoadClass, { width: number; minPx: number; fill: string; casing: string }> = {
+  path: { width: 3, minPx: 0.6, fill: '#f3ead2', casing: '#b9a67c' },
+  alley: { width: 5.5, minPx: 0.8, fill: '#ffffff', casing: '#c9c4b8' },
   local: { width: 9, minPx: 1.2, fill: '#ffffff', casing: '#c9c4b8' },
   collector: { width: 13, minPx: 2, fill: '#ffffff', casing: '#b5afa0' },
   arterial: { width: 19, minPx: 3, fill: '#fff3b0', casing: '#c9a94a' },
   ramp: { width: 8, minPx: 1.5, fill: '#f9b45c', casing: '#b56d1c' },
   highway: { width: 26, minPx: 4, fill: '#f59a3c', casing: '#a9591a' },
 };
-const ORDER: RoadClass[] = ['local', 'collector', 'arterial', 'ramp', 'highway'];
+const ORDER: RoadClass[] = ['path', 'alley', 'local', 'collector', 'arterial', 'ramp', 'highway'];
 
 const DISTRICT_COLOR: Record<DistrictType, [number, number, number]> = {
   downtown: [214, 69, 65],
@@ -233,7 +235,66 @@ export class MapView {
     // Street fills go on top of all street casings so junctions look merged.
     ctx.globalCompositeOperation = 'destination-over';
     ctx.globalCompositeOperation = 'source-over';
-    for (const cls of ['local', 'collector', 'arterial'] as RoadClass[]) for (const b of [false, true]) stroke(cls, false, b);
+    for (const cls of ['path', 'alley', 'local', 'collector', 'arterial'] as RoadClass[]) for (const b of [false, true]) stroke(cls, false, b);
+
+    // Railway: black-and-white ticked line; viaducts and bridges get a casing, tunnels are faint and dashed.
+    for (const line of city.rail.lines) {
+      const w = Math.max((line.kind === 'main' ? 3.6 : 2.4) / z, line.tracks * 3.2);
+      const run = (match: (s: string) => boolean, draw: () => void) => {
+        ctx.beginPath();
+        let open = false;
+        for (let i = 0; i < line.points.length; i++) {
+          // A run includes the point after its last matching one, so neighbouring runs meet.
+          const on = match(line.structure[i]) || (i > 0 && match(line.structure[i - 1]));
+          if (!on) open = false;
+          else if (!open) {
+            ctx.moveTo(line.points[i].x, line.points[i].y);
+            open = true;
+          } else ctx.lineTo(line.points[i].x, line.points[i].y);
+        }
+        draw();
+      };
+      ctx.lineCap = 'butt';
+      run((st) => st === 'tunnel', () => {
+        ctx.setLineDash([10, 8]);
+        ctx.lineWidth = w;
+        ctx.strokeStyle = 'rgba(40, 40, 40, 0.45)';
+        ctx.stroke();
+        ctx.setLineDash([]);
+      });
+      run((st) => st === 'elevated' || st === 'bridge', () => {
+        ctx.lineWidth = w + Math.max(3 / z, 5);
+        ctx.strokeStyle = '#8a8a8a';
+        ctx.stroke();
+      });
+      run((st) => st !== 'tunnel', () => {
+        ctx.lineWidth = w;
+        ctx.strokeStyle = '#2b2b2b';
+        ctx.stroke();
+        ctx.setLineDash([9, 9]);
+        ctx.lineWidth = w * 0.5;
+        ctx.strokeStyle = '#f2f2f2';
+        ctx.stroke();
+        ctx.setLineDash([]);
+      });
+      ctx.lineCap = 'round';
+    }
+    // Level crossings.
+    ctx.fillStyle = '#d0342c';
+    ctx.strokeStyle = '#ffffff';
+    ctx.lineWidth = 1 / z;
+    for (const c of city.railCrossings) {
+      if (c.kind !== 'level') continue;
+      const r = Math.max(3 / z, 5);
+      ctx.beginPath();
+      ctx.moveTo(c.x - r, c.y - r);
+      ctx.lineTo(c.x + r, c.y + r);
+      ctx.moveTo(c.x + r, c.y - r);
+      ctx.lineTo(c.x - r, c.y + r);
+      ctx.lineWidth = Math.max(1.6 / z, 2);
+      ctx.strokeStyle = '#d0342c';
+      ctx.stroke();
+    }
     for (const c of ['ramp', 'highway'] as RoadClass[]) for (const b of [false, true]) stroke(c, true, b);
     for (const c of ['ramp', 'highway'] as RoadClass[]) for (const b of [false, true]) stroke(c, false, b);
 

@@ -8,6 +8,8 @@ import { RoadClass } from '../gen/streamlines';
 import { heightAt } from '../gen/terrain';
 
 const ROAD: Record<RoadClass, { width: number; lift: number; color: number }> = {
+  path: { width: 3, lift: 0.25, color: 0x9a927e },
+  alley: { width: 5, lift: 0.28, color: 0x505154 },
   local: { width: 8, lift: 0.3, color: 0x4a4b4e },
   collector: { width: 11, lift: 0.35, color: 0x444548 },
   arterial: { width: 17, lift: 0.4, color: 0x3d3e42 },

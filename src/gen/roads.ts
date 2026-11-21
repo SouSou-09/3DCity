@@ -3,6 +3,7 @@ import { polyLength } from '../core/geom';
 import { Vec2, clamp, dist } from '../core/vec2';
 import { Districts, districtAt } from './districts';
 import { Highways, addRamps, generateHighways } from './highways';
+import { Rail, RailIndex, generateRail } from './rail';
 import { BRIDGE_APPROACH, EndReason, RoadBuilder, RoadLine } from './streamlines';
 import { TensorField, buildField, fieldAngle, sepAt } from './tensorField';
 import { Terrain, gradient, heightAt, hillAt, inBounds, isWater, riverBankAt, seaDistAt } from './terrain';
@@ -11,6 +12,7 @@ export interface RoadLines {
   lines: RoadLine[];
   field: TensorField;
   highways: Highways;
+  rail: Rail;
   interchanges: number;
 }
 
@@ -59,8 +61,11 @@ export function generateRoads(t: Terrain, districts: Districts, rng: Rng): RoadL
   const S = t.size;
   const highways = generateHighways(t, districts, rng.fork('highways'));
   const hwLines = [highways.main, highways.branch, highways.cross].filter((l): l is Vec2[] => !!l);
-  const field = buildField(t, districts, hwLines, rng.fork('field'));
+  // The railway is laid out before the streets: they line up with it, and most small ones stop at it.
+  const rail = generateRail(t, districts, hwLines, rng.fork('rail'));
+  const field = buildField(t, districts, [...hwLines, ...rail.lines.map((l) => l.points)], rng.fork('field'));
   const builder = new RoadBuilder(t, field);
+  builder.setRail(new RailIndex(rail));
   const style = (x: number, y: number) => districtAt(t, districts, x, y).style;
 
   const hwIds = [builder.addLine({ points: highways.main, cls: 'highway', family: -1, ends: ['bounds', 'bounds'] })];
@@ -177,5 +182,5 @@ export function generateRoads(t: Terrain, districts: Districts, rng: Rng): RoadL
 
   // Drop lines that degenerated to nothing.
   const lines = builder.lines.filter((l) => l.points.length >= 2 && polyLength(l.points) > 1);
-  return { lines, field, highways, interchanges };
+  return { lines, field, highways, rail, interchanges };
 }
