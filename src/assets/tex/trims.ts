@@ -253,7 +253,7 @@ function paint(tex: Tex, seed: number, c: RGB, o: { metal?: number; rough?: numb
   const chip = tex.noise(0.08, 0.08, seed + 3, 4, 0.6);
   tex.map((x, y, k) => {
     const st = sstep(0.15, 0.8, streak(x, y)) * (o.wear ?? 0.3) * 0.35;
-    const ch = sstep(0.34 - (o.wear ?? 0.3) * 0.1, 0.38 - (o.wear ?? 0.3) * 0.1, chip(x, y));
+    const ch = sstep(0.46 - (o.wear ?? 0.3) * 0.16, 0.5 - (o.wear ?? 0.3) * 0.16, chip(x, y));
     const m = (1 + tone(x, y) * 0.07 + fine(x, y) * 0.04) * (1 - st);
     L.r[k] = lerp(c[0] * m, 0.32, ch * 0.7);
     L.g[k] = lerp(c[1] * m, 0.28, ch * 0.7);
