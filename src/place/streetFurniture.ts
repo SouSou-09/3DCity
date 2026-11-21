@@ -22,7 +22,7 @@ export interface Placed {
   /** Junction (index into the road model's junctions) it belongs to, if any, and the edge it stands beside. */
   junction?: number;
   edge?: number;
-  /** Junction arm it serves. */
+  /** Junction arm it serves (index into the junction's arms). */
   arm?: number;
 }
 
@@ -264,7 +264,8 @@ export function placeStreetFurniture(city: City, roads: RoadModel): StreetFurnit
     // Where a ramp meets the streets: keep drivers out of an exit, and show the way onto an entrance.
     const mouth = j.arms.filter((a) => graph.edges[a.edge].cls === 'ramp' && roads.lines[a.edge] && Number.isFinite(a.reach));
     if (mouth.length && j.arms.some((a) => isStreet(a.edge))) {
-      mouth.forEach((a, ai) => {
+      mouth.forEach((a) => {
+        const ai = j.arms.indexOf(a);
         const info = rampInfo(a.edge);
         if (!info || j.nodes.includes(info.node)) return;
         const lay = armLay(a);
@@ -286,7 +287,8 @@ export function placeStreetFurniture(city: City, roads: RoadModel): StreetFurnit
       return c !== 'highway' && c !== 'ramp' && c !== 'path';
     };
     if (j.signal) {
-      arms.forEach((a, ai) => {
+      arms.forEach((a) => {
+        const ai = j.arms.indexOf(a);
         if (!street(a) && graph.edges[a.edge].cls !== 'ramp') return;
         const lay = armLay(a);
         const L = a.reach - a.approach;
@@ -346,7 +348,8 @@ export function placeStreetFurniture(city: City, roads: RoadModel): StreetFurnit
     }
     const stops = arms.filter((a) => a.control === 'stop');
     let named = false;
-    arms.forEach((a, ai) => {
+    arms.forEach((a) => {
+      const ai = j.arms.indexOf(a);
       if (a.control !== 'stop' || !arrives(a)) return;
       const lay = armLay(a);
       const wl = lay.road[0] - lay.outer[0];

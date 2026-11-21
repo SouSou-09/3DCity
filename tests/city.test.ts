@@ -590,8 +590,10 @@ describe('street furniture', () => {
     m.junctions.forEach((j, ji) => {
       const arms = j.arms.filter((a) => m.lines[a.edge] && Number.isFinite(a.reach));
       if (arms.length < 3) return;
-      arms.forEach((a, ai) => {
+      arms.forEach((a) => {
+        const ai = j.arms.indexOf(a);
         const e = c.graph.edges[a.edge];
+        expect(f.items.every((i) => i.junction !== ji || i.arm !== ai || i.kind === 'signal' || i.edge === a.edge), `arm ${ai} of junction ${ji}`).toBe(true);
         // Nobody drives into the junction from the start of a one-way street; ramps are checked by eye.
         if (e.cls === 'ramp' || e.cls === 'highway' || (e.cls === 'local' && c.profiles[a.edge].oneWay && a.end === 0)) return;
         if (a.control === 'signal') {
