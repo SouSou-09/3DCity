@@ -12,9 +12,10 @@ import { addBlocks } from './blocks';
 import { addTowers } from './towers';
 import { addWorks } from './works';
 import { addBuildParts } from './buildparts';
+import { addTracks } from './tracks';
 import { addStructures } from './structures';
 
-export type ModelCategory = 'segment' | 'highway' | 'slope' | 'curve' | 'junction' | 'roundabout' | 'sidewalk' | 'bridge' | 'elevated' | 'signal' | 'sign' | 'furniture' | 'plant' | 'house' | 'apartment' | 'shop' | 'office' | 'industrial' | 'buildpart';
+export type ModelCategory = 'segment' | 'highway' | 'slope' | 'curve' | 'junction' | 'roundabout' | 'sidewalk' | 'bridge' | 'elevated' | 'signal' | 'sign' | 'furniture' | 'plant' | 'house' | 'apartment' | 'shop' | 'office' | 'industrial' | 'buildpart' | 'track' | 'crossing' | 'station' | 'railpart';
 export const MODEL_CATEGORIES: [ModelCategory, string][] = [
   ['segment', '道路区間'],
   ['highway', '高速道路・ランプ'],
@@ -28,6 +29,7 @@ export const MODEL_CATEGORIES: [ModelCategory, string][] = [
   ['signal', '信号機'],
   ['sign', '標識・工事用品'], ['furniture', '歩道設備'], ['plant', '樹木・植栽'],
   ['house', '戸建て住宅'], ['apartment', '集合住宅'], ['shop', '店舗・商業'], ['office', 'オフィス・高層'], ['industrial', '工場・倉庫'], ['buildpart', '建物の部品'],
+  ['track', '線路'], ['crossing', '踏切'], ['station', '駅'], ['railpart', '鉄道設備'],
 ];
 
 export interface ModelSpec {
@@ -296,5 +298,6 @@ addBlocks();
 addTowers();
 addWorks();
 addBuildParts();
+addTracks();
 
 export const MODELS: readonly ModelSpec[] = models;

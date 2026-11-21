@@ -63,16 +63,16 @@ const GREY: RGB[] = [hex(0x74726f), hex(0x5c5956), hex(0x868280), hex(0x4c4a48)]
 const GRANITE: RGB[] = [hex(0x8a7d78), hex(0x9c8e86), hex(0x6a605c), hex(0xa8a09a), hex(0x54504e)];
 const BASALT: RGB[] = [hex(0x3c3d40), hex(0x4a4b4e), hex(0x2e2f31), hex(0x56575a)];
 const LIME: RGB[] = [hex(0xa8a294), hex(0x928c7e), hex(0xb8b2a6), hex(0x7c776c)];
-add('ballast-grey', 'バラスト 灰', [2, 2], (t, s) => ballast(t, s, { colors: GREY, rust: 0.15 }), tiled);
-add('ballast-granite', 'バラスト 花崗岩', [2, 2], (t, s) => ballast(t, s, { colors: GRANITE, rust: 0.1 }), tiled);
-add('ballast-basalt', 'バラスト 玄武岩', [2, 2], (t, s) => ballast(t, s, { colors: BASALT, rust: 0.2 }), tiled);
-add('ballast-limestone', 'バラスト 石灰岩', [2, 2], (t, s) => ballast(t, s, { colors: LIME, rust: 0.2 }), tiled);
-add('ballast-brown', 'バラスト 鉄粉で茶色', [2, 2], (t, s) => ballast(t, s, { colors: GREY, rust: 0.85 }), tiled);
-add('ballast-oily', 'バラスト 油じみ', [2, 2], (t, s) => ballast(t, s, { colors: GREY, rust: 0.5, oil: 0.9 }), tiled);
-add('ballast-weedy', 'バラスト 雑草', [2, 2], (t, s) => ballast(t, s, { colors: GRANITE, rust: 0.45, weeds: 0.55, cover: 0.9, soil: [0.2, 0.17, 0.12] }), tiled);
-add('ballast-overgrown', 'バラスト 草に埋もれた廃線', [2, 2], (t, s) => ballast(t, s, { colors: LIME, rust: 0.6, weeds: 1, cover: 0.7, soil: [0.22, 0.18, 0.12] }), tiled);
-add('ballast-cinder', '細かい燃えがら(側線)', [2, 2], (t, s) => ballast(t, s, { colors: BASALT, size: 0.022, rust: 0.35, oil: 0.3, cover: 0.85 }), tiled);
-add('ballast-fine', '細粒の砕石(歩廊)', [2, 2], (t, s) => ballast(t, s, { colors: LIME, size: 0.025, rust: 0.1 }), tiled);
+add('ballast-grey', 'バラスト 灰', [1.1, 1.1], (t, s) => ballast(t, s, { colors: GREY, rust: 0.15 }), tiled);
+add('ballast-granite', 'バラスト 花崗岩', [1.1, 1.1], (t, s) => ballast(t, s, { colors: GRANITE, rust: 0.1 }), tiled);
+add('ballast-basalt', 'バラスト 玄武岩', [1.1, 1.1], (t, s) => ballast(t, s, { colors: BASALT, rust: 0.2 }), tiled);
+add('ballast-limestone', 'バラスト 石灰岩', [1.1, 1.1], (t, s) => ballast(t, s, { colors: LIME, rust: 0.2 }), tiled);
+add('ballast-brown', 'バラスト 鉄粉で茶色', [1.1, 1.1], (t, s) => ballast(t, s, { colors: GREY, rust: 0.85 }), tiled);
+add('ballast-oily', 'バラスト 油じみ', [1.1, 1.1], (t, s) => ballast(t, s, { colors: GREY, rust: 0.5, oil: 0.9 }), tiled);
+add('ballast-weedy', 'バラスト 雑草', [1.1, 1.1], (t, s) => ballast(t, s, { colors: GRANITE, rust: 0.45, weeds: 0.55, cover: 0.9, soil: [0.2, 0.17, 0.12] }), tiled);
+add('ballast-overgrown', 'バラスト 草に埋もれた廃線', [1.1, 1.1], (t, s) => ballast(t, s, { colors: LIME, rust: 0.6, weeds: 1, cover: 0.7, soil: [0.22, 0.18, 0.12] }), tiled);
+add('ballast-cinder', '細かい燃えがら(側線)', [1.1, 1.1], (t, s) => ballast(t, s, { colors: BASALT, size: 0.022, rust: 0.35, oil: 0.3, cover: 0.85 }), tiled);
+add('ballast-fine', '細粒の砕石(歩廊)', [1.1, 1.1], (t, s) => ballast(t, s, { colors: LIME, size: 0.025, rust: 0.1 }), tiled);
 
 // --- Sleepers. The grain runs along x; four sleepers' worth of rows, so neighbours can differ. ---
 function sleeperWood(tex: Tex, seed: number, color: RGB, age: number): TextureData {
