@@ -1,5 +1,5 @@
 import { resample } from '../core/geom';
-import { Vec2, clamp, mix, smoothstep } from '../core/vec2';
+import { Vec2, clamp, mix } from '../core/vec2';
 import { Rail } from './rail';
 import { RoadEdge, RoadGraph, RoadNode } from './roadGraph';
 import { Terrain, heightAt } from './terrain';
@@ -10,9 +10,11 @@ export const HIGHWAY_LIFT = 6.2;
 export const DECK_HEIGHT = 5;
 /** Lowest road surface next to water. */
 const MIN_ROAD = 0.9;
-/** Above this height over the ground a road stands on a structure instead of the ground. */
-export const STRUCTURE_ABOVE = 2.2;
 const RAIL_CLEARANCE = 7;
+/** A ramp this far from the freeway's centre line has left the freeway's deck. */
+export const RAMP_CLEAR = 20;
+/** Steepest street, rise over run. */
+export const MAX_GRADE = 0.16;
 /** Freeway surface above the surface of a street passing below: headroom plus the deck. */
 export const STREET_CLEARANCE = 6.4;
 const STEP = 5;
@@ -81,11 +83,63 @@ export function roadLevels(graph: RoadGraph, t: Terrain, rail: Rail): RoadLevels
     let gx = (ground(t, n.x + 10, n.y) - ground(t, n.x - 10, n.y)) / 20;
     let gy = (ground(t, n.x, n.y + 10) - ground(t, n.x, n.y - 10)) / 20;
     const g = Math.hypot(gx, gy);
-    const k = h < MIN_ROAD + 0.6 ? 0 : g > 0.07 ? 0.07 / g : 1;
+    const k = h < MIN_ROAD + 0.6 ? 0 : g > 0.12 ? 0.12 / g : 1;
     gx *= k;
     gy *= k;
     return { h: Math.max(h, MIN_ROAD), gx, gy };
   });
+  const fitted: [number, number, number][] = [];
+  // On slopes too steep for a street, junctions move up or down until every street between them can make the climb.
+  const floor = nodes.map((p) => p.h);
+  for (let it = 0; it < 80; it++) {
+    let moved = false;
+    for (const e of graph.edges) {
+      if (elevated(e) || e.a === e.b) continue;
+      const d = nodes[e.b].h - nodes[e.a].h;
+      const most = MAX_GRADE * 0.85 * e.length;
+      if (Math.abs(d) <= most) continue;
+      const shift = ((Math.abs(d) - most) / 2) * Math.sign(d);
+      const water = (i: number): boolean => graph.nodes[i].edges.some((id) => graph.edges[id].bridge) || floor[i] < MIN_ROAD + 0.6;
+      // Junctions at the water or on a bridge stay; the other end takes the whole change.
+      const [fa, fb] = [water(e.a), water(e.b)];
+      if (fa && fb) continue;
+      if (!fa) nodes[e.a].h += fb ? shift * 2 : shift;
+      if (!fb) nodes[e.b].h -= fa ? shift * 2 : shift;
+      moved = true;
+    }
+    if (!moved) break;
+  }
+
+  // Tilt each junction towards its neighbours, so that the streets between two junctions leave both smoothly.
+  graph.nodes.forEach((n, i) => {
+    const p = nodes[i];
+    if (kind[i] !== 'street') return;
+    // Junctions at the water or at the end of a bridge stay nearly level.
+    const most = n.edges.some((id) => graph.edges[id].bridge) || floor[i] < MIN_ROAD + 0.6 ? 0.04 : 0.14;
+    let [axx, axy, ayy, bx, by] = [0.03, 0, 0.03, 0.03 * p.gx, 0.03 * p.gy];
+    for (const id of n.edges) {
+      const e = graph.edges[id];
+      const o = e.a === i ? e.b : e.a;
+      if (o === i || elevated(e)) continue;
+      const dx = graph.nodes[o].x - n.x;
+      const dy = graph.nodes[o].y - n.y;
+      const w = 1 / (dx * dx + dy * dy || 1);
+      const dh = nodes[o].h - p.h;
+      axx += w * dx * dx;
+      axy += w * dx * dy;
+      ayy += w * dy * dy;
+      bx += w * dx * dh;
+      by += w * dy * dh;
+    }
+    const det = axx * ayy - axy * axy;
+    let gx = (bx * ayy - by * axy) / det;
+    let gy = (by * axx - bx * axy) / det;
+    const g = Math.hypot(gx, gy);
+    if (g > most) [gx, gy] = [(gx * most) / g, (gy * most) / g];
+    fitted.push([i, gx, gy]);
+  });
+  for (const [i, gx, gy] of fitted) [nodes[i].gx, nodes[i].gy] = [gx, gy];
+
   const edges: EdgeLevel[] = new Array(graph.edges.length);
   for (const e of graph.edges) if (!elevated(e)) edges[e.id] = edgeLevel(e);
   // The freeway also clears every street that passes below it.
@@ -119,6 +173,12 @@ export function roadLevels(graph: RoadGraph, t: Terrain, rail: Rail): RoadLevels
         w += 1 / e.length;
       }
       if (w) nodes[i].h = Math.max(sum / w, ground(t, n.x, n.y) + 0.3, MIN_ROAD + 1);
+      // Still beside the freeway it came from: at deck level.
+      for (const id of n.edges) {
+        const e = graph.edges[id];
+        const o = e.a === i ? e.b : e.a;
+        if (kind[o] === 'highway' && Math.hypot(graph.nodes[o].x - n.x, graph.nodes[o].y - n.y) < RAMP_CLEAR + 12) nodes[i].h = nodes[o].h;
+      }
     });
   }
 
@@ -140,7 +200,10 @@ export function roadLevels(graph: RoadGraph, t: Terrain, rail: Rail): RoadLevels
       const db = hb - overRail(b.x, b.y, base[base.length - 1]);
       h = base.map((v, i) => overRail(pts[i].x, pts[i].y, v) + mix(da, db, s[i] / L));
     } else if (e.cls === 'ramp') {
-      h = pts.map((_, i) => Math.max(mix(ha, hb, smoothstep(0, 1, s[i] / L)), Math.min(g[i] + 0.3, Math.max(ha, hb))));
+      // Level for the last stretch before a street junction; a steady grade in between.
+      const flat = (n: number): number => (kind[n] === 'street' ? Math.min(20, 0.25 * L) : 0);
+      const [fa, fb] = [flat(e.a), flat(e.b)];
+      h = pts.map((_, i) => Math.max(mix(ha, hb, clamp((s[i] - fa) / (L - fa - fb), 0, 1)), Math.min(g[i] + 0.3, Math.max(ha, hb))));
     } else if (e.bridge) {
       h = pts.map((_, i) => mix(ha, hb, s[i] / L));
     } else {
@@ -150,35 +213,62 @@ export function roadLevels(graph: RoadGraph, t: Terrain, rail: Rail): RoadLevels
       const pa = base[0] - planeAt(a, nodes[e.a], pts[0].x, pts[0].y);
       const pb = base[base.length - 1] - planeAt(b, nodes[e.b], pts[pts.length - 1].x, pts[pts.length - 1].y);
       h = base.map((v, i) => v - mix(pa, pb, s[i] / L));
+      // Close to a junction the street lies in the junction's plane.
+      const zone = Math.min(16, 0.3 * L);
+      h = h.map((v, i) => (s[i] < zone ? planeAt(a, nodes[e.a], pts[i].x, pts[i].y) : s[i] > L - zone ? planeAt(b, nodes[e.b], pts[i].x, pts[i].y) : v));
+      // No steeper than a street can be: cut into the slope or fill instead.
+      const lim = Math.max(MAX_GRADE, (Math.abs(h[h.length - 1] - h[0]) / L) * 1.2);
+      const [h0, h1] = [h[0], h[h.length - 1]];
+      // Stay inside what can be reached from both ends, then smooth out what is still too steep.
+      h = h.map((v, i) => clamp(v, Math.max(h0 - lim * s[i], h1 - lim * (L - s[i])), Math.min(h0 + lim * s[i], h1 + lim * (L - s[i]))));
+      for (let i = 1; i < h.length; i++) h[i] = clamp(h[i], h[i - 1] - lim * (s[i] - s[i - 1]), h[i - 1] + lim * (s[i] - s[i - 1]));
+      for (let i = h.length - 2; i >= 0; i--) h[i] = clamp(h[i], h[i + 1] - lim * (s[i + 1] - s[i]), h[i + 1] + lim * (s[i + 1] - s[i]));
     }
     return { pts, s, h, ground: g };
   }
 
   for (const e of graph.edges) if (elevated(e)) edges[e.id] = edgeLevel(e);
 
-  // A ramp leaves the freeway at deck level: it follows the deck until the two have separated.
+  // A ramp leaves the freeway at deck level: it rides on the deck until the two have separated, then comes down.
   for (const e of graph.edges) {
     if (e.cls !== 'ramp') continue;
     const lv = edges[e.id];
+    const n = lv.pts.length;
+    const L = lv.s[n - 1] || 1;
     for (const end of [e.a, e.b]) {
       if (kind[end] !== 'highway') continue;
       const hw = graph.nodes[end].edges.filter((id) => graph.edges[id].cls === 'highway');
-      lv.pts.forEach((p, i) => {
-        let best = Infinity;
-        let hh = 0;
+      const at = (k: number): number => (end === e.a ? k : n - 1 - k);
+      const deck = (p: Vec2): { d: number; h: number } => {
+        let best = { d: Infinity, h: 0 };
         for (const id of hw) {
           const o = edges[id];
           for (let k = 0; k < o.pts.length; k++) {
             const d = Math.hypot(o.pts[k].x - p.x, o.pts[k].y - p.y);
-            if (d < best) {
-              best = d;
-              hh = o.h[k];
-            }
+            if (d < best.d) best = { d, h: o.h[k] };
           }
         }
-        const w = smoothstep(20, 46, best);
-        if (w < 1) lv.h[i] = mix(hh, lv.h[i], w);
-      });
+        return best;
+      };
+      let sep = 0;
+      while (sep < n - 2 && deck(lv.pts[at(sep)]).d < RAMP_CLEAR) sep++;
+      const other = end === e.a ? e.b : e.a;
+      const tail = kind[other] === 'street' ? Math.min(20, 0.25 * L) : 0;
+      // Stay up until past any street that goes under the ramp.
+      for (const c of graph.crossings) {
+        if (c.highway !== e.id) continue;
+        let k = 0;
+        for (let j = 1; j < n; j++) if (Math.hypot(lv.pts[at(j)].x - c.x, lv.pts[at(j)].y - c.y) < Math.hypot(lv.pts[at(k)].x - c.x, lv.pts[at(k)].y - c.y)) k = j;
+        sep = Math.max(sep, Math.min(n - 3, k + 3));
+      }
+      const s0 = Math.abs(lv.s[at(sep)] - lv.s[at(0)]);
+      const hs = deck(lv.pts[at(Math.min(sep, n - 1))]).h;
+      for (let k = 0; k < n; k++) {
+        const i = at(k);
+        const sk = Math.abs(lv.s[i] - lv.s[at(0)]);
+        if (k <= sep) lv.h[i] = deck(lv.pts[i]).d < RAMP_CLEAR + 30 ? deck(lv.pts[i]).h : hs;
+        else lv.h[i] = Math.max(mix(hs, nodes[other].h, clamp((sk - s0) / Math.max(1, L - tail - s0), 0, 1)), Math.min(lv.ground[i] + 0.3, hs));
+      }
     }
   }
   return { nodes, edges };

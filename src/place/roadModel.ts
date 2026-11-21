@@ -5,7 +5,7 @@ import { Section, layout, reversed, sweepSection } from '../assets/mesh/section'
 import { pointSeg, resample } from '../core/geom';
 import { Vec2, clamp, mix, smoothstep } from '../core/vec2';
 import { City } from '../gen/city';
-import { NodePlane, RoadLevels, STRUCTURE_ABOVE, roadLevels } from '../gen/roadHeights';
+import { NodePlane, RoadLevels, roadLevels } from '../gen/roadHeights';
 import { RoadClass } from '../gen/streamlines';
 import { heightAt } from '../gen/terrain';
 import { HIGHWAY_DECK, RAMP_DECK, sectionFor, surface } from './roadSections3d';
@@ -485,7 +485,6 @@ export function buildRoadModel(city: City): RoadModel {
     const q0 = sp.p0 ?? lv.pts[i0];
     const q1 = sp.p1 ?? lv.pts[i1];
     const room = Math.hypot(q1.x - q0.x, q1.y - q0.y);
-    const blend = clamp(room / 2, 0.01, 25);
     const pts: Vec2[] = [];
     const base: number[] = [];
     const tan: Vec2[] = [];
@@ -525,6 +524,12 @@ export function buildRoadModel(city: City): RoadModel {
       });
     }
 
+    // The further a junction's plane is from the street's own level where they meet, the longer the easing between them.
+    const ease = ([[a, ca, 0], [b, cb, base.length - 1]] as const).map(([arm, cl, k]) => {
+      if (!arm || !cl) return 0;
+      const ph = cl.plane.h + cl.plane.gx * (pts[k].x - cl.x) + cl.plane.gy * (pts[k].y - cl.y);
+      return clamp(Math.max(20, Math.abs(ph - base[k]) / 0.05), 0.01, room * 0.5);
+    });
     const hs: number[] = [];
     const cross: number[] = [];
     pts.forEach((p, k) => {
@@ -532,7 +537,7 @@ export function buildRoadModel(city: City): RoadModel {
       let c = 0;
       const rx = -tan[k].y;
       const ry = tan[k].x;
-      for (const [arm, cl] of [[a, ca], [b, cb]] as const) {
+      for (const [arm, cl, blend] of [[a, ca, ease[0]], [b, cb, ease[1]]] as const) {
         if (!arm || !cl) continue;
         const w = smoothstep(arm.reach, arm.reach + blend, Math.hypot(p.x - cl.x, p.y - cl.y));
         const ph = cl.plane.h + cl.plane.gx * (p.x - cl.x) + cl.plane.gy * (p.y - cl.y);
@@ -542,7 +547,10 @@ export function buildRoadModel(city: City): RoadModel {
       // Still on the freeway's deck: ride just above it.
       if (zone[k] >= 0) {
         near[zone[k]].forEach((nr) => {
-          if (nr) h = mix(nr.h + 0.03, h, smoothstep(hp + hc, hp + hc + 26, nr.d));
+          if (!nr) return;
+          // A ramp's own level already follows the deck; a branching freeway is eased onto it.
+          if (e.cls === 'ramp') h += 0.03 * (1 - smoothstep(hp + hc, hp + hc + 6, nr.d));
+          else h = mix(nr.h + 0.03, h, smoothstep(hp + hc, hp + hc + 26, nr.d));
         });
       }
       hs.push(h);
@@ -662,7 +670,7 @@ export function buildRoadModel(city: City): RoadModel {
       const [f0, f1] = [fine[k], fine[k + 1]];
       const [g0, g1] = [gAt(f0), gAt(f1)];
       const inFreeway = clear.some((c, end) => c && (end === 0 ? f1.s < c.sc : f0.s > c.sc));
-      if (f0.p[1] - g0 < STRUCTURE_ABOVE && f1.p[1] - g1 < STRUCTURE_ABOVE && !inFreeway) {
+      if (f0.p[1] - g0 < 0.7 && f1.p[1] - g1 < 0.7 && !inFreeway) {
         segs.push({ ax: f0.p[0], ay: f0.p[2], ah: f0.p[1], ac: 0, bx: f1.p[0], by: f1.p[2], bh: f1.p[1], bc: 0, half: hc });
       }
       if (f0.p[1] - g0 < 0.6 || f1.p[1] - g1 < 0.6 || inFreeway || nearCrossing(f0, 15) || nearCrossing(f1, 15)) continue;
@@ -684,14 +692,24 @@ export function buildRoadModel(city: City): RoadModel {
   }
   for (const id of deferred) build(id);
 
-  const ground = gradeTerrain(city, segs, clusters);
+  // Each junction arm, from the centre to where the edge's own road starts, lies in the junction's plane.
+  for (const c of clusters) {
+    for (const a of c.arms) {
+      if (a.reach === Infinity) continue;
+      const cross = c.plane.gx * -a.dir.y + c.plane.gy * a.dir.x;
+      const bx = c.x + a.dir.x * a.reach;
+      const by = c.y + a.dir.y * a.reach;
+      segs.push({ ax: c.x, ay: c.y, ah: c.plane.h, ac: cross, bx, by, bh: c.plane.h + c.plane.gx * (bx - c.x) + c.plane.gy * (by - c.y), bc: cross, half: half[a.edge] });
+    }
+  }
+  const ground = gradeTerrain(city, segs);
   const tiles = [...builders.values()].map((b) => b.build());
   stats.triangles = tiles.reduce((s, m) => s + m.triangles, 0);
   return { tiles, ground, levels, junctions: clusters.map(({ nodes, x, y, plane, arms, signal }) => ({ nodes, x, y, plane, arms, signal })), lines, cuts, stats };
 }
 
 /** Terrain with the ground under and beside every at-grade road brought to the road's level. */
-function gradeTerrain(city: City, segs: Seg[], junctions: Junction[]): Float32Array {
+function gradeTerrain(city: City, segs: Seg[]): Float32Array {
   const t = city.terrain;
   const { n, cell } = t;
   const out = Float32Array.from(t.height);
@@ -716,7 +734,8 @@ function gradeTerrain(city: City, segs: Seg[], junctions: Junction[]): Float32Ar
       const q = clamp(((x - s.ax) * dx + (y - s.ay) * dy) / l2, 0, 1);
       const px = s.ax + dx * q;
       const py = s.ay + dy * q;
-      const d = Math.max(0, Math.hypot(x - px, y - py) - s.half);
+      // Negative inside the road, so that where roads overlap the one whose middle is nearer wins.
+      const d = Math.hypot(x - px, y - py) - s.half;
       if (d >= best[k] || d > FADE) return;
       // Signed distance to the right of the road, for its cross slope.
       const lat = clamp(((x - s.ax) * -dy + (y - s.ay) * dx) / l, -s.half - 3, s.half + 3);
@@ -724,20 +743,9 @@ function gradeTerrain(city: City, segs: Seg[], junctions: Junction[]): Float32Ar
       level[k] = mix(s.ah, s.bh, q) + mix(s.ac, s.bc, q) * lat;
     });
   }
-  for (const c of junctions) {
-    const r = Math.max(...c.arms.map((a) => (a.reach === Infinity ? 0 : a.reach))) + 2;
-    each(c.x - r - FADE, c.y - r - FADE, c.x + r + FADE, c.y + r + FADE, (k, x, y) => {
-      const dist = Math.hypot(x - c.x, y - c.y);
-      const d = Math.max(0, dist - r);
-      if (d > best[k] || d > FADE) return;
-      const f = dist > r + 3 ? (r + 3) / dist : 1;
-      best[k] = d;
-      level[k] = c.plane.h + (c.plane.gx * (x - c.x) + c.plane.gy * (y - c.y)) * f;
-    });
-  }
   for (let k = 0; k < n * n; k++) {
     if (best[k] > FADE || (out[k] < 0 && best[k] > 3)) continue;
-    out[k] = mix(out[k], level[k] - 0.1, 1 - smoothstep(FULL, FADE, best[k]));
+    out[k] = mix(out[k], level[k] - 0.1, 1 - smoothstep(FULL, FADE, Math.max(0, best[k])));
   }
   return out;
 }
