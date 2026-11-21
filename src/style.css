@@ -1,0 +1,16 @@
+html, body { margin: 0; height: 100%; overflow: hidden; background: #9cc4e4; font-family: system-ui, sans-serif; }
+#map, #scene { position: fixed; inset: 0; width: 100%; height: 100%; cursor: grab; }
+#panel { position: fixed; top: 12px; left: 12px; width: 220px; padding: 12px; background: rgba(255, 255, 255, 0.92); border-radius: 8px; box-shadow: 0 2px 10px rgba(0, 0, 0, 0.25); font-size: 13px; }
+#panel h1 { margin: 0 0 8px; font-size: 16px; }
+#panel h1 small { font-weight: normal; color: #666; font-size: 12px; }
+#panel label { display: block; margin: 4px 0; }
+#panel input[type='number'] { width: 90px; }
+#panel .row { display: flex; gap: 6px; margin: 6px 0; }
+#panel button { flex: 1; padding: 4px; }
+#panel fieldset { border: 1px solid #ccc; border-radius: 4px; margin: 8px 0; padding: 4px 8px; }
+#stats { margin: 0; font-size: 11px; line-height: 1.5; white-space: pre-wrap; }
+.hint { margin: 6px 0 0; color: #777; font-size: 11px; }
+#scene { display: none; }
+body.mode3d #scene { display: block; }
+body.mode3d #map, body.mode3d #layers { display: none; }
+#panel button.active { font-weight: bold; }
