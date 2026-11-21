@@ -13,6 +13,7 @@ import { addTowers } from './towers';
 import { addWorks } from './works';
 import { addBuildParts } from './buildparts';
 import { addTracks } from './tracks';
+import { addCrossings } from './crossings';
 import { addStructures } from './structures';
 
 export type ModelCategory = 'segment' | 'highway' | 'slope' | 'curve' | 'junction' | 'roundabout' | 'sidewalk' | 'bridge' | 'elevated' | 'signal' | 'sign' | 'furniture' | 'plant' | 'house' | 'apartment' | 'shop' | 'office' | 'industrial' | 'buildpart' | 'track' | 'crossing' | 'station' | 'railpart';
@@ -299,5 +300,6 @@ addTowers();
 addWorks();
 addBuildParts();
 addTracks();
+addCrossings();
 
 export const MODELS: readonly ModelSpec[] = models;
