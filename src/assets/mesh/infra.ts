@@ -617,7 +617,7 @@ export function addInfra(): void {
   A('dumpster-enclosure', 'ゴミ置き場 ブロック塀と扉', (b, f) => {
     pad(b, CONC, f, 5, 3.4, 0.02);
     masonry(b, move(f, -2.5, 0, -1.7), 5, 'wall/block-beige', { h: 1.9 });
-    for (const sx of [-1, 1]) masonry(b, turn(move(f, sx * 2.5, 0, sx * 1.7), sx * 90 + 180), 3.4, 'wall/block-beige', { h: 1.9 });
+    for (const sx of [-1, 1]) masonry(b, turn(move(f, sx * 2.5, 0, sx * 1.7), sx * 90), 3.4, 'wall/block-beige', { h: 1.9 });
     for (const sx of [-1, 1]) {
       const g = turn(move(f, sx * 2.4, 0, 1.7), sx > 0 ? 200 : -20);
       box(b, S('fence-board-brown'), g, [1.15, 0.95, 0], [1.15, 0.85, 0.025]);
