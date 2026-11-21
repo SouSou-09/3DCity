@@ -1,6 +1,6 @@
 import { Rand, textureSpec } from '../tex';
 import { MeshBuilder } from './builder';
-import { acUnit, antenna, awning, balcony, barrel, billboard, blade, chimney, duct, flatRoof, Opening, sawtooth, sides, sign, skylight, stoop, vent, wall, waterTank, weatherBySeed } from './buildkit';
+import { acUnit, antenna, awning, balcony, barrel, billboard, blade, chimney, duct, flatRoof, Opening, pq, sawtooth, sides, sign, skylight, slab, stoop, vent, wall, waterTank, weatherBySeed } from './buildkit';
 import { block, roofPlant } from './blocks';
 import { RoofOpts, roofOn, spread } from './houses';
 import { box, face, lathe, pipe, stand } from './kit';
@@ -150,6 +150,9 @@ function gasStation(b: MeshBuilder, o: { seed: number; canopy: string; islands: 
   const cz = 9;
   box(b, T('white'), stand(), [0, ch + 0.45, cz], [cw / 2, 0.45, cd / 2]);
   for (const s of sides(0, cz, cw + 0.02, cd + 0.02, ch)) face(b, o.canopy, s.f, [s.w / 2, 0.45, 0], s.w, 0.9, [0, 0, s.w, 0.9]);
+  // Dust settles on the canopy roof and washes down its fascia.
+  slab(b, `trim/pond-${1 + (o.seed % 3)}`, ch + 0.9, -cw / 2, cz - cd / 2, cw / 2, cz + cd / 2, 1);
+  for (const s of sides(0, cz, cw + 0.02, cd + 0.02, ch)) pq(b, `trim/runoff-light-${1 + (o.seed % 2)}`, s.f, [[0, 0, 0], [s.w, 0, 0], [s.w, 0.9, 0], [0, 0.9, 0]], [[0, 1.1], [s.w, 1.1], [s.w, 2], [0, 2]], 2);
   box(b, T('white'), stand(), [0, ch - 0.02, cz], [cw / 2 - 0.3, 0.02, cd / 2 - 0.3]);
   for (let i = 0; i < o.islands; i++) {
     const x = (i - (o.islands - 1) / 2) * 7;
