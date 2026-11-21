@@ -19,6 +19,7 @@ import { addStations } from './stations';
 import { addStructures } from './structures';
 import { addBoundaries } from './boundaries';
 import { addWaterfront } from './waterfront';
+import { addParks } from './parks';
 
 export type ModelCategory = 'segment' | 'highway' | 'slope' | 'curve' | 'junction' | 'roundabout' | 'sidewalk' | 'bridge' | 'elevated' | 'signal' | 'sign' | 'furniture' | 'plant' | 'house' | 'apartment' | 'shop' | 'office' | 'industrial' | 'buildpart' | 'track' | 'crossing' | 'station' | 'railpart' | 'boundary' | 'waterfront' | 'park' | 'infra';
 export const MODEL_CATEGORIES: [ModelCategory, string][] = [
@@ -310,5 +311,6 @@ addRailParts();
 addStations();
 addBoundaries();
 addWaterfront();
+addParks();
 
 export const MODELS: readonly ModelSpec[] = models;
