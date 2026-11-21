@@ -3,9 +3,11 @@ import { Arm, Control, junction, roundabout } from './junction';
 import { Age, StreetOpts, highway, plainTex, street } from './presets';
 import { Section, edgeElement, layout, reversed, stamp, sweepSection } from './section';
 import { addSidewalks } from './sidewalks';
+import { addSignals } from './signals';
+import { addSigns } from './signs';
 import { addStructures } from './structures';
 
-export type ModelCategory = 'segment' | 'highway' | 'slope' | 'curve' | 'junction' | 'roundabout' | 'sidewalk' | 'bridge' | 'elevated';
+export type ModelCategory = 'segment' | 'highway' | 'slope' | 'curve' | 'junction' | 'roundabout' | 'sidewalk' | 'bridge' | 'elevated' | 'signal' | 'sign';
 export const MODEL_CATEGORIES: [ModelCategory, string][] = [
   ['segment', '道路区間'],
   ['highway', '高速道路・ランプ'],
@@ -16,6 +18,8 @@ export const MODEL_CATEGORIES: [ModelCategory, string][] = [
   ['sidewalk', '歩道・縁石'],
   ['bridge', '橋'],
   ['elevated', '高架・立体交差'],
+  ['signal', '信号機'],
+  ['sign', '標識・工事用品'],
 ];
 
 export interface ModelSpec {
@@ -275,5 +279,7 @@ RB('culdesac-small', '袋小路 小(郊外)', { arms: [{ angle: 0, section: stre
 
 addSidewalks();
 addStructures();
+addSignals();
+addSigns();
 
 export const MODELS: readonly ModelSpec[] = models;

@@ -8,6 +8,7 @@ import './catalog.css';
 const TEX_CATEGORIES: [string, string][] = [
   ['asphalt', 'アスファルト'], ['concrete', 'コンクリート'], ['paving', '舗装材'], ['curb', '縁石'], ['ground', '地面'],
   ['structure', '構造物'], ['line', '区画線'], ['crosswalk', '横断歩道・停止線'], ['symbol', '路面標示'], ['cover', '蓋・汚れ'],
+  ['sign', '標識面'], ['signal', '信号灯器・支柱'],
 ];
 const params = new URLSearchParams(location.search);
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -62,8 +63,9 @@ function material(id: string, layer: number): THREE.Material {
     return t;
   };
   const orm = make(d.orm, false);
+  const albedo = make(d.albedo, true);
   m = new THREE.MeshStandardMaterial({
-    map: make(d.albedo, true), normalMap: make(d.normal, false), roughnessMap: orm, metalnessMap: orm, roughness: 1, metalness: 1,
+    map: albedo, ...(spec.emissive ? { emissive: 0xffffff, emissiveMap: albedo, emissiveIntensity: spec.emissive } : {}), normalMap: make(d.normal, false), roughnessMap: orm, metalnessMap: orm, roughness: 1, metalness: 1,
     transparent: spec.decal, depthWrite: !spec.decal, polygonOffset: layer > 0, polygonOffsetFactor: -layer * 2, polygonOffsetUnits: -layer * 4,
     side: spec.decal ? THREE.FrontSide : THREE.DoubleSide, shadowSide: THREE.DoubleSide,
   });
@@ -210,7 +212,7 @@ function open(kind: 'tex' | 'model', id: string): void {
     const size = data.max.map((v, i) => (v - data.min[i]).toFixed(1));
     $('title').textContent = spec.label;
     $('info').textContent = `${spec.id} ・ ${size[0]} × ${size[2]} m(高さ ${size[1]} m)・ ${data.triangles.toLocaleString()} 三角形 ・ ${data.parts.length} マテリアル`;
-    target = viewStage.show(modelGroup(data), data.min, data.max, viewDir ?? undefined, viewZoom);
+    target = viewStage.show(modelGroup(data), data.min, data.max, viewDir ?? defaultDir(spec), viewZoom);
   } else {
     const spec = textureSpec(id);
     const d = texData(id, 1);
@@ -284,11 +286,13 @@ function card(label: string, id: string, draw: (c: HTMLCanvasElement) => void, o
   observer.observe(el);
   return el;
 }
+/** Street furniture is looked at from the road, not from above. */
+const defaultDir = (spec: ModelSpec): [number, number, number] | undefined => (spec.category === 'signal' || spec.category === 'sign' ? [0.4, 0.14, 1] : undefined);
 function modelThumb(spec: ModelSpec, c: HTMLCanvasElement): void {
   const data = spec.build();
   const group = modelGroup(data);
   thumbStage.camera.aspect = 480 / 300;
-  thumbStage.show(group, data.min, data.max);
+  thumbStage.show(group, data.min, data.max, defaultDir(spec));
   thumbStage.render(480, 300);
   c.width = 480;
   c.height = 300;
