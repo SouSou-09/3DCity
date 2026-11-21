@@ -483,7 +483,7 @@ export interface GuardOpts {
   gap?: number;
 }
 export function guardrail(b: MeshBuilder, run: Run, len: number, o: GuardOpts = {}): void {
-  const mat = o.mat ?? ZINC;
+  const mat = o.mat ?? 'trim/paint-galvanized';
   const wood = (o.post ?? 'steel') === 'wood';
   const postMat = o.postMat ?? (wood ? GREYWOOD : mat);
   const prof = o.thrie ? THRIE : W_BEAM;
@@ -542,7 +542,7 @@ export function guardrail(b: MeshBuilder, run: Run, len: number, o: GuardOpts = 
 }
 /** Tensioned wire-rope barrier. */
 export function cableBarrier(b: MeshBuilder, f: Pose, len: number, o: { ropes?: number; mat?: string; anchors?: boolean } = {}): void {
-  const mat = o.mat ?? ZINC;
+  const mat = o.mat ?? 'trim/paint-galvanized';
   const ropes = o.ropes ?? 4;
   const [a0, a1] = o.anchors === false ? [0, len] : [2.4, len - 2.4];
   const xs = spaced(a1 - a0, 3).map((x) => x + a0);
@@ -560,7 +560,7 @@ export function cableBarrier(b: MeshBuilder, f: Pose, len: number, o: { ropes?: 
     }
     for (let k = 0; k + 1 < pts.length; k++) b.tube(RUSTY, pts[k], pts[k + 1], 0.0095, 5);
   }
-  if (o.anchors !== false) for (const x of [0.25, len - 0.25]) box(b, OLDCONC, f, [x, 0.07, 0], [0.35, 0.07, 0.3]);
+  if (o.anchors !== false) for (const x of [0.25, len - 0.25]) box(b, 'concrete/walk-plain', f, [x, 0.07, 0], [0.35, 0.07, 0.3], 'Y');
 }
 /** Concrete barrier of a given profile. `joints` > 0 cuts it into loose precast units. */
 export function concreteBarrier(b: MeshBuilder, run: Run, len: number, o: { tex?: string; prof?: [number, number][]; unit?: number; taper?: boolean } = {}): void {
