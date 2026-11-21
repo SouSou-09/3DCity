@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>3DCity 道路アセットカタログ</title>
+  </head>
+  <body>
+    <header>
+      <h1>3DCity <small>M2 道路アセット</small></h1>
+      <nav id="tabs"></nav>
+      <span id="count"></span>
+      <a href="./">街の地図へ</a>
+    </header>
+    <nav id="cats"></nav>
+    <main id="grid"></main>
+    <aside id="detail" hidden>
+      <button id="close">閉じる ×</button>
+      <h2 id="title"></h2>
+      <p id="info"></p>
+      <canvas id="viewer"></canvas>
+      <div id="maps"></div>
+    </aside>
+    <script type="module" src="/src/catalog/main.ts"></script>
+  </body>
+</html>
