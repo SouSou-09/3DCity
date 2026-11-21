@@ -110,7 +110,7 @@ function basket(b: MeshBuilder, f: Pose, y: number, side: number, tex: string, f
   lathe(b, F('coat-brown'), g, [[0, -0.14], [0.12, -0.12], [0.2, -0.02], [0.21, 0]], 10);
   plant(b, g, 0, 0.26, flowers, 0.7);
 }
-type Top = 'globe' | 'acorn' | 'lantern' | 'disc';
+export type Top = 'globe' | 'acorn' | 'lantern' | 'disc';
 /** Post-top lamp standing on the pose. */
 function topFitting(b: MeshBuilder, f: Pose, kind: Top, on: boolean, tex: string): void {
   if (kind === 'globe') {
@@ -134,7 +134,7 @@ function topFitting(b: MeshBuilder, f: Pose, kind: Top, on: boolean, tex: string
     disc(b, on ? F('led-strip-on') : 'signal/lamp-led-off', { o: at(f, 0, 0.325, 0), x: f.x, y: f.z, z: [-f.y[0], -f.y[1], -f.y[2]] }, [0, 0, 0], 0.36, 16, 0.24);
   }
 }
-interface PostTopOpts {
+export interface PostTopOpts {
   h: number;
   tex: string;
   top: Top;
@@ -148,7 +148,7 @@ interface PostTopOpts {
   baskets?: string;
   r0?: number;
 }
-function postTop(b: MeshBuilder, f: Pose, o: PostTopOpts): void {
+export function postTop(b: MeshBuilder, f: Pose, o: PostTopOpts): void {
   const r0 = o.r0 ?? 0.065;
   const on = o.on !== false;
   const arms = o.arms ?? 0;
@@ -376,7 +376,7 @@ function arch(z0: number, z1: number, y0: number, y1: number, rise: number, n = 
   for (let i = 0; i <= n; i++) pts.push([(z0 + z1) / 2 + ((z1 - z0) / 2) * Math.cos((i / n) * Math.PI), y1 + rise * Math.sin((i / n) * Math.PI)]);
   return pts;
 }
-interface BenchOpts {
+export interface BenchOpts {
   kind: 'park' | 'flat' | 'metal' | 'concrete' | 'ad';
   len?: number;
   /** Slat finish; concrete benches get a timber top when set. */
@@ -389,7 +389,7 @@ interface BenchOpts {
   sheet?: string;
   conc?: string;
 }
-function bench(b: MeshBuilder, f: Pose, o: BenchOpts): void {
+export function bench(b: MeshBuilder, f: Pose, o: BenchOpts): void {
   const len = o.kind === 'ad' ? 1.9 : (o.len ?? 1.8);
   const frame = o.frame ?? P('black');
   const slats = F(`slats-${o.slats ?? 'new'}`);
@@ -455,8 +455,8 @@ function sack(b: MeshBuilder, f: Pose, r = 0.26): void {
   ball(b, DARK, f, r * 0.78, r, 14, 0.78);
   lathe(b, DARK, f, [[0.03, r * 1.5], [0.012, r * 1.57], [0.05, r * 1.7]], 6);
 }
-type BinKind = 'mesh' | 'post' | 'drum' | 'concrete' | 'hood' | 'dome' | 'solar' | 'slat';
-interface BinOpts {
+export type BinKind = 'mesh' | 'post' | 'drum' | 'concrete' | 'hood' | 'dome' | 'solar' | 'slat';
+export interface BinOpts {
   kind: BinKind;
   tex: string;
   /** Lid, hood or trim material. */
@@ -464,7 +464,7 @@ interface BinOpts {
   label?: string;
   full?: boolean;
 }
-function bin(b: MeshBuilder, f: Pose, o: BinOpts): void {
+export function bin(b: MeshBuilder, f: Pose, o: BinOpts): void {
   const lid = o.lid ?? BLACK;
   const label = (y: number, z: number, s = 0.3): void => {
     if (o.label) face(b, F(`label-${o.label}`), f, [0, y, z], s, s);
@@ -736,7 +736,7 @@ function faceX(b: MeshBuilder, material: string, f: Pose, x: number, cy: number,
   if (dir > 0) face(b, material, { o: f.o, x: neg(f.z), y: f.y, z: f.x }, [-cz, cy, x], w, h);
   else face(b, material, { o: f.o, x: f.z, y: f.y, z: neg(f.x) }, [cz, cy, -x], w, h);
 }
-interface ShelterOpts {
+export interface ShelterOpts {
   len?: number;
   roof?: 'flat' | 'barrel' | 'tilt';
   frame?: string;
@@ -750,7 +750,7 @@ interface ShelterOpts {
   /** Bus stop flag on its own post beside the shelter. */
   sign?: boolean;
 }
-function shelter(b: MeshBuilder, f: Pose, o: ShelterOpts = {}): void {
+export function shelter(b: MeshBuilder, f: Pose, o: ShelterOpts = {}): void {
   const len = o.len ?? 4;
   const frame = o.frame ?? P('black');
   const glass = o.glass === undefined ? F('shelter-glass') : o.glass && F(o.glass);
@@ -1073,7 +1073,7 @@ function adKiosk(b: MeshBuilder, f: Pose, posters: string[], tex: string): void 
     b.tube(tex, at(g, 0.6, 0.4, 0.3465), at(g, 0.6, 2.2, 0.3465), 0.025, 6);
   }
 }
-function streetClock(b: MeshBuilder, f: Pose, tex: string, faceTex: string, twin = false): void {
+export function streetClock(b: MeshBuilder, f: Pose, tex: string, faceTex: string, twin = false): void {
   pole(b, f, { h: 3.3, r0: 0.075, r1: 0.055, tex, base: 'fluted', cap: 'none' });
   const g = move(f, 0, 3.75, 0);
   lathe(b, tex, f, [[0.055, 3.3], [0.09, 3.34], [0.05, 3.38]], 10);
