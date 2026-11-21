@@ -67,7 +67,7 @@ export function wing(b: MeshBuilder, rnd: Rand, o: WingOpts): number {
 }
 
 /** Classical porch: a row of columns carrying an entablature and a pediment. Pose at the wall on the ground, centred, facing out. */
-export function portico(b: MeshBuilder, f: Pose, w: number, depth: number, h: number, n: number, o: { col: string; stone: string; roof: string; base?: number; flat?: boolean }): void {
+export function portico(b: MeshBuilder, f: Pose, w: number, depth: number, h: number, n: number, o: { col: string; stone: string; roof: string; base?: number; flat?: boolean }): { frieze: Pose; scale: number } {
   const base = o.base ?? 0;
   if (base > 0) box(b, o.stone, f, [0, base / 2, depth / 2], [w / 2 + 0.3, base / 2, depth / 2 + 0.2], 'y');
   const r = Math.max(0.22, h * 0.055);
@@ -79,12 +79,14 @@ export function portico(b: MeshBuilder, f: Pose, w: number, depth: number, h: nu
   box(b, o.stone, f, [0, base + h + eh / 2, depth / 2], [w / 2, eh / 2, depth / 2]);
   box(b, o.stone, f, [0, base + h + eh + 0.07, depth / 2], [w / 2 + 0.25, 0.07, depth / 2 + 0.25]);
   const y0 = base + h + eh + 0.14;
-  if (o.flat) return;
+  const out = { frieze: move(f, 0, base + h + eh / 2, depth + 0.01), scale: Math.min((eh * 0.8) / 0.9, (w * 0.7) / 4.8) };
+  if (o.flat) return out;
   const [rise, zf, hw] = [w * 0.15, depth + 0.1, w / 2 + 0.1];
   pt(b, o.stone, f, [[-hw, y0, zf], [hw, y0, zf], [0, y0 + rise, zf]], [[0, 0], [2 * hw, 0], [hw, rise]]);
   const run = Math.hypot(hw + 0.2, rise);
   pq(b, o.roof, f, [[-hw - 0.2, y0, zf + 0.2], [0, y0 + rise + 0.06, zf + 0.2], [0, y0 + rise + 0.06, 0], [-hw - 0.2, y0, 0]], [[0, 0], [run, 0], [run, zf], [0, zf]]);
   pq(b, o.roof, f, [[0, y0 + rise + 0.06, zf + 0.2], [hw + 0.2, y0, zf + 0.2], [hw + 0.2, y0, 0], [0, y0 + rise + 0.06, 0]], [[0, 0], [run, 0], [run, zf], [0, zf]]);
+  return out;
 }
 
 /** Square tower with a clock on each face under a pyramid roof. Pose at the centre of its base. */
@@ -180,8 +182,8 @@ function hall(b: MeshBuilder, o: HallOpts): number {
     const ph = Math.min(top - lift - 1.2, o.floors * fh * 0.82);
     const pw = o.portico * 2.6 + 1.5;
     stoop(b, move(front, 0, 0, 4.2), pw + 1, lift, { mat: 'structure/stone-ashlar', landing: 0.3 });
-    portico(b, move(front, 0, 0, 0), pw, 4.2, ph, o.portico, { col: o.col ?? 'wall/stone-limestone', stone: o.col ?? 'wall/stone-limestone', roof: o.roofMat ?? 'roof/slate-grey', base: lift });
-    nameBoard(b, move(front, 0, lift + 4.6, 0), o.sign, Math.min(1.3, pw / 6));
+    const pc = portico(b, move(front, 0, 0, 0), pw, 4.2, ph, o.portico, { col: o.col ?? 'wall/stone-limestone', stone: o.col ?? 'wall/stone-limestone', roof: o.roofMat ?? 'roof/slate-grey', base: lift });
+    nameBoard(b, pc.frieze, o.sign, pc.scale);
   } else {
     if (lift > 0) stoop(b, front, 5, lift, { mat: 'structure/wall-smooth', rail: 'trim/rail-black', landing: 1.6 });
     if (o.canopy) {
@@ -353,8 +355,8 @@ function grand(b: MeshBuilder, o: GrandOpts): void {
   const pw = o.cols * 2.7 + 1.2;
   const col = o.col ?? o.wall;
   stoop(b, move(front, 0, 0, 4.4), pw + 1.5, o.steps, { mat: 'structure/stone-ashlar', landing: 0.3 });
-  portico(b, front, pw, 4.4, Math.min(top - o.steps - 1.3, o.floors * fh * 0.86), o.cols, { col, stone: col, roof: o.roofMat, base: o.steps });
-  nameBoard(b, move(front, 0, o.steps + 4.5, 0), o.sign, 1.25);
+  const pc = portico(b, front, pw, 4.4, Math.min(top - o.steps - 1.3, o.floors * fh * 0.86), o.cols, { col, stone: col, roof: o.roofMat, base: o.steps });
+  nameBoard(b, pc.frieze, o.sign, pc.scale);
   const ridge = top + (o.roof ? Math.min(o.w, o.d) * 0.16 * 0.55 : 0);
   if (crown === 'dome') {
     const r = Math.min(o.w, o.d) * 0.26;
@@ -414,14 +416,22 @@ export function floodlight(b: MeshBuilder, f: Pose, h: number): void {
   box(b, 'structure/steel-galvanized', tilt(move(f, 0, h, 0.3), 20), [0, 0, 0], [3, 1.6, 0.12]);
   for (let i = 0; i < 5; i++) for (let j = 0; j < 3; j++) face(b, 'trim/paint-white', tilt(move(f, 0, h, 0.3), 20), [(i - 2) * 1.1, (j - 1) * 0.95, 0.13], 0.8, 0.7);
 }
-interface StadiumOpts extends BowlOpts { field: string; fw: number; fd: number; track?: boolean; lights?: number; board?: boolean; sign?: string; arcs?: [number, number][] }
+interface StadiumOpts extends BowlOpts { field: string; fw: number; fd: number; diamond?: boolean; track?: boolean; lights?: number; board?: boolean; sign?: string; arcs?: [number, number][] }
 function stadium(b: MeshBuilder, o: StadiumOpts): void {
   const f = stand();
   const [ox, oz] = [o.rx + o.depth, o.rz + o.depth];
   slab(b, 'concrete/driveway', 0.01, -ox - 4, -oz - 4, ox + 4, oz + 4);
   if (o.track) slab(b, 'site/track-red', 0.03, -o.rx + 1, -o.rz + 1, o.rx - 1, o.rz - 1, 1);
   else slab(b, 'ground/grass-mown', 0.03, -o.rx + 0.5, -o.rz + 0.5, o.rx - 0.5, o.rz - 0.5, 1);
-  slab(b, o.field, 0.05, -o.fw / 2, -o.fd / 2, o.fw / 2, o.fd / 2, 2);
+  if (o.diamond) {
+    // Infield: a dirt square on its corner with grass inside the base paths, home plate towards the stands.
+    const hf = turn(stand([0, 0, -o.rz + 7]), -45);
+    const sq = (m: string, lo: number, hi: number, y: number, layer: number): void => pq(b, m, hf, [[lo, y, hi], [hi, y, hi], [hi, y, lo], [lo, y, lo]], [[lo, lo], [hi, lo], [hi, hi], [lo, hi]], layer);
+    sq('ground/dirt', -4, 34, 0.05, 2);
+    sq('ground/grass-mown', 3, 25, 0.07, 3);
+    for (const [x, z] of [[0, 0], [27.4, 0], [27.4, 27.4], [0, 27.4]]) box(b, 'trim/paint-white', hf, [x, 0.09, z], [0.2, 0.03, 0.2]);
+    lathe(b, 'ground/dirt', move(hf, 13.7, 0.05, 13.7), [[2.7, 0], [0.8, 0.25], [0.02, 0.27]], 14);
+  } else slab(b, o.field, 0.05, -o.fw / 2, -o.fd / 2, o.fw / 2, o.fd / 2, 2);
   for (const [a0, a1] of o.arcs ?? [[0, 360]]) bowl(b, f, { ...o, a0, a1 });
   for (let i = 0; i < (o.lights ?? 0); i++) {
     const [sx, sz] = [i % 2 ? 1 : -1, i % 4 < 2 ? 1 : -1];
@@ -614,7 +624,7 @@ export function addCivic(): void {
     ['stadium-old', '競技場 古いコンクリート', { rx: 62, rz: 40, depth: 22, h: 13, seats: 'trim/seats-grey-old', wall: W('concrete-panel-stained'), field: 'ground/grass-patchy', fw: 100, fd: 60, lights: 4, board: true }],
     ['stadium-two-stands', '競技場 両側スタンド', { rx: 60, rz: 40, depth: 16, h: 10, seats: 'trim/seats-orange', wall: W('concrete-panel'), field: 'site/turf-lines', fw: 104, fd: 64, arcs: side(4), roofed: [[225, 315]], lights: 4, board: true }],
     ['stadium-school', '学校の競技場 片側スタンド', { rx: 58, rz: 38, depth: 9, h: 6, seats: 'trim/seats-grey-old', wall: W('block-grey'), field: 'site/turf-lines', fw: 100, fd: 52, track: true, arcs: [[232, 308]], lights: 4, board: true }],
-    ['stadium-ballpark', '野球場 内野スタンド', { rx: 62, rz: 62, depth: 22, h: 14, seats: 'trim/seats-green', wall: W('brick-red'), field: 'ground/grass-mown', fw: 30, fd: 30, arcs: [[150, 390]], roofed: [[200, 340]], lights: 4, board: true, sign: 'trim/sign-stadium' }],
+    ['stadium-ballpark', '野球場 内野スタンド', { rx: 62, rz: 62, depth: 22, h: 14, seats: 'trim/seats-green', wall: W('brick-red'), field: 'ground/grass-mown', fw: 30, fd: 30, diamond: true, arcs: [[150, 390]], roofed: [[200, 340]], lights: 4, board: true, sign: 'trim/sign-stadium' }],
   ];
   for (const [id, label, o] of STADIUMS) civic(id, label, (b, s) => { weatherBySeed(b, s, o.wall); stadium(b, o); });
   const ARENAS: [string, string, { r: number; h: number; squash: number; wall: string; roof: string; glass: string }][] = [

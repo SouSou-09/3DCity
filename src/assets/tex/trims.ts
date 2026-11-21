@@ -709,12 +709,12 @@ add('trim', 'scoreboard', '得点板', [8, 4], (t, s) => {
   const a = new Art(t, hex(0x141416), 0.4);
   a.rect(hex(0x1c3c2c), 0, a.h - 0.9, a.w, a.h, {});
   a.text(hex(0xf0f0e8), 'HAWKS FIELD', a.w / 2, a.h - 0.72, 0.5, { fit: a.w * 0.8, weight: 0.1 });
-  a.text(hex(0xf0b030), 'HOME', 1.9, 2.2, 0.45, {});
-  a.text(hex(0xf0b030), 'GUEST', 6.1, 2.2, 0.45, {});
-  a.text(hex(0xf04030), '21', 1.9, 0.9, 1.05, { weight: 0.12 });
-  a.text(hex(0xf04030), '14', 6.1, 0.9, 1.05, { weight: 0.12 });
-  a.text(hex(0xf0b030), '08:42', a.w / 2, 1.5, 0.7, { weight: 0.1 });
-  a.text(hex(0xf0f0e8), 'QTR 3', a.w / 2, 0.6, 0.4, {});
+  a.text(hex(0xf0b030), 'HOME', 1.5, 2.45, 0.38, { fit: 1.8 });
+  a.text(hex(0xf0b030), 'GUEST', 6.5, 2.45, 0.38, { fit: 1.8 });
+  a.text(hex(0xf04030), '21', 1.5, 0.9, 1.1, { weight: 0.12, fit: 1.9 });
+  a.text(hex(0xf04030), '14', 6.5, 0.9, 1.1, { weight: 0.12, fit: 1.9 });
+  a.text(hex(0xf0b030), '08:42', a.w / 2, 1.75, 0.6, { weight: 0.1, fit: 2.3 });
+  a.text(hex(0xf0f0e8), 'QTR 3', a.w / 2, 0.7, 0.34, { fit: 1.8 });
   return a.done(s, 0.15);
 }, { density: 96, emissive: 0.45 });
 add('trim', 'sign-h', '病院の H マーク', [1.6, 1.6], (t, s) => {
