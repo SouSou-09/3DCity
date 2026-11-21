@@ -1,8 +1,9 @@
 import { MeshBuilder, V3 } from './builder';
 import { S } from './boundaries';
-import { BoatKind, BuoyKind, CONTAINER_COLORS, SeawallOpts, boat, buoy, container, reeferUnit, seawall, trailer } from './boats';
+import { BoatKind, BuoyKind, CONTAINER_COLORS, SeawallOpts, boat, buoy, canopy, container, flagPole, hut, reeferUnit, seawall, trailer } from './boats';
 import { LightOpts, PierOpts, ball, beacon, bollard, boulder, cleat, cyl, floatDock, gangway, guard, hash, ladder, lighthouse, mound, pier, rocks, skeletonLight, tetrapod, torus } from './marine';
 import { Pose, at, box, lathe, move, pipe, plate, stand, turn } from './kit';
+import { TowerOpts, boardwalk, dune, jibCrane, lifeguardChair, lifeguardTower, lounger, rtgCrane, shower, stsCrane, surfboard, umbrella, volleyball } from './port';
 import { addModel } from './registry';
 
 export function addWaterfront(): void {
@@ -299,4 +300,220 @@ export function addWaterfront(): void {
   A('container-stack-row', 'コンテナの列 4列×3段', (b, f) => stack(b, f, 1, 4, 4, 2, 3));
   A('container-stack-yard', 'コンテナヤード 3×4 最大4段', (b, f) => stack(b, f, 3, 4, 5, 1, 4));
   A('container-stack-yard-40', 'コンテナヤード 40ft 2×5 最大5段', (b, f) => stack(b, f, 2, 5, 6, 2, 5));
+  // Port cranes: rails along x, water at +z.
+  A('crane-sts-red', 'ガントリークレーン 赤 ブーム下げ', (b, f) => stsCrane(b, f, { tex: S('crane-red'), load: 'blue' }));
+  A('crane-sts-blue', 'ガントリークレーン 青 ブーム上げ', (b, f) => stsCrane(b, f, { tex: S('crane-blue'), raised: true }));
+  A('crane-sts-yellow', 'ガントリークレーン 黄 小さめ', (b, f) => stsCrane(b, f, { tex: S('crane-yellow'), s: 0.8, house: 'trim/paint-grey' }));
+  A('crane-sts-white', 'ガントリークレーン 白 ブーム上げ 大', (b, f) => stsCrane(b, f, { tex: 'structure/steel-white', raised: true, s: 1.15, house: 'trim/paint-blue' }));
+  A('crane-rtg-yellow', 'ヤードクレーン タイヤ式 黄', (b, f) => rtgCrane(b, f, { tex: S('crane-yellow'), load: 'green' }));
+  A('crane-rtg-red', 'ヤードクレーン タイヤ式 赤 空', (b, f) => rtgCrane(b, f, { tex: S('crane-red'), span: 20, h: 15 }));
+  A('crane-rmg-blue', 'ヤードクレーン レール式 青 広い', (b, f) => rtgCrane(b, f, { tex: S('crane-blue'), span: 32, h: 20, rail: true, load: 'orange' }));
+  A('crane-jib-green', '港湾クレーン ジブ式 緑', (b, f) => jibCrane(b, f, { tex: 'structure/steel-green', house: 'trim/paint-cream' }));
+  A('crane-jib-yellow', '港湾クレーン ジブ式 黄 グラブつき', (b, f) => jibCrane(b, f, { tex: S('crane-yellow'), grab: true, ang: 42, slew: 30 }));
+  A('crane-jib-rusty', '港湾クレーン ジブ式 古い さび', (b, f) => jibCrane(b, f, { tex: 'structure/steel-green-rusty', h: 9, jib: 20, ang: 68, slew: -40, house: 'structure/steel-grey-rusty' }));
+  A('crane-jib-blue', '港湾クレーン ジブ式 青 高い', (b, f) => jibCrane(b, f, { tex: S('crane-blue'), h: 16, jib: 32, ang: 50, house: 'trim/paint-white' }));
+
+  // Beach.
+  const TOWERS: [string, string, TowerOpts][] = [
+    ['blue', '監視塔 水色', { wall: 'wall/siding-blue', roof: 'roof/shingle-grey', flag: S('flag-yellow') }],
+    ['white', '監視塔 白 赤屋根', { wall: 'wall/siding-white', roof: 'roof/seam-red', flag: S('flag-red'), h: 2.6 }],
+    ['yellow', '監視塔 黄 平屋根', { wall: 'wall/siding-yellow', roof: 'roof/flat-membrane-white', flat: true, flag: S('flag-green') }],
+    ['cedar', '監視塔 木板 低い', { wall: 'wall/shingle-cedar', roof: 'roof/shake-cedar', h: 1.6, trim: 'trim/paint-brown', number: false }],
+    ['red', '監視塔 赤', { wall: 'wall/siding-red', roof: 'roof/shingle-charcoal', flag: S('flag-purple'), h: 3 }],
+  ];
+  for (const [id, label, o] of TOWERS) A(`lifeguard-tower-${id}`, label, (b, f) => lifeguardTower(b, f, o));
+  A('lifeguard-chair', '監視いす 白', (b, f) => lifeguardChair(b, f, 'trim/paint-white'));
+  A('lifeguard-chair-shade', '監視いす 日傘つき', (b, f) => lifeguardChair(b, f, 'signal/pole-wood-grey', S('canvas-red')));
+  (['red', 'yellow', 'green', 'purple'] as const).forEach((c, i) => A(`beach-flag-${c}`, `ビーチ旗 ${['赤 遊泳禁止', '黄 注意', '緑 遊泳可', '紫 危険生物'][i]}`, (b, f) => flagPole(b, f, 3 + (i % 2) * 0.6, S(`flag-${c}`))));
+  const CANVAS = ['canvas-stripe-blue', 'canvas-stripe-yellow', 'canvas-stripe-red', 'canvas-white', 'canvas-red'];
+  CANVAS.forEach((c, i) => A(`umbrella-${c.replace('canvas-', '')}`, `ビーチパラソル ${['青縞', '黄縞', '赤縞', '白', '赤'][i]}`, (b, f) => umbrella(b, f, S(c), { lean: 4 + i * 3, r: 1 + (i % 3) * 0.12 })));
+  A('umbrella-thatch', 'かやぶきパラソル', (b, f) => umbrella(b, f, 'ground/grass-dry', { thatch: true, r: 1.6, h: 2.3, lean: 0 }));
+  A('umbrella-set', 'パラソルと寝いす2台', (b, f) => {
+    umbrella(b, f, S('canvas-stripe-blue'), { r: 1.3 });
+    lounger(b, move(f, 0.2, 0, 0.8), S('canvas-white'));
+    lounger(b, turn(move(f, 0.1, 0, -0.8), 8), S('canvas-white'));
+  });
+  A('umbrella-row', 'パラソルと寝いすの列', (b, f) => {
+    for (let i = 0; i < 4; i++) {
+      umbrella(b, move(f, 0, 0, i * 3.2), S(CANVAS[i % 3]), { r: 1.25, lean: 5 + hash(i, 1) * 6 });
+      lounger(b, turn(move(f, 0.2, 0, i * 3.2 + 0.75), hash(i, 2) * 10 - 5), S(i % 2 ? 'canvas-stripe-yellow' : 'canvas-white'));
+      lounger(b, turn(move(f, 0.2, 0, i * 3.2 - 0.75), hash(i, 3) * 10 - 5), S(i % 2 ? 'canvas-stripe-yellow' : 'canvas-white'));
+    }
+  });
+  A('lounger', '寝いす', (b, f) => lounger(b, f, S('canvas-stripe-blue')));
+  A('volleyball', 'ビーチバレーコート', (b, f) => volleyball(b, f));
+  A('volleyball-old', 'ビーチバレーコート 古い 緑ネット', (b, f) => volleyball(b, f, { sand: S('sand-dry'), post: 'structure/steel-galvanized-rusty', net: S('net-green') }));
+  A('shower-single', 'ビーチシャワー 1口', (b, f) => shower(b, f, 1));
+  A('shower-quad', 'ビーチシャワー 4口', (b, f) => shower(b, f, 4, 'trim/paint-blue'));
+  A('boardwalk', 'ボードウォーク 12m', (b, f) => boardwalk(b, f, 12, 3));
+  A('boardwalk-rail', 'ボードウォーク 木の手すり', (b, f) => boardwalk(b, f, 12, 3.6, { rail: 'timber', deck: 'paving/boardwalk', y: 0.9 }));
+  A('boardwalk-rope', 'ボードウォーク ロープ柵 砂浜へのスロープ', (b, f) => boardwalk(b, f, 12, 2, { rail: 'rope', deck: 'paving/boardwalk-wide', ramp: true }));
+  A('boardwalk-wide', 'ボードウォーク 幅広 6m', (b, f) => boardwalk(b, f, 12, 6, { deck: 'paving/boardwalk', y: 0.6 }));
+  const SAND = ['sand-dry', 'sand-white', 'sand-dark', 'sand-ripples', 'sand-wrack'];
+  SAND.forEach((c, i) => A(`dune-${c.replace('sand-', '')}`, `砂丘 ${['乾いた砂', '白砂', '暗い砂', '風紋', '打ち上げ海藻'][i]}`, (b, f) => dune(b, S(c), f, 7 + i, 5 + (i % 2) * 2, 1 + i * 0.25, 70 + i)));
+  A('beach-sign-rules', 'ビーチ規則看板', (b, f) => {
+    for (const sx of [-1, 1]) box(b, 'signal/pole-wood', f, [sx * 0.52, 1.1, 0], [0.05, 1.1, 0.05], 'Y');
+    plate(b, S('sign-beach-rules'), f, [0, 1.5, 0.06]);
+  });
+  A('beach-sign-rip', '離岸流注意の標識', (b, f) => {
+    b.tube('trim/paint-galvanized', at(f, 0, 0, 0), at(f, 0, 2.3, 0), 0.03, 6, 0.03, true);
+    plate(b, S('sign-rip-current'), f, [0, 1.95, 0.035]);
+    plate(b, S('sign-no-diving'), f, [0, 1.3, 0.035]);
+  });
+  const HUTS: [string, string][] = [['wall/siding-blue', 'roof/shingle-grey'], ['wall/siding-yellow', 'roof/shingle-red'], ['wall/siding-red', 'roof/shingle-charcoal'], ['wall/siding-green', 'roof/shingle-brown'], ['wall/siding-white', 'roof/shingle-blue']];
+  HUTS.forEach(([wall, roof], i) => A(`beach-hut-${wall.replace('wall/siding-', '')}`, `ビーチ小屋 ${['青', '黄', '赤', '緑', '白'][i]}`, (b, f) => {
+    box(b, S('deck-grey'), f, [0, 0.15, 0.4], [1.2, 0.15, 1.8]);
+    hut(b, turn(move(f, 0, 0.3, 0), 90), 2.4, 2.2, 2.1, { wall, roof, rise: 0.8, over: 0.2, win: undefined });
+    box(b, i % 2 ? 'door/front-white-0' : 'door/front-blue-2', f, [0, 1.35, 1.205], [0.42, 1.02, 0.01]);
+  }));
+  A('beach-huts-row', 'ビーチ小屋 5棟並び', (b, f) => {
+    HUTS.forEach(([wall, roof], i) => {
+      const g = move(f, i * 2.7, 0, 0);
+      box(b, S('deck-grey'), g, [0, 0.15, 0.4], [1.3, 0.15, 1.8]);
+      hut(b, turn(move(g, 0, 0.3, 0), 90), 2.4, 2.2, 2.1, { wall, roof, rise: 0.8, over: 0.2 });
+      box(b, 'door/front-white-0', g, [0, 1.35, 1.205], [0.42, 1.02, 0.01]);
+    });
+  });
+  A('fire-pit', '砂浜のたき火台', (b, f) => {
+    lathe(b, 'structure/wall-old', f, [[1.1, 0], [1.1, 0.45], [0.85, 0.45], [0.85, 0.12], [0, 0.12]], 14);
+    for (let i = 0; i < 5; i++) b.tube('trim/paint-black', at(f, Math.cos(i * 1.3) * 0.6, 0.16, Math.sin(i * 1.3) * 0.6), at(f, -Math.cos(i * 1.3 + 0.5) * 0.4, 0.3, -Math.sin(i * 1.3 + 0.5) * 0.4), 0.07, 6, 0.06, true);
+  });
+  const BOARDS = ['plastic-yellow', 'hull-white', 'plastic-blue', 'plastic-red', 'hull-green', 'plastic-orange'];
+  A('surfboard', 'サーフボード 立てかけ', (b, f) => surfboard(b, f, S('hull-white'), 2.1, 10));
+  A('surfboard-rack', 'サーフボードラック 6枚', (b, f) => {
+    for (const sx of [-1.7, 1.7]) box(b, 'signal/pole-wood', f, [sx, 0.7, -0.3], [0.05, 0.7, 0.05], 'Y');
+    box(b, 'signal/pole-wood', f, [0, 1.3, -0.3], [1.75, 0.04, 0.04]);
+    box(b, 'signal/pole-wood', f, [0, 0.06, 0.15], [1.75, 0.04, 0.04]);
+    BOARDS.forEach((c, i) => surfboard(b, move(f, -1.4 + i * 0.56, 0.1, 0.12), S(c), 1.7 + hash(i, 4) * 0.6, 14));
+  });
+  A('beach-cabana', 'ビーチの日よけテント', (b, f) => {
+    for (const sx of [-1, 1]) for (const sz of [-1, 1]) b.tube('trim/paint-white', at(f, sx * 1.5, 0, sz * 1.5), at(f, sx * 1.5, 2.2, sz * 1.5), 0.03, 6);
+    canopy(b, S('canvas-white'), turn(f, 45), [0, 2.2, 0], 2.2, 0.8, 4);
+    lounger(b, move(f, 0, 0, 0.5), S('canvas-white'), 'signal/pole-wood');
+    lounger(b, move(f, 0, 0, -0.5), S('canvas-white'), 'signal/pole-wood');
+  });
+
+  // Harbour buildings and working gear.
+  A('bait-shop', '釣具・えさ店', (b, f) => {
+    box(b, S('deck-grey'), f, [0, 0.1, 0.6], [3.6, 0.1, 3]);
+    hut(b, move(f, 0, 0.2, 0), 6, 3.6, 2.6, { wall: 'wall/siding-white-peeling', roof: 'roof/corrugated-rusty', rise: 0.9, over: 0.5, door: 'door/front-blue-2', win: 'window/slider-aluminium', winU: 1.6, wins: 2, sign: S('sign-bait') });
+    box(b, 'trim/paint-white', f, [2.2, 0.75, 2.4], [0.7, 0.55, 0.4]);
+    box(b, 'trim/paint-blue', f, [2.2, 1.33, 2.4], [0.72, 0.03, 0.42]);
+    for (let i = 0; i < 3; i++) ball(b, S(i % 2 ? 'buoy-orange' : 'buoy-red'), f, [-3.05 - 0 * i, 2.2 - i * 0.45, 1.5 + i * 0.1], 0.2, 8);
+  });
+  A('harbor-office', '港務所・マリーナ事務所', (b, f) => {
+    hut(b, f, 8, 5, 3, { wall: 'wall/siding-grey', roof: 'roof/seam-blue', rise: 1.2, over: 0.5, door: 'door/front-white-0', win: 'window/sash-white', winU: 1.2, wins: 3, sign: S('sign-marina') });
+    flagPole(b, move(f, 4.6, 0, 3), 6, S('flag-green'));
+    b.tube('trim/paint-white', at(f, -3, 4.2, 0), at(f, -3, 7.5, 0), 0.04, 6);
+    for (const y of [5.8, 6.6]) b.tube('trim/paint-white', at(f, -3.8, y, 0), at(f, -2.2, y, 0), 0.02, 5);
+  });
+  A('boathouse', 'ボート小屋 水上', (b, f) => {
+    for (const sx of [-1, 1]) for (let i = 0; i < 4; i++) lathe(b, S('pile-wood'), move(f, sx * 3, -2, -4.5 + i * 3), [[0.16, 0], [0.16, 2.8]], 8);
+    for (const sx of [-1, 1]) box(b, S('deck-grey'), f, [sx * 2.9, 0.8, 0], [0.7, 0.06, 5]);
+    for (const sx of [-1, 1]) box(b, 'wall/batten-barn-red', f, [sx * 3.5, 2.4, 0], [0.06, 1.6, 5]);
+    box(b, 'wall/batten-barn-red', f, [0, 2.4, -5], [3.5, 1.6, 0.06]);
+    box(b, 'wall/batten-barn-red', f, [0, 3.6, 5], [3.5, 0.4, 0.06]);
+    for (const sz of [-1, 1]) b.quad('roof/shingle-grey', at(f, -sz * 4, 3.9, sz * 5.4 * 0 + (sz > 0 ? 5.4 : -5.4)), at(f, sz * 4, 3.9, sz > 0 ? 5.4 : -5.4), at(f, sz * 4, 3.9, 0), at(f, -sz * 4, 3.9, 0), [[0, 0], [8, 0], [8, 5.4], [0, 5.4]]);
+    for (const sx of [-1, 1]) {
+      b.quad('roof/shingle-grey', at(f, sx * 4, 3.9, sx * 5.4), at(f, sx * 4, 3.9, -sx * 5.4), at(f, 0, 5.6, -sx * 5.4), at(f, 0, 5.6, sx * 5.4), [[0, 0], [10.8, 0], [10.8, 4.4], [0, 4.4]]);
+      b.quad('trim/paint-charcoal', at(f, sx * 4, 3.9, -sx * 5.4), at(f, sx * 4, 3.9, sx * 5.4), at(f, 0, 5.6, sx * 5.4), at(f, 0, 5.6, -sx * 5.4), [[0, 0], [1, 0], [1, 1], [0, 1]]);
+    }
+    for (const sz of [-1, 1]) b.tri('wall/batten-barn-red', at(f, -sz * 3.5, 4, sz * 5), at(f, sz * 3.5, 4, sz * 5), at(f, 0, 5.5, sz * 5), [[0, 0], [7, 0], [3.5, 1.5]]);
+    boat(b, move(f, 0, 0, 0.5), { kind: 'skiff', inside: 'trim/paint-white' });
+  });
+  A('fish-crates', '魚箱の山', (b, f) => {
+    const cols = ['plastic-blue', 'plastic-orange', 'plastic-green', 'plastic-red', 'plastic-yellow'];
+    for (let i = 0; i < 14; i++) {
+      const [c, l] = [i % 4, Math.floor(i / 4)];
+      if (l === 3 && c > 1) continue;
+      box(b, S(cols[Math.floor(hash(i, 5) * 5)]), turn(move(f, (c - 1.5) * 0.85, l * 0.3, hash(i, 6) * 0.08), hash(i, 7) * 8 - 4), [0, 0.15, 0], [0.4, 0.15, 0.3], 'y');
+    }
+  });
+  const trap = (b: MeshBuilder, g: Pose): void => {
+    box(b, 'signal/pole-wood-grey', g, [0, 0.02, 0], [0.45, 0.02, 0.3]);
+    for (const sx of [-1, 0, 1]) for (const sz of [-1, 1]) box(b, 'signal/pole-wood-grey', g, [sx * 0.43, 0.2, sz * 0.28], [0.02, 0.2, 0.02]);
+    box(b, S('net-green'), g, [0, 0.21, 0], [0.44, 0.19, 0.29], 'Y');
+  };
+  A('lobster-traps', 'エビかごの山', (b, f) => {
+    for (let i = 0; i < 9; i++) {
+      const l = i < 4 ? 0 : i < 7 ? 1 : 2;
+      const c = i < 4 ? i : i < 7 ? i - 4 + 0.5 : i - 7 + 1;
+      trap(b, turn(move(f, (c - 1.5) * 0.95, l * 0.42, 0), hash(i, 8) * 10 - 5));
+    }
+    for (let i = 0; i < 3; i++) ball(b, S(i % 2 ? 'buoy-yellow' : 'buoy-orange'), f, [-0.8 + i * 0.5, 0.15, 0.6], 0.15, 8);
+  });
+  A('net-pile', '漁網の山 浮き玉つき', (b, f) => {
+    boulder(b, S('net-fishing'), f, [0, 0.25, 0], [1.3, 0.55, 1], 81, 6);
+    boulder(b, 'trim/paint-teal', f, [0, 0.22, 0], [1.2, 0.5, 0.92], 81, 6);
+    for (let i = 0; i < 7; i++) ball(b, S(i % 2 ? 'buoy-orange' : 'buoy-yellow'), f, [Math.cos(i * 0.9) * 0.8, 0.45 + hash(i, 9) * 0.2, Math.sin(i * 0.9) * 0.6], 0.09, 6);
+  });
+  A('net-drying', '漁網の干し場', (b, f) => {
+    for (const sx of [0, 4, 8]) for (const sz of [-1, 1]) b.beam('signal/pole-wood-grey', at(f, sx, 0, sz * 0.9), at(f, sx, 2.2, 0), 0.08, 0.08);
+    b.tube('signal/pole-wood-grey', at(f, -0.3, 2.2, 0), at(f, 8.3, 2.2, 0), 0.05, 6, 0.05, true);
+    for (const sz of [-1, 1]) b.quad(S('net-fishing'), at(f, 0.2, 0.3, sz * 0.8), at(f, 7.8, 0.3, sz * 0.8), at(f, 7.8, 2.2, 0), at(f, 0.2, 2.2, 0), [[0, 0], [7.6, 0], [7.6, 2], [0, 2]]);
+    for (const sz of [-1, 1]) b.quad(S('net-fishing'), at(f, 7.8, 0.3, sz * 0.8), at(f, 0.2, 0.3, sz * 0.8), at(f, 0.2, 2.2, 0), at(f, 7.8, 2.2, 0), [[0, 0], [7.6, 0], [7.6, 2], [0, 2]]);
+  });
+  A('fuel-dock', '給油桟橋', (b, f) => {
+    floatDock(b, f, 12, { w: 3 });
+    for (const x of [4, 8]) {
+      box(b, 'trim/paint-white', f, [x, 1.15, -0.6], [0.4, 0.7, 0.25]);
+      box(b, 'trim/paint-red', f, [x, 1.95, -0.6], [0.45, 0.1, 0.3]);
+      pipe(b, 'trim/paint-black', [at(f, x + 0.3, 1.5, -0.34), at(f, x + 0.5, 0.9, -0.1), at(f, x + 0.2, 0.6, 0.1), at(f, x - 0.2, 1.2, -0.33)], 0.02, 5);
+    }
+    box(b, 'trim/paint-red', f, [1.2, 0.75, -0.9], [0.3, 0.3, 0.3]);
+    plate(b, S('sign-no-fishing'), f, [11, 1.6, -1.2]);
+    b.tube('trim/paint-galvanized', at(f, 11, 0.45, -1.24), at(f, 11, 1.9, -1.24), 0.025, 6);
+  });
+  A('marina-slips', 'マリーナ 係留区画 船つき', (b, f) => {
+    floatDock(b, f, 36, { w: 2.6, pileSide: 0, cleats: false });
+    const kinds: [BoatKind, string][] = [['sail', 'hull-white'], ['cruiser', 'hull-white'], ['sail', 'hull-blue'], ['skiff', 'hull-white'], ['cruiser', 'hull-black'], ['sail', 'hull-red'], ['rib', 'buoy-orange'], ['sail', 'hull-white']];
+    for (let i = 0; i < 5; i++) for (const sz of [-1, 1]) {
+      const g = turn(move(f, 3 + i * 7.5, 0, sz * 1.3), -sz * 90);
+      floatDock(b, g, 10, { w: 1.1, pileSide: 0 });
+      lathe(b, S('pile-steel'), move(g, 10.4, -2, 0), [[0.16, 0], [0.16, 5.2], [0, 5.5]], 8);
+      const k = kinds[(i * 2 + (sz > 0 ? 1 : 0) + 3) % kinds.length];
+      if (hash(i * 2 + sz, 11) > 0.25 && i < 4) boat(b, turn(move(f, 3 + i * 7.5 + 3.6, 0, sz * (1.3 + 5.4)), sz * 90), { kind: k[0], side: S(k[1]), s: 0.9 });
+    }
+    plate(b, S('sign-slip-numbers'), f, [1.4, 1.3, 0]);
+    for (const sx of [0.3, 2.5]) b.tube('trim/paint-galvanized', at(f, sx, 0.45, -0.03), at(f, sx, 1.45, -0.03), 0.02, 5);
+  });
+  A('piling', '係留杭 1本', (b, f) => {
+    lathe(b, S('pile-wood'), move(f, 0, -2, 0), [[0.2, 0], [0.18, 5], [0, 5.05]], 8);
+    lathe(b, 'trim/paint-white', move(f, 0, 3, 0), [[0.19, 0], [0.19, 0.06], [0, 0.35]], 8);
+  });
+  A('piling-dolphin', '係留杭 束ね杭(ドルフィン)', (b, f) => {
+    for (let i = 0; i < 7; i++) {
+      const a = (i / 6) * Math.PI * 2;
+      const r = i === 6 ? 0 : 0.9;
+      const g: Pose = { ...move(f, Math.cos(a) * r, -2, Math.sin(a) * r), y: i === 6 ? f.y : at({ ...f, o: [0, 0, 0] }, -Math.cos(a) * 0.1, 1, -Math.sin(a) * 0.1) };
+      lathe(b, S(i % 2 ? 'pile-wood' : 'pile-wood-grey'), g, [[0.19, 0], [0.17, 5.4 + (i === 6 ? 0.5 : hash(i, 12) * 0.3)], [0, 5.45 + (i === 6 ? 0.5 : hash(i, 12) * 0.3)]], 8);
+    }
+    for (const y of [2.1, 2.5]) torus(b, 'furniture/cable', f, [0, y, 0], 0.66 - (y - 2.1) * 0.1, 0.04, 12, 4);
+  });
+  A('piling-row', '古い杭の列 朽ちた桟橋跡', (b, f) => {
+    for (let i = 0; i < 9; i++) for (const sz of [-1, 1]) {
+      if (hash(i * 2 + sz, 13) < 0.2) continue;
+      const h = 0.4 + hash(i * 2 + sz, 14) * 2.2;
+      lathe(b, S('pile-wood-grey'), { ...move(f, i * 2.6 + hash(i, 15) * 0.3, -2, sz * 1.3), y: at({ ...f, o: [0, 0, 0] }, (hash(i * 2 + sz, 16) - 0.5) * 0.2, 1, (hash(i * 2 + sz, 17) - 0.5) * 0.2) }, [[0.17, 0], [0.15, 2 + h], [0.06, 2.08 + h], [0, 2.08 + h]], 7);
+    }
+  });
+  A('harbor-light', '港の照明柱 投光器', (b, f) => {
+    b.tube('trim/paint-galvanized', at(f, 0, 0, 0), at(f, 0, 14, 0), 0.2, 8, 0.11, true);
+    box(b, 'trim/paint-galvanized', f, [0, 14, 0], [1.4, 0.06, 0.25]);
+    for (let i = 0; i < 4; i++) {
+      box(b, 'trim/paint-charcoal', f, [-1.05 + i * 0.7, 14.3, 0.2], [0.25, 0.18, 0.1]);
+      box(b, 'furniture/led-strip-on', f, [-1.05 + i * 0.7, 14.3, 0.305], [0.22, 0.15, 0.005]);
+    }
+    box(b, 'concrete/walk-plain', f, [0, 0.15, 0], [0.45, 0.15, 0.45], 'Y');
+  });
+  A('pier-pavilion', '桟橋 先端にあずまや', (b, f) => {
+    pier(b, f, 26, { w: 4, brace: true, head: [12, 12], lamps: 9, rail: 'white', railMat: 'trim/paint-white' });
+    for (let i = 0; i < 8; i++) {
+      const a = (i / 8) * Math.PI * 2;
+      b.tube('trim/paint-white', at(f, 32 + Math.cos(a) * 3.6, 2.2, Math.sin(a) * 3.6), at(f, 32 + Math.cos(a) * 3.6, 5, Math.sin(a) * 3.6), 0.08, 6);
+    }
+    canopy(b, 'roof/shingle-green', move(f, 32, 0, 0), [0, 5, 0], 4.3, 2, 8);
+    ball(b, 'trim/paint-white', f, [32, 7.1, 0], 0.2, 8);
+  });
+  A('gangway', '渡り橋 アルミ', (b, f) => gangway(b, f, 9, 2.2));
 }
