@@ -18,8 +18,8 @@ for (const spec of TEXTURES) {
     for (let i = 0; i < t.w; i++) {
       const s = (j * t.w + i) * 4;
       const d = ((t.h - 1 - j) * t.w + i) * 4;
-      const a = spec.decal ? t.albedo[s + 3] / 255 : 1;
-      for (let c = 0; c < 3; c++) img[d + c] = t.albedo[s + c] * a + 52 * (1 - a);
+      const a = spec.decal || spec.cutout ? t.albedo[s + 3] / 255 : 1;
+      for (let c = 0; c < 3; c++) img[d + c] = t.albedo[s + c] * a + (spec.cutout ? 150 : 52) * (1 - a);
       img[d + 3] = 255;
     }
   }

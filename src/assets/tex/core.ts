@@ -449,7 +449,7 @@ export class Layers {
   }
 }
 
-export type TextureCategory = 'asphalt' | 'concrete' | 'paving' | 'curb' | 'ground' | 'structure' | 'line' | 'crosswalk' | 'symbol' | 'cover' | 'sign' | 'signal';
+export type TextureCategory = 'asphalt' | 'concrete' | 'paving' | 'curb' | 'ground' | 'structure' | 'line' | 'crosswalk' | 'symbol' | 'cover' | 'sign' | 'signal' | 'furniture' | 'plant';
 
 export interface TextureSpec {
   id: string;
@@ -464,6 +464,8 @@ export interface TextureSpec {
   decal: boolean;
   /** Pixels per metre at detail level 1. */
   density: number;
+  /** Alpha is a cut-out mask (leaves, petals): drawn opaque where alpha is high. Meshes supply both faces, so foliage can share one lighting normal. */
+  cutout?: boolean;
   /** The surface glows with its own colour (lit lamps); 1 = full brightness. */
   emissive?: number;
   generate: (tex: Tex) => TextureData;

@@ -8,7 +8,7 @@ import './catalog.css';
 const TEX_CATEGORIES: [string, string][] = [
   ['asphalt', 'アスファルト'], ['concrete', 'コンクリート'], ['paving', '舗装材'], ['curb', '縁石'], ['ground', '地面'],
   ['structure', '構造物'], ['line', '区画線'], ['crosswalk', '横断歩道・停止線'], ['symbol', '路面標示'], ['cover', '蓋・汚れ'],
-  ['sign', '標識面'], ['signal', '信号灯器・支柱'],
+  ['sign', '標識面'], ['signal', '信号灯器・支柱'], ['furniture', '歩道設備'], ['plant', '樹皮・葉・花'],
 ];
 const params = new URLSearchParams(location.search);
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -66,8 +66,8 @@ function material(id: string, layer: number): THREE.Material {
   const albedo = make(d.albedo, true);
   m = new THREE.MeshStandardMaterial({
     map: albedo, ...(spec.emissive ? { emissive: 0xffffff, emissiveMap: albedo, emissiveIntensity: spec.emissive } : {}), normalMap: make(d.normal, false), roughnessMap: orm, metalnessMap: orm, roughness: 1, metalness: 1,
-    transparent: spec.decal, depthWrite: !spec.decal, polygonOffset: layer > 0, polygonOffsetFactor: -layer * 2, polygonOffsetUnits: -layer * 4,
-    side: spec.decal ? THREE.FrontSide : THREE.DoubleSide, shadowSide: THREE.DoubleSide,
+    transparent: spec.decal, depthWrite: !spec.decal, ...(spec.cutout ? { alphaTest: 0.4, alphaToCoverage: true } : {}), polygonOffset: layer > 0, polygonOffsetFactor: -layer * 2, polygonOffsetUnits: -layer * 4,
+    side: spec.decal || spec.cutout ? THREE.FrontSide : THREE.DoubleSide, shadowSide: THREE.DoubleSide,
   });
   matCache.set(key, m);
   return m;
@@ -223,7 +223,7 @@ function open(kind: 'tex' | 'model', id: string): void {
     for (const [name, px] of [['アルベド', d.albedo], ['法線', d.normal], ['AO / 粗さ / 金属', d.orm]] as const) {
       const fig = document.createElement('figure');
       const c = document.createElement('canvas');
-      paint(c, d, px, name === 'アルベド' && spec.decal);
+      paint(c, d, px, name === 'アルベド' && (spec.decal || !!spec.cutout));
       fig.append(c, Object.assign(document.createElement('figcaption'), { textContent: name }));
       $('maps').append(fig);
     }
@@ -287,7 +287,7 @@ function card(label: string, id: string, draw: (c: HTMLCanvasElement) => void, o
   return el;
 }
 /** Street furniture is looked at from the road, not from above. */
-const defaultDir = (spec: ModelSpec): [number, number, number] | undefined => (spec.category === 'signal' || spec.category === 'sign' ? [0.4, 0.14, 1] : undefined);
+const defaultDir = (spec: ModelSpec): [number, number, number] | undefined => (spec.category === 'signal' || spec.category === 'sign' ? [0.4, 0.14, 1] : spec.category === 'furniture' || spec.category === 'plant' ? [0.5, 0.28, 1] : undefined);
 function modelThumb(spec: ModelSpec, c: HTMLCanvasElement): void {
   const data = spec.build();
   const group = modelGroup(data);
@@ -323,7 +323,7 @@ function refresh(): void {
   $('grid').replaceChildren(...shown.map((item) => {
     if (tab === 'textures') {
       const s = item as TextureSpec;
-      return card(s.label, s.id, (c) => { const d = texData(s.id, 0.25); paint(c, d, d.albedo, s.decal); }, () => open('tex', s.id));
+      return card(s.label, s.id, (c) => { const d = texData(s.id, 0.25); paint(c, d, d.albedo, s.decal || !!s.cutout); }, () => open('tex', s.id));
     }
     const m = item as ModelSpec;
     return card(m.label, m.id, (c) => modelThumb(m, c), () => open('model', m.id));
