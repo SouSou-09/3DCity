@@ -319,11 +319,11 @@ for (const [id, label, lines] of [['dead-end-rect', '行き止まり(板)', ['DE
 // --- Temporary traffic control (orange). ---
 const DW = 0.9 * Math.SQRT2;
 const WORK: [string, string, string[], number][] = [
-  ['road-work-ahead', '工事中 ROAD WORK AHEAD', ['ROAD', 'WORK', 'AHEAD'], 0.15], ['detour-ahead', '迂回路あり', ['DETOUR', 'AHEAD'], 0.15],
+  ['road-work-ahead', '工事中 ROAD WORK AHEAD', ['ROAD', 'WORK', 'AHEAD'], 0.13], ['detour-ahead', '迂回路あり', ['DETOUR', 'AHEAD'], 0.15],
   ['right-lane-closed', '右車線閉鎖', ['RIGHT LANE', 'CLOSED', 'AHEAD'], 0.12], ['left-lane-closed', '左車線閉鎖', ['LEFT LANE', 'CLOSED', 'AHEAD'], 0.12],
   ['one-lane-road', '片側交互通行', ['ONE LANE', 'ROAD', 'AHEAD'], 0.13], ['prepared-to-stop', '停止準備', ['BE', 'PREPARED', 'TO STOP'], 0.12],
-  ['flagger-ahead', '誘導員あり', ['FLAGGER', 'AHEAD'], 0.15], ['utility-work', '埋設工事', ['UTILITY', 'WORK', 'AHEAD'], 0.14],
-  ['road-closed-ahead', 'この先通行止め', ['ROAD', 'CLOSED', 'AHEAD'], 0.15], ['uneven-lanes', '段差あり', ['UNEVEN', 'LANES'], 0.15],
+  ['flagger-ahead', '誘導員あり', ['FLAGGER', 'AHEAD'], 0.15], ['utility-work', '埋設工事', ['UTILITY', 'WORK', 'AHEAD'], 0.13],
+  ['road-closed-ahead', 'この先通行止め', ['ROAD', 'CLOSED', 'AHEAD'], 0.13], ['uneven-lanes', '段差あり', ['UNEVEN', 'LANES'], 0.15],
 ];
 for (const [id, label, lines, size] of WORK) {
   sign(`work-${id}`, label, 'diamond', DW, DW, O, (p) => {
@@ -448,7 +448,7 @@ for (const n of ['24', '12A', '7']) guide(`guide-tab-${n.toLowerCase()}`, `出�
 guide('guide-tab-left', '出口番号板 LEFT', 1.2, 0.45, (p) => p.centred(K, ['LEFT EXIT'], 0.18), Y);
 guide('guide-freeway-entrance', '高速入口 FREEWAY ENTRANCE', 0.9, 0.6, (p) => p.centred(W, ['FREEWAY', 'ENTRANCE'], 0.13), G, true);
 guide('guide-city-limit', '市境 PORT VERDE', 1.8, 0.9, (p) => {
-  p.text(W, 'PORT VERDE', 0.9, 0.48, 0.22);
+  p.text(W, 'PORT VERDE', 0.9, 0.48, 0.22, { fit: 1.5 });
   p.text(W, 'POP 412,000   ELEV 85', 0.9, 0.2, 0.085);
 });
 guide('guide-mile-marker', '距離標', 0.3, 0.9, (p) => {
@@ -465,8 +465,8 @@ guide('guide-park', '公園案内(茶)', 2.4, 0.9, (p) => {
 }, BR);
 guide('guide-beach', '海岸案内(茶)', 1.8, 0.6, (p) => p.centred(W, ['BEACH ACCESS'], 0.17), BR);
 guide('guide-downtown-arrow', '街路案内 DOWNTOWN', 1.8, 0.6, (p) => {
-  p.text(W, 'DOWNTOWN', 1.05, 0.2, 0.19, { fit: 1.25 });
-  p.arrow(W, [[0.42, 0.3], [0.1, 0.3]], 0.04, 0.1, 0.15);
+  p.text(W, 'DOWNTOWN', 1.12, 0.21, 0.18, { fit: 1.1 });
+  p.arrow(W, [[0.44, 0.3], [0.1, 0.3]], 0.04, 0.1, 0.15);
 });
 guide('service-hospital', '病院 H', 0.6, 0.6, (p) => p.text(W, 'H', 0.3, 0.14, 0.32, { weight: 0.11 }), B, true);
 guide('service-parking', '駐車場 P', 0.6, 0.6, (p) => p.text(W, 'P', 0.3, 0.14, 0.32, { weight: 0.11 }));
