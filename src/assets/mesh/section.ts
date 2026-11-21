@@ -89,7 +89,7 @@ const JERSEY: [number, number][] = [[-0.3, 0], [-0.3, 0.08], [-0.17, 0.3], [-0.1
 
 export interface SweepOpts {
   /** What is under the surface: a slab of earth, a bridge deck, or nothing. */
-  body?: 'ground' | 'deck' | 'none';
+  body?: 'ground' | 'sides' | 'deck' | 'none';
   /** Structural depth of the deck below the road surface. */
   deckDepth?: number;
   deckTex?: string;
@@ -276,7 +276,13 @@ export function sweepSection(b: MeshBuilder, path: Path, sec: Section, opts: Swe
     const yl = top[0][1];
     const yr = top[top.length - 1][1];
     const caps = Array.isArray(opts.caps) ? opts.caps : [opts.caps ?? true, opts.caps ?? true];
-    if (body === 'ground') {
+    if (body === 'sides') {
+      // Only the earth faces along the outer edges, for roads lying on terrain.
+      sweep(b, path, [
+        { material: 'ground/dirt', pts: [[xl, -0.4], [xl, yl]], uv: 'along' },
+        { material: 'ground/dirt', pts: [[xr, yr], [xr, -0.4]], uv: 'along' },
+      ]);
+    } else if (body === 'ground') {
       const d = 0.4;
       sweep(b, path, [
         { material: 'ground/dirt', pts: [[xl, -d], [xl, yl]], uv: 'along' },

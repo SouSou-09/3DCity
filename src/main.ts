@@ -18,9 +18,12 @@ function setMode(mode: '2d' | '3d'): void {
   document.getElementById('mode2d')!.classList.toggle('active', mode === '2d');
   document.getElementById('mode3d')!.classList.toggle('active', mode === '3d');
   if (mode === '3d') {
-    view3d ??= new CityView(document.getElementById('scene') as HTMLCanvasElement);
+    view3d ??= new CityView(document.getElementById('scene') as HTMLCanvasElement, Number(params.get('q')) || undefined);
     if (view3dSeed !== city.config.seed) view3d.setCity(city);
     view3dSeed = city.config.seed;
+    // ?cam=x,y,height,targetX,targetY,targetHeight
+    const cam = (params.get('cam') ?? '').split(',').map(Number);
+    if (cam.length === 6 && cam.every(Number.isFinite)) view3d.look([cam[0], cam[1], cam[2]], [cam[3], cam[4], cam[5]]);
     view3d.start();
   } else {
     view3d?.stop();

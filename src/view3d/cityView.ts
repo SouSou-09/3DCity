@@ -1,25 +1,13 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
-import { resample } from '../core/geom';
 import { clamp, mix, smoothstep } from '../core/vec2';
 import { City } from '../gen/city';
-import { RoadEdge } from '../gen/roadGraph';
-import { RoadClass } from '../gen/streamlines';
-import { heightAt } from '../gen/terrain';
-
-const ROAD: Record<RoadClass, { width: number; lift: number; color: number }> = {
-  path: { width: 3, lift: 0.25, color: 0x9a927e },
-  alley: { width: 5, lift: 0.28, color: 0x505154 },
-  local: { width: 8, lift: 0.3, color: 0x4a4b4e },
-  collector: { width: 11, lift: 0.35, color: 0x444548 },
-  arterial: { width: 17, lift: 0.4, color: 0x3d3e42 },
-  ramp: { width: 7, lift: 0.5, color: 0x55565a },
-  highway: { width: 24, lift: 0.6, color: 0x35363a },
-};
-const DECK_HEIGHT = 5;
+import { RoadModel, buildRoadModel } from '../place/roadModel';
+import { Materials } from './materials';
 
 /**
- * Rough 3D preview of the generated city: terrain, water and flat road ribbons.
+ * 3D view of the generated city: terrain graded to the roads, water, and the road models
+ * (streets with their junctions, freeways on viaducts, ramps).
  * Map (x, y) becomes world (x, z); height is world y.
  */
 export class CityView {
@@ -29,8 +17,13 @@ export class CityView {
   private controls: OrbitControls;
   private content = new THREE.Group();
   private running = false;
+  private materials: Materials;
+  /** Last road model, for inspection from the console and tests. */
+  roads: RoadModel | null = null;
 
-  constructor(private canvas: HTMLCanvasElement) {
+  /** `quality` scales the road textures (1 = full resolution). */
+  constructor(private canvas: HTMLCanvasElement, quality = 0.25) {
+    this.materials = new Materials(quality);
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
     this.renderer.setPixelRatio(Math.min(2, window.devicePixelRatio || 1));
     this.scene.background = new THREE.Color(0xbcd7ee);
@@ -49,12 +42,21 @@ export class CityView {
     this.content.traverse((o) => {
       if (o instanceof THREE.Mesh) {
         o.geometry.dispose();
-        (o.material as THREE.Material).dispose();
+        // Road materials are shared and cached; only the terrain and water own theirs.
+        if (o.userData.ownMaterial) (o.material as THREE.Material).dispose();
       }
     });
     this.content.clear();
-    this.content.add(this.buildTerrain(city), this.buildWater(city));
-    for (const cls of Object.keys(ROAD) as RoadClass[]) this.content.add(this.buildRoads(city, cls));
+    const roads = (this.roads = buildRoadModel(city));
+    this.content.add(this.buildTerrain(city, roads.ground), this.buildWater(city));
+    for (const tile of roads.tiles) {
+      const g = this.materials.group(tile);
+      g.traverse((o) => {
+        o.castShadow = false;
+        o.receiveShadow = false;
+      });
+      this.content.add(g);
+    }
     const s = city.config.size;
     const dt = city.districts.downtown.center;
     this.controls.target.set(dt.x, 0, dt.y);
@@ -63,7 +65,7 @@ export class CityView {
     this.controls.update();
   }
 
-  private buildTerrain(city: City): THREE.Mesh {
+  private buildTerrain(city: City, height: Float32Array): THREE.Mesh {
     const t = city.terrain;
     const n = t.n;
     const pos = new Float32Array(n * n * 3);
@@ -73,7 +75,7 @@ export class CityView {
       for (let i = 0; i < n; i++) {
         const k = j * n + i;
         pos[k * 3] = i * t.cell;
-        pos[k * 3 + 1] = t.height[k];
+        pos[k * 3 + 1] = height[k];
         pos[k * 3 + 2] = j * t.cell;
         const sd = t.seaDist[k];
         const hl = t.hill[k];
@@ -109,7 +111,9 @@ export class CityView {
     geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
     geo.setIndex(new THREE.BufferAttribute(index, 1));
     geo.computeVertexNormals();
-    return new THREE.Mesh(geo, new THREE.MeshLambertMaterial({ vertexColors: true }));
+    const mesh = new THREE.Mesh(geo, new THREE.MeshLambertMaterial({ vertexColors: true }));
+    mesh.userData.ownMaterial = true;
+    return mesh;
   }
 
   private buildWater(city: City): THREE.Mesh {
@@ -118,55 +122,15 @@ export class CityView {
     geo.rotateX(-Math.PI / 2);
     const mesh = new THREE.Mesh(geo, new THREE.MeshLambertMaterial({ color: 0x3f7fa8, transparent: true, opacity: 0.88 }));
     mesh.position.set(s / 2, -0.4, s / 2);
+    mesh.userData.ownMaterial = true;
     return mesh;
   }
 
-  /** Height of the road surface along an edge; bridges run straight between their abutments. */
-  private profile(city: City, e: RoadEdge, pts: { x: number; y: number }[]): number[] {
-    const t = city.terrain;
-    const half = ROAD[e.cls].width / 2;
-    const ground = pts.map((p, i) => {
-      const a = pts[Math.max(0, i - 1)];
-      const b = pts[Math.min(pts.length - 1, i + 1)];
-      const l = Math.hypot(b.x - a.x, b.y - a.y) || 1;
-      const nx = (-(b.y - a.y) / l) * half;
-      const ny = ((b.x - a.x) / l) * half;
-      return Math.max(heightAt(t, p.x, p.y), heightAt(t, p.x + nx, p.y + ny), heightAt(t, p.x - nx, p.y - ny));
-    });
-    if (!e.bridge) return ground;
-    const h0 = Math.max(ground[0], DECK_HEIGHT);
-    const h1 = Math.max(ground[ground.length - 1], DECK_HEIGHT);
-    return ground.map((_, i) => mix(h0, h1, i / (ground.length - 1)));
-  }
-
-  private buildRoads(city: City, cls: RoadClass): THREE.Mesh {
-    const style = ROAD[cls];
-    const pos: number[] = [];
-    const index: number[] = [];
-    for (const e of city.graph.edges) {
-      if (e.cls !== cls) continue;
-      const pts = resample(e.points, 6);
-      const hs = this.profile(city, e, pts);
-      const base = pos.length / 3;
-      for (let i = 0; i < pts.length; i++) {
-        const a = pts[Math.max(0, i - 1)];
-        const b = pts[Math.min(pts.length - 1, i + 1)];
-        const l = Math.hypot(b.x - a.x, b.y - a.y) || 1;
-        const nx = (-(b.y - a.y) / l) * (style.width / 2);
-        const ny = ((b.x - a.x) / l) * (style.width / 2);
-        const y = hs[i] + style.lift;
-        pos.push(pts[i].x + nx, y, pts[i].y + ny, pts[i].x - nx, y, pts[i].y - ny);
-        if (i > 0) {
-          const k = base + i * 2;
-          index.push(k - 2, k - 1, k, k, k - 1, k + 1);
-        }
-      }
-    }
-    const geo = new THREE.BufferGeometry();
-    geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
-    geo.setIndex(index);
-    geo.computeVertexNormals();
-    return new THREE.Mesh(geo, new THREE.MeshLambertMaterial({ color: style.color, side: THREE.DoubleSide }));
+  /** Puts the camera at a map position and height, looking at another (for reproducible screenshots). */
+  look(from: [number, number, number], to: [number, number, number]): void {
+    this.camera.position.set(from[0], from[2], from[1]);
+    this.controls.target.set(to[0], to[2], to[1]);
+    this.controls.update();
   }
 
   private resize(): void {

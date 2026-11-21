@@ -32,6 +32,7 @@ export interface RoadProfile {
   kerb: boolean;
   age: 'fresh' | 'used' | 'worn' | 'bleached';
   wear: 'clean' | 'cracked' | 'sealed' | 'patched' | 'broken';
+  type: DistrictType;
   /** Right-of-way width the section must fit in. */
   row: number;
   /** Share of the lots along the edge by frontage length. */
@@ -95,6 +96,7 @@ export function roadProfiles(graph: RoadGraph, t: Terrain, districts: Districts,
       kerb: true,
       age: old ? (r.chance(0.5) ? 'worn' : 'bleached') : r.chance(0.2) ? 'fresh' : r.chance(0.7) ? 'used' : 'worn',
       wear: r.pick(old ? (['cracked', 'patched', 'patched', 'sealed', 'broken'] as const) : (['clean', 'clean', 'sealed', 'cracked', 'patched'] as const)),
+      type,
       row: rowWidth(e.cls, type),
       trade,
       homes,
@@ -118,11 +120,11 @@ export function roadProfiles(graph: RoadGraph, t: Terrain, districts: Districts,
         break;
       case 'arterial':
         // Six lanes where the traffic of the centre or a freeway ramp gathers; four elsewhere; two in the hills.
-        p.lanes = type === 'hills' ? 1 : core || ramp < 25 || centre < 45 ? 3 : 2;
+        p.lanes = type === 'hills' || type === 'oldtown' ? 1 : (core && centre < 40) || ramp < 14 ? 3 : 2;
         p.laneW = industry > 0.5 ? 3.6 : 3.3;
-        p.median = type === 'hills' || type === 'oldtown' ? null : trade > 0.45 || core ? 'turn' : 'planted';
+        p.median = p.lanes < 2 ? null : p.lanes === 3 || ramp < 30 ? 'turn' : trade < 0.25 && homes > 0.5 && type === 'suburb' ? 'planted' : null;
         p.bus = station && p.lanes >= 3;
-        p.parking = trade > 0.5 && !core ? 2 : 0;
+        p.parking = p.lanes === 2 && !p.median && trade > 0.5 ? 2 : 0;
         p.walk = core ? (trade > 0.4 || station ? 5.5 : 4.5) : trade > 0.4 || station ? 3.4 : 2.4;
         p.verge = core || trade > 0.4 || industry > 0.5 ? 0 : 1.5;
         if (p.age !== 'fresh' && r.chance(0.5)) p.age = 'used';

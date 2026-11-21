@@ -13,6 +13,8 @@ const MIN_ROAD = 0.9;
 /** Above this height over the ground a road stands on a structure instead of the ground. */
 export const STRUCTURE_ABOVE = 2.2;
 const RAIL_CLEARANCE = 7;
+/** Freeway surface above the surface of a street passing below: headroom plus the deck. */
+export const STREET_CLEARANCE = 6.4;
 const STEP = 5;
 
 /** Junction surface: a plane through the node, tilted with the ground. */
@@ -72,7 +74,7 @@ export function roadLevels(graph: RoadGraph, t: Terrain, rail: Rail): RoadLevels
     return cls.includes('highway') ? 'highway' : cls.every((c) => c === 'ramp') ? 'ramp' : 'street';
   });
   const nodes: NodePlane[] = graph.nodes.map((n, i) => {
-    if (kind[i] === 'highway') return { h: overRail(n.x, n.y, Math.max(0, ground(t, n.x, n.y, 30)) + HIGHWAY_LIFT), gx: 0, gy: 0 };
+    if (kind[i] === 'highway') return { h: 0, gx: 0, gy: 0 };
     const bridge = n.edges.some((id) => graph.edges[id].bridge && !elevated(graph.edges[id]));
     const h = ground(t, n.x, n.y);
     if (bridge) return { h: Math.max(h, DECK_HEIGHT), gx: 0, gy: 0 };
@@ -83,6 +85,26 @@ export function roadLevels(graph: RoadGraph, t: Terrain, rail: Rail): RoadLevels
     gx *= k;
     gy *= k;
     return { h: Math.max(h, MIN_ROAD), gx, gy };
+  });
+  const edges: EdgeLevel[] = new Array(graph.edges.length);
+  for (const e of graph.edges) if (!elevated(e)) edges[e.id] = edgeLevel(e);
+  // The freeway also clears every street that passes below it.
+  for (const c of graph.crossings) {
+    if (graph.edges[c.highway].cls !== 'highway') continue;
+    const lv = edges[c.street];
+    let best = Infinity;
+    let h = 0;
+    lv.pts.forEach((p, i) => {
+      const d = Math.hypot(p.x - c.x, p.y - c.y);
+      if (d < best) {
+        best = d;
+        h = lv.h[i];
+      }
+    });
+    bumps.push({ x: c.x, y: c.y, h: h + STREET_CLEARANCE });
+  }
+  graph.nodes.forEach((n, i) => {
+    if (kind[i] === 'highway') nodes[i].h = overRail(n.x, n.y, Math.max(0, ground(t, n.x, n.y, 30)) + HIGHWAY_LIFT);
   });
   // Nodes between two ramps hang between their neighbours.
   for (let it = 0; it < 40; it++) {
@@ -100,7 +122,7 @@ export function roadLevels(graph: RoadGraph, t: Terrain, rail: Rail): RoadLevels
     });
   }
 
-  const edges: EdgeLevel[] = graph.edges.map((e) => {
+  function edgeLevel(e: RoadEdge): EdgeLevel {
     const pts = resample(e.points, STEP);
     const s = [0];
     for (let i = 1; i < pts.length; i++) s.push(s[i - 1] + Math.hypot(pts[i].x - pts[i - 1].x, pts[i].y - pts[i - 1].y));
@@ -118,7 +140,7 @@ export function roadLevels(graph: RoadGraph, t: Terrain, rail: Rail): RoadLevels
       const db = hb - overRail(b.x, b.y, base[base.length - 1]);
       h = base.map((v, i) => overRail(pts[i].x, pts[i].y, v) + mix(da, db, s[i] / L));
     } else if (e.cls === 'ramp') {
-      h = pts.map((p, i) => Math.max(mix(ha, hb, smoothstep(0, 1, s[i] / L)), Math.min(g[i] + 0.3, Math.max(ha, hb))));
+      h = pts.map((_, i) => Math.max(mix(ha, hb, smoothstep(0, 1, s[i] / L)), Math.min(g[i] + 0.3, Math.max(ha, hb))));
     } else if (e.bridge) {
       h = pts.map((_, i) => mix(ha, hb, s[i] / L));
     } else {
@@ -130,7 +152,9 @@ export function roadLevels(graph: RoadGraph, t: Terrain, rail: Rail): RoadLevels
       h = base.map((v, i) => v - mix(pa, pb, s[i] / L));
     }
     return { pts, s, h, ground: g };
-  });
+  }
+
+  for (const e of graph.edges) if (elevated(e)) edges[e.id] = edgeLevel(e);
 
   // A ramp leaves the freeway at deck level: it follows the deck until the two have separated.
   for (const e of graph.edges) {
