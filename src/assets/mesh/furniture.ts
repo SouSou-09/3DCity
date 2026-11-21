@@ -30,8 +30,9 @@ function hoop(b: MeshBuilder, material: string, f: Pose, y: number, R: number, r
   for (let i = 0; i <= sides; i++) pts.push(at(f, R * Math.cos((i / sides) * Math.PI * 2), y, R * Math.sin((i / sides) * Math.PI * 2)));
   pipe(b, material, pts, r, 6, false);
 }
-/** Prism: a closed outline of [z, y] points swept along x from x0 to x1, with end caps. */
-export function prism(b: MeshBuilder, material: string, f: Pose, outline: [number, number][], x0: number, x1: number, caps = material): void {
+const neg = (v: V3): V3 => [-v[0], -v[1], -v[2]];
+/** Prism: a closed outline of [z, y] points swept along x from x0 to x1. The end caps map the outline's bounding box in metres, so a face texture of that size fits. */
+export function prism(b: MeshBuilder, material: string, f: Pose, outline: [number, number][], x0: number, x1: number, caps = material, capsEnd = caps): void {
   let area = 0;
   for (let i = 0; i < outline.length; i++) {
     const [p, q] = [outline[i], outline[(i + 1) % outline.length]];
@@ -50,17 +51,18 @@ export function prism(b: MeshBuilder, material: string, f: Pose, outline: [numbe
   const zs = o.map((p) => p[0]);
   const ys = o.map((p) => p[1]);
   const [z0, y0] = [Math.min(...zs), Math.min(...ys)];
+  const z1 = Math.max(...zs);
   const [cz, cy] = [zs.reduce((a, c) => a + c, 0) / n, ys.reduce((a, c) => a + c, 0) / n];
   for (let i = 0; i < n; i++) {
     const [p, q] = [o[i], o[(i + 1) % n]];
     const uv = (z: number, y: number): [number, number] => [z - z0, y - y0];
     b.tri(caps, at(f, x0, cy, cz), at(f, x0, p[1], p[0]), at(f, x0, q[1], q[0]), [uv(cz, cy), uv(p[0], p[1]), uv(q[0], q[1])]);
-    b.tri(caps, at(f, x1, cy, cz), at(f, x1, q[1], q[0]), at(f, x1, p[1], p[0]), [uv(cz, cy), uv(q[0], q[1]), uv(p[0], p[1])]);
+    const vu = (z: number, y: number): [number, number] => [z1 - z, y - y0];
+    b.tri(capsEnd, at(f, x1, cy, cz), at(f, x1, q[1], q[0]), at(f, x1, p[1], p[0]), [vu(cz, cy), vu(q[0], q[1]), vu(p[0], p[1])]);
   }
 }
 /** Board lying along x. Its wide face looks up, or to the front when `upright`; the wood grain runs lengthwise. */
 function board(b: MeshBuilder, material: string, f: Pose, c: V3, len: number, wide: number, thick: number, upright = false): void {
-  const neg = (v: V3): V3 => [-v[0], -v[1], -v[2]];
   if (upright) box(b, material, { o: f.o, x: f.y, y: f.x, z: neg(f.z) }, [c[1], c[0], -c[2]], [wide / 2, len / 2, thick / 2]);
   else box(b, material, { o: f.o, x: f.z, y: f.y, z: neg(f.x) }, [c[2], c[1], -c[0]], [wide / 2, thick / 2, len / 2]);
 }
@@ -335,6 +337,379 @@ function line(b: MeshBuilder, n: number, gap: number, o: (i: number) => UtilOpts
   }
 }
 
+// --- Benches. ---
+
+/** Flat panel with its own front and back faces and a rim. */
+function panel(b: MeshBuilder, front: string, back: string, rim: string, f: Pose, c: V3, w: number, h: number, t: number): void {
+  box(b, rim, f, c, [w / 2, h / 2, t], 'zZ');
+  face(b, front, f, [c[0], c[1], c[2] + t], w, h);
+  face(b, back, turn(f, 180), [-c[0], c[1], -c[2] + t], w, h);
+}
+/** Rectangle on the side of the pose at x, facing outwards. */
+function sideFace(b: MeshBuilder, material: string, f: Pose, x: number, cy: number, cz: number, w: number, h: number): void {
+  const s = Math.sign(x);
+  const g: Pose = { o: f.o, x: [-s * f.z[0], -s * f.z[1], -s * f.z[2]], y: f.y, z: [s * f.x[0], s * f.x[1], s * f.x[2]] };
+  face(b, material, g, [-s * cz, cy, Math.abs(x)], w, h);
+}
+/** Outline of a box with a rounded top: flat from y0 to y1, then an arch `rise` high. */
+function arch(z0: number, z1: number, y0: number, y1: number, rise: number, n = 8): [number, number][] {
+  const pts: [number, number][] = [[z0, y0], [z1, y0]];
+  for (let i = 0; i <= n; i++) pts.push([(z0 + z1) / 2 + ((z1 - z0) / 2) * Math.cos((i / n) * Math.PI), y1 + rise * Math.sin((i / n) * Math.PI)]);
+  return pts;
+}
+interface BenchOpts {
+  kind: 'park' | 'flat' | 'metal' | 'concrete' | 'ad';
+  len?: number;
+  /** Slat finish; concrete benches get a timber top when set. */
+  slats?: string;
+  frame?: string;
+  /** Armrests: 0, 2 (ends) or 3. */
+  arms?: number;
+  back?: boolean;
+  ad?: string;
+  sheet?: string;
+  conc?: string;
+}
+function bench(b: MeshBuilder, f: Pose, o: BenchOpts): void {
+  const len = o.kind === 'ad' ? 1.9 : (o.len ?? 1.8);
+  const frame = o.frame ?? P('black');
+  const slats = F(`slats-${o.slats ?? 'new'}`);
+  const conc = o.conc ?? 'concrete/walk-plain';
+  const back = o.back ?? (o.kind === 'park' || o.kind === 'metal');
+  const n = len > 2.1 ? 3 : 2;
+  const arms = o.arms ?? 2;
+  for (let i = 0; i < n; i++) {
+    const x = (i / (n - 1) - 0.5) * (len - 0.24);
+    const p = (z: number, y: number): V3 => at(f, x, y, z);
+    if (o.kind === 'park' || o.kind === 'metal') {
+      pipe(b, frame, [p(0.27, 0), p(0.22, 0.41), p(-0.2, 0.41), ...(back ? [p(-0.3, 0.88)] : [])], 0.02, 6);
+      pipe(b, frame, [p(-0.2, 0.41), p(-0.3, 0)], 0.02, 6);
+      const arm = arms === 3 || (arms === 2 && (i === 0 || i === n - 1));
+      if (arm && back) pipe(b, frame, [p(-0.25, 0.66), p(0.2, 0.66), p(0.25, 0.6), p(0.22, 0.41)], 0.016, 6);
+      else if (arm) pipe(b, frame, [p(-0.2, 0.41), p(-0.2, 0.63), p(0.22, 0.63), p(0.22, 0.41)], 0.016, 6);
+    } else if (o.kind === 'flat') {
+      for (const z of [-0.17, 0.17]) box(b, frame, f, [x, 0.2, z], [0.02, 0.2, 0.02]);
+      box(b, frame, f, [x, 0.415, 0], [0.02, 0.015, 0.21]);
+    } else if (o.kind === 'concrete') {
+      box(b, conc, f, [x, 0.2, 0], [0.07, 0.2, 0.2], 'Y');
+    } else {
+      prism(b, conc, f, [[-0.3, 0], [0.27, 0], [0.27, 0.4], [-0.18, 0.43], [-0.29, 0.92], [-0.36, 0.92]], x - 0.05, x + 0.05);
+    }
+  }
+  if (o.kind === 'metal') {
+    const sheet = F(o.sheet ?? 'perforated-black');
+    box(b, sheet, f, [0, 0.435, 0.01], [len / 2, 0.006, 0.22]);
+    if (back) box(b, sheet, tilt(move(f, 0, 0.47, -0.2), -12), [0, 0.21, 0], [len / 2, 0.19, 0.006]);
+    const rails: [number, number][] = [[0.435, 0.235], [0.435, -0.21]];
+    if (back) rails.push([0.88, -0.3]);
+    for (const [y, z] of rails) b.tube(frame, at(f, -len / 2, y, z), at(f, len / 2, y, z), 0.018, 6, 0.018, true);
+    return;
+  }
+  if (o.kind === 'concrete') box(b, conc, f, [0, 0.45, 0], [len / 2, 0.05, 0.24]);
+  if (o.kind !== 'concrete' || o.slats) {
+    const y = o.kind === 'concrete' ? 0.516 : 0.445;
+    for (let i = 0; i < 5; i++) board(b, slats, f, [0, y, -0.18 + i * 0.1], len, 0.085, 0.03);
+  }
+  if (back && o.kind === 'park') for (let i = 0; i < 3; i++) board(b, slats, f, [0, 0.6 + i * 0.105, -0.208 - i * 0.0225], len, 0.085, 0.028, true);
+  if (o.kind === 'ad') panel(b, F(`bench-ad-${o.ad ?? 'blank'}`), F(`bench-ad-${o.ad ?? 'blank'}`), F('coat-cream'), tilt(move(f, 0, 0.47, -0.19), -12), [0, 0.22, 0], 1.8, 0.5, 0.012);
+}
+function picnic(b: MeshBuilder, f: Pose, slats: string, frame: string, len = 1.8): void {
+  for (let i = 0; i < 7; i++) board(b, slats, f, [0, 0.74, -0.33 + i * 0.11], len, 0.1, 0.035);
+  for (const s of [-1, 1]) for (let i = 0; i < 2; i++) board(b, slats, f, [0, 0.44, s * (0.62 + i * 0.12)], len, 0.11, 0.035);
+  for (const x of [-len / 2 + 0.3, len / 2 - 0.3]) {
+    for (const s of [-1, 1]) b.tube(frame, at(f, x, 0, s * 0.72), at(f, x, 0.72, s * -0.2), 0.028, 6, 0.028, true);
+    b.tube(frame, at(f, x, 0.41, -0.76), at(f, x, 0.41, 0.76), 0.025, 6, 0.025, true);
+    b.tube(frame, at(f, x, 0.71, -0.36), at(f, x, 0.71, 0.36), 0.025, 6, 0.025, true);
+  }
+}
+
+// --- Bins. ---
+
+const DARK = 'furniture/bag-black';
+const CORNERS: [number, number][] = [[1, 1], [1, -1], [-1, -1], [-1, 1]];
+/** Heap of litter rising out of an opening of radius r at height y. */
+function rubbish(b: MeshBuilder, f: Pose, y: number, r: number): void {
+  ball(b, F('litter'), f, y, r, 10, 0.6, 0.5, 1);
+}
+/** Tied refuse sack sitting on the ground. */
+function sack(b: MeshBuilder, f: Pose, r = 0.26): void {
+  ball(b, DARK, f, r * 0.78, r, 10, 0.78);
+  lathe(b, DARK, f, [[0.03, r * 1.5], [0.012, r * 1.57], [0.05, r * 1.7]], 6);
+}
+type BinKind = 'mesh' | 'post' | 'drum' | 'concrete' | 'hood' | 'dome' | 'solar' | 'slat';
+interface BinOpts {
+  kind: BinKind;
+  tex: string;
+  /** Lid, hood or trim material. */
+  lid?: string;
+  label?: string;
+  full?: boolean;
+}
+function bin(b: MeshBuilder, f: Pose, o: BinOpts): void {
+  const lid = o.lid ?? BLACK;
+  const label = (y: number, z: number, s = 0.3): void => {
+    if (o.label) face(b, F(`label-${o.label}`), f, [0, y, z], s, s);
+  };
+  if (o.kind === 'mesh' || o.kind === 'post') {
+    const post = o.kind === 'post';
+    const g = post ? move(f, 0, 0.52, 0.2) : f;
+    const [r0, r1, h] = post ? [0.13, 0.17, 0.5] : [0.21, 0.27, 0.85];
+    if (post) {
+      pole(b, f, { h: 1.1, r0: 0.03, tex: lid, base: 'plate', cap: 'ball' });
+      for (const y of [0.62, 0.95]) box(b, lid, f, [0, y, 0.04], [0.02, 0.015, 0.04]);
+    }
+    lathe(b, o.tex, g, [[0, 0.04], [r0, 0.04], [r1, h]], 14);
+    lathe(b, DARK, g, [[0, h * 0.45], [r1 - 0.012, h - 0.01]], 14);
+    hoop(b, lid, g, h, r1, 0.014);
+    hoop(b, lid, g, 0.04, r0, 0.012);
+    if (o.full) rubbish(b, g, h - 0.02, r1 - 0.02);
+  } else if (o.kind === 'drum') {
+    lathe(b, o.tex, f, [[0, 0], [0.28, 0], [0.29, 0.02], [0.29, 0.28], [0.3, 0.3], [0.29, 0.32], [0.29, 0.58], [0.3, 0.6], [0.29, 0.62], [0.29, 0.86], [0.295, 0.88], [0.28, 0.88]], 16);
+    lathe(b, DARK, f, [[0, 0.45], [0.28, 0.87]], 16);
+    if (o.full) rubbish(b, f, 0.86, 0.27);
+  } else if (o.kind === 'concrete') {
+    lathe(b, o.tex, f, [[0.3, 0], [0.33, 0.05], [0.33, 0.8], [0.31, 0.84]], 16);
+    lathe(b, lid, f, [[0.32, 0.84], [0.31, 0.9], [0.14, 1.0], [0.14, 1.02], [0.12, 1.02]], 16);
+    lathe(b, DARK, f, [[0, 0.9], [0.12, 1.02]], 12);
+    if (o.full) rubbish(b, f, 1.0, 0.13);
+  } else if (o.kind === 'hood') {
+    box(b, o.tex, f, [0, 0.45, 0], [0.27, 0.4, 0.27]);
+    for (const [sx, sz] of CORNERS) box(b, lid, f, [sx * 0.255, 0.5, sz * 0.255], [0.02, 0.5, 0.02]);
+    box(b, lid, f, [0, 1.03, 0], [0.3, 0.03, 0.3]);
+    box(b, lid, f, [0, 1.075, 0], [0.2, 0.015, 0.2], 'Y');
+    box(b, DARK, f, [0, 0.856, 0], [0.25, 0.005, 0.25], 'Y');
+    label(0.5, 0.272);
+    if (o.full) rubbish(b, f, 0.86, 0.22);
+  } else if (o.kind === 'dome') {
+    lathe(b, o.tex, f, [[0.24, 0], [0.27, 0.04], [0.28, 0.08], [0.28, 0.8]], 16);
+    ball(b, o.lid ?? o.tex, f, 0.8, 0.28, 16, 0.75, 0.5, 1);
+    box(b, DARK, f, [0, 0.9, 0.2], [0.11, 0.06, 0.05]);
+    label(0.5, 0.284, 0.2);
+    if (o.full) rubbish(b, move(f, 0, 0, 0.23), 0.9, 0.1);
+  } else if (o.kind === 'solar') {
+    box(b, o.tex, f, [0, 0.62, 0], [0.32, 0.58, 0.33]);
+    for (const sx of [-1, 1]) box(b, BLACK, f, [sx * 0.26, 0.02, 0], [0.04, 0.02, 0.3]);
+    face(b, 'signal/solar-panel', { o: at(f, 0, 1.202, 0), x: f.x, y: neg(f.z), z: f.y }, [0, 0, 0], 0.56, 0.56);
+    box(b, BLACK, f, [0, 0.98, 0.34], [0.24, 0.035, 0.02]);
+    box(b, lid, f, [0, 0.86, 0.335], [0.27, 0.1, 0.008]);
+    label(0.5, 0.332);
+  } else {
+    box(b, o.tex, f, [0, 0.46, 0], [0.26, 0.4, 0.26], 'Yy');
+    for (const [sx, sz] of CORNERS) box(b, lid, f, [sx * 0.265, 0.45, sz * 0.265], [0.02, 0.45, 0.02]);
+    box(b, lid, f, [0, 0.88, 0], [0.29, 0.02, 0.29], 'Y');
+    box(b, DARK, f, [0, 0.9, 0], [0.2, 0.004, 0.2], 'Y');
+    if (o.full) rubbish(b, f, 0.9, 0.18);
+  }
+}
+/** Wheeled household refuse cart. */
+function cart(b: MeshBuilder, f: Pose, tex: string, lid = tex): void {
+  prism(b, tex, f, [[-0.26, 0.1], [0.2, 0.1], [0.27, 0.95], [-0.3, 0.95]], -0.26, 0.26);
+  prism(b, lid, f, [[-0.34, 0.95], [0.3, 0.95], [0.3, 1.0], [-0.34, 1.03]], -0.29, 0.29);
+  for (const s of [-1, 1]) lathe(b, F('tire'), roll(move(f, s * 0.27, 0.12, -0.24), -90), [[0, -0.03], [0.12, -0.03], [0.12, 0.03], [0, 0.03]], 12);
+  b.tube(lid, at(f, -0.24, 1.0, -0.37), at(f, 0.24, 1.0, -0.37), 0.015, 6, 0.015, true);
+}
+function dumpster(b: MeshBuilder, f: Pose, tex: string, open = false): void {
+  prism(b, tex, f, [[-0.75, 0.16], [0.72, 0.16], [0.9, 1.08], [-0.75, 1.36]], -1, 1);
+  for (const s of [-1, 1]) {
+    if (open && s === 1) {
+      prism(b, F('litter'), f, [[-0.72, 1.3], [0.86, 1.04], [0.86, 1.07], [-0.72, 1.33]], 0.03, 0.97);
+      box(b, BLACK, f, [0.5, 0.92, -0.78], [0.5, 0.44, 0.02]);
+    } else prism(b, BLACK, f, [[-0.78, 1.37], [0.94, 1.09], [0.94, 1.13], [-0.78, 1.41]], s === 1 ? 0.02 : -1.02, s === 1 ? 1.02 : -0.02);
+  }
+  for (const s of [-1, 1]) box(b, tex, f, [s * 1.06, 0.8, 0.05], [0.06, 0.07, 0.45]);
+  box(b, tex, f, [0, 1.06, 0.92], [1.0, 0.03, 0.03]);
+  for (const sx of [-1, 1]) for (const sz of [-1, 1]) lathe(b, BLACK, roll(move(f, sx * 0.85 - 0.03, 0.08, sz * 0.6), -90), [[0, 0], [0.08, 0], [0.08, 0.06], [0, 0.06]], 8);
+}
+
+// --- Hydrants. ---
+
+interface HydrantOpts {
+  body: string;
+  /** Bonnet and nozzle cap colour. */
+  cap?: string;
+  /** Wet-barrel pattern: squat, each outlet with its own valve. */
+  wet?: boolean;
+  /** Guard posts around it. */
+  posts?: number;
+  lean?: number;
+}
+function hydrant(b: MeshBuilder, f0: Pose, o: HydrantOpts): void {
+  const f = o.lean ? roll(f0, o.lean) : f0;
+  const body = F(`enamel-${o.body}`);
+  const cap = F(`enamel-${o.cap ?? o.body}`);
+  const nozzle = (g: Pose, r: number, from: number, len: number): void => {
+    lathe(b, body, g, [[r, from], [r, from + len]], 10);
+    lathe(b, cap, g, [[r * 1.3, from + len], [r * 1.3, from + len + 0.045], [r * 0.6, from + len + 0.055], [r * 0.6, from + len + 0.085], [0, from + len + 0.085]], 8);
+  };
+  const stem: [number, number][] = [[0.035, 0.09], [0.035, 0.15], [0.02, 0.15], [0.02, 0.19], [0, 0.19]];
+  lathe(b, body, f, [[0.17, 0], [0.17, 0.035], [0.105, 0.05]], 12);
+  for (let i = 0; i < 6; i++) {
+    const a = (i / 6) * Math.PI * 2 + 0.5;
+    b.tube(ZINC, at(f, 0.14 * Math.cos(a), 0.035, 0.14 * Math.sin(a)), at(f, 0.14 * Math.cos(a), 0.06, 0.14 * Math.sin(a)), 0.012, 6, 0.012, true);
+  }
+  if (o.wet) {
+    lathe(b, body, f, [[0.105, 0.05], [0.105, 0.44], [0.125, 0.46], [0.125, 0.5], [0.1, 0.55], [0.055, 0.6], [0, 0.615]], 12);
+    nozzle(tilt(move(f, 0, 0.3, 0), 90), 0.07, 0.08, 0.08);
+    nozzle(roll(move(f, 0, 0.42, 0), -90), 0.05, 0.08, 0.07);
+    lathe(b, cap, tilt(move(f, 0, 0.3, 0), -90), stem, 5);
+    lathe(b, cap, roll(move(f, 0, 0.42, 0), 90), stem, 5);
+  } else {
+    lathe(b, body, f, [[0.105, 0.05], [0.095, 0.42], [0.13, 0.44], [0.13, 0.47], [0.11, 0.5], [0.115, 0.66], [0.135, 0.68], [0.135, 0.71]], 12);
+    lathe(b, cap, f, [[0.135, 0.71], [0.125, 0.76], [0.07, 0.84], [0.035, 0.86]], 12);
+    lathe(b, cap, f, [[0.03, 0.86], [0.03, 0.91], [0, 0.91]], 5);
+    nozzle(tilt(move(f, 0, 0.58, 0), 90), 0.075, 0.08, 0.08);
+    for (const s of [-1, 1]) nozzle(roll(move(f, 0, 0.58, 0), s * 90), 0.052, 0.08, 0.07);
+  }
+  const spots: [number, number][] = [[-0.8, 0.55], [0.8, 0.55], [-0.8, -0.55], [0.8, -0.55]];
+  for (let i = 0; i < (o.posts ?? 0); i++) bollard(b, move(f0, spots[i][0], 0, spots[i][1]), { kind: 'pipe', band: 'bollard-band' });
+}
+
+// --- Mailboxes. ---
+
+function mailbox(b: MeshBuilder, f0: Pose, o: { old?: boolean; tagged?: boolean; lean?: number } = {}): void {
+  const f = o.lean ? roll(f0, o.lean) : f0;
+  const body = F(o.old ? 'coat-mail-blue-old' : 'coat-mail-blue');
+  for (const [sx, sz] of CORNERS) box(b, body, f, [sx * 0.2, 0.14, sz * 0.2], [0.025, 0.14, 0.025]);
+  prism(b, body, f, arch(-0.27, 0.27, 0.28, 1.03, 0.25), -0.25, 0.25);
+  face(b, F('mail-front'), f, [0, 0.655, 0.271], 0.5, 0.75);
+  for (const s of [-1, 1]) sideFace(b, F(o.tagged && s === 1 ? 'mail-side-tagged' : 'mail-side'), f, s * 0.251, 0.655, 0, 0.5, 0.75);
+  box(b, body, f, [0, 1.12, 0.25], [0.2, 0.012, 0.035]);
+}
+function relayBox(b: MeshBuilder, f: Pose): void {
+  pole(b, f, { h: 0.5, r0: 0.07, tex: F('coat-relay-green'), base: 'plate', cap: 'none' });
+  box(b, F('coat-relay-green'), f, [0, 0.95, 0], [0.3, 0.45, 0.24]);
+  face(b, F('relay-front'), f, [0, 0.95, 0.241], 0.6, 0.9);
+}
+/** Kerbside letter box on a post; its door faces +z. */
+function curbBox(b: MeshBuilder, f0: Pose, tex: string, o: { lean?: number; post?: string; flagUp?: boolean } = {}): void {
+  const f = o.lean ? roll(f0, o.lean) : f0;
+  pole(b, f, { h: 1.0, r0: 0.05, tex: o.post ?? P('wood'), base: 'buried', cap: 'flat', sides: 4 });
+  box(b, o.post ?? P('wood'), f, [0, 1.02, 0.1], [0.06, 0.02, 0.26]);
+  prism(b, tex, { o: at(f, 0, 1.04, 0.1), x: f.z, y: f.y, z: neg(f.x) }, arch(-0.085, 0.085, 0, 0.12, 0.085, 6), -0.24, 0.24);
+  const g = o.flagUp ? move(f, 0.09, 1.12, 0.2) : tilt(move(f, 0.09, 1.12, 0.2), 90);
+  box(b, 'structure/steel-red', g, [0, 0.09, 0], [0.003, 0.09, 0.008]);
+  box(b, 'structure/steel-red', g, [0, 0.16, 0.03], [0.003, 0.03, 0.035]);
+}
+
+// --- Parking meters. ---
+
+function meterHead(b: MeshBuilder, f: Pose, front: string, body: string): void {
+  lathe(b, body, f, [[0.03, 0], [0.045, 0.04], [0.045, 0.07]], 8);
+  const outline: [number, number][] = [[-0.08, 0], [0.08, 0], [0.08, 0.2]];
+  for (let i = 1; i < 6; i++) outline.push([0.08 * Math.cos((i / 6) * Math.PI), 0.2 + 0.06 * Math.sin((i / 6) * Math.PI)]);
+  outline.push([-0.08, 0.2]);
+  prism(b, body, { o: at(f, 0, 0.07, 0), x: neg(f.z), y: f.y, z: f.x }, outline, -0.05, 0.05, front, F('meter-back'));
+}
+interface MeterOpts {
+  face?: string;
+  twin?: boolean;
+  lean?: number;
+  /** Bike hitch ring on the post. */
+  hitch?: boolean;
+  /** Out of service: the head is bagged. */
+  bagged?: boolean;
+  tex?: string;
+}
+function parkingMeter(b: MeshBuilder, f0: Pose, o: MeterOpts = {}): void {
+  const f = o.lean ? roll(f0, o.lean) : f0;
+  const tex = o.tex ?? P('grey');
+  pole(b, f, { h: 1.05, r0: 0.03, tex, base: 'plate', cap: 'none' });
+  if (o.twin) box(b, tex, f, [0, 1.06, 0], [0.13, 0.02, 0.025]);
+  for (const x of o.twin ? [-0.11, 0.11] : [0]) {
+    const g = move(f, x, o.twin ? 1.07 : 1.05, 0);
+    if (o.bagged) box(b, DARK, g, [0, 0.17, 0], [0.095, 0.17, 0.065]);
+    else meterHead(b, g, F(`meter-${o.face ?? 'dial'}`), tex);
+  }
+  if (o.hitch) {
+    const pts: V3[] = [];
+    for (let i = 0; i <= 16; i++) pts.push(at(f, 0.2 * Math.cos((i / 16) * Math.PI * 2), 0.72 + 0.2 * Math.sin((i / 16) * Math.PI * 2), 0));
+    pipe(b, BLACK, pts, 0.016, 6, false);
+  }
+}
+function payStation(b: MeshBuilder, f: Pose, kind: 'grey' | 'green' | 'off', solar = false): void {
+  const tex = kind === 'green' ? P('green') : P('grey');
+  footing(b, tex, f, 0.16);
+  box(b, tex, f, [0, 0.3, 0], [0.1, 0.27, 0.08]);
+  box(b, tex, f, [0, 1.02, 0], [0.2, 0.45, 0.14]);
+  face(b, F(`paystation-${kind}`), f, [0, 1.02, 0.141], 0.4, 0.9);
+  box(b, tex, f, [0, 1.49, 0.02], [0.22, 0.02, 0.18]);
+  if (solar) {
+    b.tube(tex, at(f, 0, 1.5, -0.08), at(f, 0, 2.1, -0.08), 0.02, 6);
+    const g = tilt(move(f, 0, 2.12, -0.08), -58);
+    box(b, tex, g, [0, 0, 0], [0.25, 0.25, 0.012], 'z');
+    face(b, 'signal/solar-panel', g, [0, 0, 0.012], 0.5, 0.5);
+  }
+}
+
+// --- Bollards. ---
+
+type BollardKind = 'pipe' | 'fat' | 'cast' | 'steel' | 'dome' | 'sphere' | 'wood' | 'lit' | 'block';
+interface BollardOpts {
+  kind: BollardKind;
+  tex?: string;
+  band?: string;
+  lean?: number;
+  off?: boolean;
+}
+/** Returns the height at which a chain would be hung. */
+function bollard(b: MeshBuilder, f0: Pose, o: BollardOpts): number {
+  const f = o.lean ? roll(f0, o.lean) : f0;
+  const tex = o.tex ?? F('enamel-yellow');
+  const band = (r: number, y0: number, y1: number): void => {
+    if (o.band) lathe(b, F(o.band), f, [[r, y0], [r, y1]], 12);
+  };
+  switch (o.kind) {
+    case 'pipe':
+      lathe(b, tex, f, [[0.057, 0], [0.057, 1.0], [0.045, 1.035], [0, 1.05]], 10);
+      band(0.0585, 0.72, 0.92);
+      return 0.9;
+    case 'fat':
+      lathe(b, tex, f, [[0.085, 0], [0.085, 1.0]], 12);
+      lathe(b, 'concrete/walk-plain', f, [[0.08, 1.0], [0.06, 1.035], [0, 1.05]], 12);
+      band(0.0865, 0.7, 0.9);
+      return 0.9;
+    case 'cast':
+      lathe(b, tex, f, [[0.11, 0], [0.11, 0.08], [0.08, 0.12], [0.07, 0.6], [0.085, 0.63], [0.085, 0.67], [0.065, 0.7], [0.06, 0.82], [0.075, 0.85], [0.05, 0.9], [0.03, 0.92]], 10);
+      ball(b, tex, f, 0.975, 0.06, 8);
+      return 0.76;
+    case 'steel':
+      lathe(b, o.tex ?? F('coat-stainless'), f, [[0.07, 0], [0.07, 0.015], [0.05, 0.02], [0.05, 0.9], [0.045, 0.91], [0, 0.91]], 14);
+      band(0.0515, 0.76, 0.84);
+      return 0.8;
+    case 'dome':
+      ball(b, o.tex ?? 'concrete/walk-exposed', f, 0, 0.32, 14, 1, 0.5, 1);
+      return 0.3;
+    case 'sphere':
+      lathe(b, o.tex ?? 'concrete/walk-plain', f, [[0.17, 0], [0.19, 0.05], [0.12, 0.07]], 14);
+      ball(b, o.tex ?? 'concrete/walk-plain', f, 0.31, 0.27, 14);
+      return 0.5;
+    case 'wood':
+      lathe(b, o.tex ?? P('wood'), f, [[0.09, 0], [0.09, 0.72], [0.065, 0.8], [0, 0.8]], 8);
+      return 0.62;
+    case 'lit': {
+      const body = o.tex ?? P('black');
+      lathe(b, body, f, [[0.08, 0], [0.08, 0.68]], 12);
+      lathe(b, o.off ? 'signal/lamp-led-off' : F('led-strip-on'), f, [[0.072, 0.68], [0.072, 0.84]], 12);
+      lathe(b, body, f, [[0.085, 0.84], [0.085, 0.88], [0, 0.92]], 12);
+      return 0.6;
+    }
+    default:
+      box(b, o.tex ?? 'concrete/walk-plain', f, [0, 0.36, 0], [0.13, 0.36, 0.13], 'Y');
+      lathe(b, o.tex ?? 'concrete/walk-plain', turn(f, 45), [[0.184, 0.72], [0.12, 0.78], [0, 0.78]], 4);
+      return 0.6;
+  }
+}
+/** Bollards along x, optionally joined by chains, ropes or rails. */
+function bollards(b: MeshBuilder, n: number, gap: number, o: (i: number) => BollardOpts, link?: 'chain' | 'rope' | 'rail'): void {
+  let last: V3 | null = null;
+  for (let i = 0; i < n; i++) {
+    const f = stand([(i - (n - 1) / 2) * gap, 0, 0]);
+    const top = at(f, 0, bollard(b, f, o(i)), 0);
+    if (last && link) pipe(b, link === 'rope' ? F('coat-cream') : BLACK, catenary(last, top, link === 'rail' ? 0 : gap * 0.09, link === 'rail' ? 1 : 8), link === 'rail' ? 0.022 : 0.012, 5, false);
+    last = top;
+  }
+}
+
 export function addFurniture(): void {
   const add = (id: string, label: string, fn: (b: MeshBuilder) => void): void => addModel('furniture', id, label, fn);
 
@@ -425,4 +800,204 @@ export function addFurniture(): void {
     const a = steelLine(b, stand([-22.5, 0, 0], 90), 16);
     string(b, a, steelLine(b, stand([22.5, 0, 0], 90), 16), 1.6);
   });
+
+  // Benches.
+  const BENCHES: [string, string, BenchOpts][] = [
+    ['park', 'ベンチ 木板+鋳鉄脚', { kind: 'park' }],
+    ['park-weathered', 'ベンチ 風化した木板', { kind: 'park', slats: 'weathered', frame: P('rusty') }],
+    ['park-green', 'ベンチ 緑塗装 1.5m', { kind: 'park', slats: 'green', frame: P('green'), len: 1.5 }],
+    ['park-dark-long', 'ベンチ 濃色 2.4m 肘掛け3本', { kind: 'park', slats: 'dark', frame: P('bronze'), len: 2.4, arms: 3 }],
+    ['park-red-short', 'ベンチ 赤茶 1.2m', { kind: 'park', slats: 'red', len: 1.2 }],
+    ['park-plastic', 'ベンチ 再生樹脂', { kind: 'park', slats: 'plastic', frame: P('grey') }],
+    ['park-no-arms', 'ベンチ 肘掛けなし', { kind: 'park', arms: 0, frame: P('galvanized') }],
+    ['park-backless', 'ベンチ 背なし・肘掛けつき', { kind: 'park', back: false, slats: 'dark' }],
+    ['flat', 'ベンチ 背なし 木板', { kind: 'flat', frame: P('galvanized') }],
+    ['flat-dark-long', 'ベンチ 背なし 濃色 2.4m', { kind: 'flat', slats: 'dark', len: 2.4 }],
+    ['flat-plastic', 'ベンチ 背なし 再生樹脂 1.5m', { kind: 'flat', slats: 'plastic', frame: P('grey'), len: 1.5 }],
+    ['flat-weathered', 'ベンチ 背なし 風化', { kind: 'flat', slats: 'weathered', frame: P('rusty') }],
+    ['metal', 'ベンチ パンチングメタル 黒', { kind: 'metal' }],
+    ['metal-steel', 'ベンチ パンチングメタル ステンレス', { kind: 'metal', sheet: 'perforated-steel', frame: P('galvanized') }],
+    ['metal-blue', 'ベンチ パンチングメタル 青 1.5m', { kind: 'metal', sheet: 'perforated-blue', frame: 'structure/steel-blue', len: 1.5 }],
+    ['metal-mesh', 'ベンチ エキスパンドメタル 緑', { kind: 'metal', sheet: 'mesh-green', frame: P('green'), arms: 3, len: 2.4 }],
+    ['metal-backless', 'ベンチ パンチングメタル 背なし', { kind: 'metal', sheet: 'perforated-steel', frame: P('grey'), back: false, arms: 0 }],
+    ['concrete', 'ベンチ コンクリート', { kind: 'concrete' }],
+    ['concrete-exposed', 'ベンチ 洗い出しコンクリート 2.4m', { kind: 'concrete', conc: 'concrete/walk-exposed', len: 2.4 }],
+    ['concrete-wood', 'ベンチ コンクリート+木板', { kind: 'concrete', slats: 'new' }],
+    ['concrete-wood-old', 'ベンチ コンクリート+風化した木板 2.4m', { kind: 'concrete', slats: 'weathered', conc: 'concrete/walk-dark', len: 2.4 }],
+  ];
+  for (const [id, label, o] of BENCHES) add(`bench-${id}`, label, (b) => bench(b, O, o));
+  for (const [ad, name] of [['lawyer', '弁護士'], ['realtor', '不動産'], ['dentist', '歯科'], ['bail', '保釈保証'], ['blank', '空き枠・落書き']]) {
+    add(`bench-ad-${ad}`, `バス停ベンチ 広告 ${name}`, (b) => bench(b, O, { kind: 'ad', ad, slats: ad === 'blank' ? 'weathered' : 'green' }));
+  }
+  add('bench-picnic', 'ピクニックテーブル', (b) => picnic(b, O, F('slats-new'), P('galvanized')));
+  add('bench-picnic-weathered', 'ピクニックテーブル 風化', (b) => picnic(b, O, F('slats-weathered'), P('rusty')));
+  add('bench-picnic-green', 'ピクニックテーブル 緑塗装 2.4m', (b) => picnic(b, O, F('slats-green'), P('green'), 2.4));
+
+  // Bins.
+  const BINS: [string, string, BinOpts][] = [
+    ['mesh', 'ゴミ箱 金網 黒', { kind: 'mesh', tex: F('mesh-black') }],
+    ['mesh-green', 'ゴミ箱 金網 緑', { kind: 'mesh', tex: F('mesh-green'), lid: P('green') }],
+    ['mesh-galvanized', 'ゴミ箱 金網 亜鉛めっき', { kind: 'mesh', tex: F('mesh-galvanized'), lid: ZINC }],
+    ['mesh-full', 'ゴミ箱 金網 あふれ', { kind: 'mesh', tex: F('mesh-black'), full: true }],
+    ['post', 'ゴミかご 柱つき', { kind: 'post', tex: F('mesh-black') }],
+    ['post-galvanized', 'ゴミかご 柱つき 亜鉛めっき', { kind: 'post', tex: F('grid-galvanized'), lid: ZINC }],
+    ['drum', 'ドラム缶のゴミ箱 緑', { kind: 'drum', tex: F('coat-bin-green-old') }],
+    ['drum-blue', 'ドラム缶のゴミ箱 青', { kind: 'drum', tex: 'structure/steel-blue' }],
+    ['drum-full', 'ドラム缶のゴミ箱 錆・あふれ', { kind: 'drum', tex: F('coat-dumpster-blue'), full: true }],
+    ['concrete', 'ゴミ箱 洗い出しコンクリート', { kind: 'concrete', tex: 'concrete/walk-exposed' }],
+    ['concrete-green', 'ゴミ箱 コンクリート 緑の蓋', { kind: 'concrete', tex: 'concrete/walk-plain', lid: F('coat-bin-green') }],
+    ['concrete-full', 'ゴミ箱 洗い出しコンクリート あふれ', { kind: 'concrete', tex: 'concrete/walk-exposed', lid: F('coat-brown'), full: true }],
+    ['hood', 'ゴミ箱 屋根つき 黒', { kind: 'hood', tex: F('slots-black'), label: 'trash' }],
+    ['hood-green', 'ゴミ箱 屋根つき 緑', { kind: 'hood', tex: F('slots-green'), lid: P('green'), label: 'litter' }],
+    ['hood-full', 'ゴミ箱 屋根つき あふれ', { kind: 'hood', tex: F('perforated-black'), label: 'trash', full: true }],
+    ['dome', 'ゴミ箱 丸屋根 濃緑', { kind: 'dome', tex: F('coat-bin-green'), label: 'litter' }],
+    ['dome-burgundy', 'ゴミ箱 丸屋根 えんじ', { kind: 'dome', tex: F('coat-burgundy'), label: 'trash' }],
+    ['dome-teal', 'ゴミ箱 丸屋根 青緑', { kind: 'dome', tex: F('coat-teal'), lid: F('coat-stainless') }],
+    ['dome-old', 'ゴミ箱 丸屋根 錆・あふれ', { kind: 'dome', tex: F('coat-bin-green-old'), label: 'litter', full: true }],
+    ['solar', 'ソーラー圧縮ゴミ箱 緑', { kind: 'solar', tex: F('coat-bin-green'), label: 'trash' }],
+    ['solar-blue', 'ソーラー圧縮ゴミ箱 資源用', { kind: 'solar', tex: 'structure/steel-blue', label: 'recycle' }],
+    ['slat', 'ゴミ箱 木板', { kind: 'slat', tex: F('slats-new') }],
+    ['slat-weathered', 'ゴミ箱 風化した木板 あふれ', { kind: 'slat', tex: F('slats-weathered'), lid: P('rusty'), full: true }],
+  ];
+  for (const [id, label, o] of BINS) add(`bin-${id}`, label, (b) => bin(b, O, o));
+  add('bin-mesh-bags', 'ゴミ箱 金網+ゴミ袋', (b) => {
+    bin(b, O, { kind: 'mesh', tex: F('mesh-green'), lid: P('green'), full: true });
+    sack(b, stand([0.5, 0, 0.1]));
+    sack(b, stand([0.35, 0, -0.4]), 0.22);
+  });
+  add('bin-pair', '分別ゴミ箱 2連', (b) => {
+    bin(b, stand([-0.32, 0, 0]), { kind: 'hood', tex: F('slots-black'), label: 'trash' });
+    bin(b, stand([0.32, 0, 0]), { kind: 'hood', tex: F('perforated-blue'), lid: 'structure/steel-blue', label: 'recycle' });
+  });
+  add('bin-triple', '分別ゴミ箱 3連', (b) => {
+    bin(b, stand([-0.64, 0, 0]), { kind: 'hood', tex: F('slots-black'), label: 'landfill' });
+    bin(b, stand([0, 0, 0]), { kind: 'hood', tex: F('perforated-blue'), lid: 'structure/steel-blue', label: 'recycle' });
+    bin(b, stand([0.64, 0, 0]), { kind: 'hood', tex: F('slots-green'), lid: P('green'), label: 'cans' });
+  });
+  add('bin-solar-pair', 'ソーラー圧縮ゴミ箱 2連', (b) => {
+    bin(b, stand([-0.34, 0, 0]), { kind: 'solar', tex: P('grey'), label: 'landfill' });
+    bin(b, stand([0.34, 0, 0]), { kind: 'solar', tex: 'structure/steel-blue', label: 'recycle' });
+  });
+  add('bin-cart-green', '家庭用ゴミカート 緑', (b) => cart(b, O, F('coat-bin-green')));
+  add('bin-cart-blue', '家庭用ゴミカート 青', (b) => cart(b, O, 'structure/steel-blue'));
+  add('bin-cart-black', '家庭用ゴミカート 黒', (b) => cart(b, O, BLACK));
+  add('bin-cart-trio', '家庭用ゴミカート 3台', (b) => {
+    cart(b, stand([-0.7, 0, 0], 4), BLACK);
+    cart(b, stand([0, 0, 0.05], -6), 'structure/steel-blue');
+    cart(b, stand([0.72, 0, -0.03], 3), F('coat-bin-green'), F('coat-brown'));
+  });
+  add('bin-dumpster', '大型ゴミ箱 青・錆', (b) => dumpster(b, O, F('coat-dumpster-blue')));
+  add('bin-dumpster-green', '大型ゴミ箱 緑', (b) => dumpster(b, O, F('coat-bin-green-old')));
+  add('bin-dumpster-open', '大型ゴミ箱 蓋あき', (b) => dumpster(b, O, F('coat-dumpster-blue'), true));
+  add('bin-dumpster-bags', '大型ゴミ箱+ゴミ袋', (b) => {
+    dumpster(b, O, F('coat-bin-green-old'), true);
+    sack(b, stand([1.45, 0, 0.3]));
+    sack(b, stand([1.6, 0, -0.25]), 0.3);
+    sack(b, stand([-1.4, 0, 0.5]), 0.22);
+  });
+  add('bin-bags', 'ゴミ袋の山 3個', (b) => {
+    sack(b, stand([-0.25, 0, 0]));
+    sack(b, stand([0.25, 0, 0.05]), 0.3);
+    sack(b, stand([0.02, 0, 0.42]), 0.22);
+  });
+  add('bin-bags-5', 'ゴミ袋の山 5個', (b) => {
+    [[-0.5, 0, 0.3], [0, 0.05, 0.26], [0.5, 0, 0.3], [-0.2, 0.45, 0.24], [0.3, 0.42, 0.2]].forEach(([x, z, r]) => sack(b, stand([x, 0, z]), r));
+  });
+
+  // Hydrants.
+  const HYDRANTS: [string, string, HydrantOpts][] = [
+    ['red', '消火栓 赤', { body: 'red' }],
+    ['red-old', '消火栓 赤・剥がれ', { body: 'red-old' }],
+    ['yellow', '消火栓 黄', { body: 'yellow' }],
+    ['yellow-old', '消火栓 黄・剥がれ', { body: 'yellow-old' }],
+    ['yellow-green', '消火栓 黄+緑の蓋', { body: 'yellow', cap: 'green' }],
+    ['yellow-blue', '消火栓 黄+青の蓋', { body: 'yellow', cap: 'blue' }],
+    ['white-red', '消火栓 白+赤の蓋', { body: 'white', cap: 'red' }],
+    ['silver', '消火栓 銀', { body: 'silver' }],
+    ['silver-orange', '消火栓 銀+橙の蓋', { body: 'silver', cap: 'orange' }],
+    ['red-white', '消火栓 赤+白の蓋', { body: 'red', cap: 'white' }],
+    ['black-old', '消火栓 黒・使用停止', { body: 'black-old' }],
+    ['wet-yellow', '消火栓 湿式 黄', { body: 'yellow', wet: true }],
+    ['wet-red', '消火栓 湿式 赤', { body: 'red', wet: true }],
+    ['wet-white-blue', '消火栓 湿式 白+青の蓋', { body: 'white', cap: 'blue', wet: true }],
+    ['wet-silver-old', '消火栓 湿式 銀・剥がれ', { body: 'silver-old', wet: true }],
+    ['leaning', '消火栓 黄・傾き', { body: 'yellow-old', lean: 9 }],
+    ['posts-2', '消火栓+防護柱2本', { body: 'red', posts: 2 }],
+    ['posts-4', '消火栓+防護柱4本', { body: 'yellow', cap: 'green', posts: 4 }],
+  ];
+  for (const [id, label, o] of HYDRANTS) add(`hydrant-${id}`, label, (b) => hydrant(b, O, o));
+
+  // Mailboxes.
+  add('mail-box', '郵便ポスト 青', (b) => mailbox(b, O));
+  add('mail-box-old', '郵便ポスト 古い', (b) => mailbox(b, O, { old: true }));
+  add('mail-box-tagged', '郵便ポスト 落書き・傾き', (b) => mailbox(b, O, { old: true, tagged: true, lean: 3 }));
+  add('mail-box-pair', '郵便ポスト 2連', (b) => {
+    mailbox(b, stand([-0.3, 0, 0]));
+    mailbox(b, stand([0.3, 0, 0]), { old: true });
+  });
+  add('mail-relay', '郵便中継箱', (b) => relayBox(b, O));
+  add('mail-relay-pair', '郵便ポスト+中継箱', (b) => {
+    mailbox(b, stand([-0.4, 0, 0]));
+    relayBox(b, stand([0.4, 0, 0]));
+  });
+  add('mail-curb-black', '家庭用郵便受け 黒', (b) => curbBox(b, O, BLACK));
+  add('mail-curb-white', '家庭用郵便受け 白・旗あげ', (b) => curbBox(b, O, 'structure/steel-white', { flagUp: true, post: 'structure/steel-white' }));
+  add('mail-curb-galvanized', '家庭用郵便受け 亜鉛めっき・傾き', (b) => curbBox(b, O, ZINC, { lean: 7, post: P('wood-grey') }));
+  add('mail-curb-row', '家庭用郵便受け 3連', (b) => {
+    curbBox(b, stand([-0.5, 0, 0]), BLACK);
+    curbBox(b, stand([0, 0, 0]), ZINC, { flagUp: true });
+    curbBox(b, stand([0.5, 0, 0]), F('coat-relay-green'), { lean: -3 });
+  });
+
+  // Parking meters.
+  const METERS: [string, string, MeterOpts][] = [
+    ['dial', 'パーキングメーター 針式', {}],
+    ['digital', 'パーキングメーター 液晶', { face: 'digital', tex: P('black') }],
+    ['expired', 'パーキングメーター 時間切れ', { face: 'expired' }],
+    ['old', 'パーキングメーター 古い・傾き', { face: 'old', lean: 5, tex: P('rusty') }],
+    ['twin', 'パーキングメーター 2連', { twin: true }],
+    ['twin-digital', 'パーキングメーター 2連 液晶', { twin: true, face: 'digital', tex: P('black') }],
+    ['bagged', 'パーキングメーター 使用停止', { bagged: true }],
+    ['hitch', 'パーキングメーター+駐輪リング', { hitch: true, face: 'digital' }],
+  ];
+  for (const [id, label, o] of METERS) add(`meter-${id}`, label, (b) => parkingMeter(b, O, o));
+  add('meter-row', 'パーキングメーター 4本の列', (b) => {
+    for (let i = 0; i < 4; i++) parkingMeter(b, stand([(i - 1.5) * 2.4, 0, 0]), { face: i === 2 ? 'expired' : 'dial', lean: i === 1 ? -2 : 0 });
+  });
+  add('meter-paystation', '駐車料金精算機 灰', (b) => payStation(b, O, 'grey'));
+  add('meter-paystation-green', '駐車料金精算機 緑', (b) => payStation(b, O, 'green'));
+  add('meter-paystation-solar', '駐車料金精算機 太陽電池つき', (b) => payStation(b, O, 'grey', true));
+  add('meter-paystation-off', '駐車料金精算機 故障', (b) => payStation(b, O, 'off'));
+
+  // Bollards.
+  const BOLLARDS: [string, string, BollardOpts][] = [
+    ['pipe', '車止め 鋼管 黄', { kind: 'pipe' }],
+    ['pipe-band', '車止め 鋼管 黄+縞', { kind: 'pipe', band: 'bollard-band' }],
+    ['pipe-old', '車止め 鋼管 黄・剥がれ・傾き', { kind: 'pipe', tex: F('enamel-yellow-old'), lean: 7 }],
+    ['pipe-red', '車止め 鋼管 赤+反射帯', { kind: 'pipe', tex: F('enamel-red'), band: 'bollard-reflector' }],
+    ['pipe-black', '車止め 鋼管 黒', { kind: 'pipe', tex: F('enamel-black') }],
+    ['pipe-galvanized', '車止め 鋼管 亜鉛めっき', { kind: 'pipe', tex: ZINC }],
+    ['fat', '車止め コンクリート充填 黄', { kind: 'fat' }],
+    ['fat-old', '車止め コンクリート充填 剥がれ', { kind: 'fat', tex: F('enamel-yellow-old'), band: 'bollard-band' }],
+    ['cast', '車止め 鋳鉄 黒', { kind: 'cast', tex: F('enamel-black') }],
+    ['cast-green', '車止め 鋳鉄 緑', { kind: 'cast', tex: F('enamel-green') }],
+    ['cast-old', '車止め 鋳鉄 剥がれ', { kind: 'cast', tex: F('enamel-black-old'), lean: -4 }],
+    ['steel', '車止め ステンレス', { kind: 'steel' }],
+    ['steel-band', '車止め ステンレス+反射帯', { kind: 'steel', band: 'bollard-reflector' }],
+    ['dome', '車止め コンクリート半球', { kind: 'dome' }],
+    ['sphere', '車止め コンクリート球', { kind: 'sphere' }],
+    ['sphere-exposed', '車止め 洗い出しコンクリート球', { kind: 'sphere', tex: 'concrete/walk-exposed' }],
+    ['block', '車止め コンクリート角柱', { kind: 'block' }],
+    ['wood', '車止め 木杭', { kind: 'wood' }],
+    ['lit', '照明つき車止め 黒', { kind: 'lit' }],
+    ['lit-grey', '照明つき車止め 灰・消灯', { kind: 'lit', tex: P('grey'), off: true }],
+  ];
+  for (const [id, label, o] of BOLLARDS) add(`bollard-${id}`, label, (b) => void bollard(b, O, o));
+  add('bollard-row-pipe', '車止め 鋼管4本の列', (b) => bollards(b, 4, 1.5, (i) => ({ kind: 'pipe', band: 'bollard-band', lean: i === 2 ? 5 : 0 })));
+  add('bollard-row-chain', '車止め 鋳鉄+鎖 4本', (b) => bollards(b, 4, 2, () => ({ kind: 'cast', tex: F('enamel-black') }), 'chain'));
+  add('bollard-row-steel', '車止め ステンレス5本の列', (b) => bollards(b, 5, 1.4, () => ({ kind: 'steel' })));
+  add('bollard-row-rail', '車止め 鋼管+横棒', (b) => bollards(b, 3, 1.8, () => ({ kind: 'pipe', tex: ZINC }), 'rail'));
+  add('bollard-row-sphere', '車止め コンクリート球3個', (b) => bollards(b, 3, 1.3, () => ({ kind: 'sphere' })));
+  add('bollard-row-rope', '車止め 木杭+ロープ 4本', (b) => bollards(b, 4, 2, () => ({ kind: 'wood' }), 'rope'));
+  add('bollard-row-lit', '照明つき車止め 3本の列', (b) => bollards(b, 3, 2.5, () => ({ kind: 'lit' })));
 }
