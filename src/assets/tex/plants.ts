@@ -8,7 +8,7 @@ function add(id: string, label: string, meters: readonly [number, number], gener
   const seed = 15000 + list.length;
   list.push({ id: `plant/${id}`, label, category: 'plant', meters, tile: 'none', decal: false, density: 512, ...o, generate: (tex) => generate(tex, seed) });
 }
-const CARD: Extra = { cutout: true, density: 512 };
+const CARD: Extra = { cutout: true, density: 1024 };
 const mix = (a: RGB, b: RGB, t: number): RGB => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t];
 const mul = (c: RGB, k: number): RGB => [c[0] * k, c[1] * k, c[2] * k];
 const pal = (...h: number[]): RGB[] => h.map(hex);
@@ -325,14 +325,14 @@ function spray(tex: Tex, seed: number, st: LeafStyle, o: SprayOpts = {}): Textur
 
 const GREEN = pal(0x2f5a1e, 0x3f6e24, 0x4f7f2c);
 const LEAVES: [string, string, LeafStyle, SprayOpts][] = [
-  ['ovate', '葉 卵形(イチジク属・ニレ)', { shape: 'ovate', len: 0.2, wid: 0.105, cols: GREEN, vein: hex(0x8fb060) }, {}],
-  ['ovate-light', '葉 卵形 若葉', { shape: 'ovate', len: 0.19, wid: 0.1, cols: pal(0x5f9a2c, 0x74ac36, 0x86b840), vein: hex(0xc0d888) }, {}],
-  ['oak', '葉 切れ込み(ナラ)', { shape: 'oak', len: 0.2, wid: 0.13, cols: pal(0x355f22, 0x44702a, 0x587f30), vein: hex(0x9ab868), veins: 4 }, {}],
-  ['maple', '葉 掌状(カエデ・プラタナス)', { shape: 'maple', len: 0.2, wid: 0.21, cols: pal(0x3d7426, 0x4f8a2e, 0x65992f), vein: hex(0xa8c870) }, { n: 8 }],
-  ['maple-autumn', '葉 掌状 紅葉', { shape: 'maple', len: 0.2, wid: 0.21, cols: pal(0xb8341a, 0xd8601c, 0xe89a1e, 0x9a2414), vein: hex(0xf0c060) }, { n: 8 }],
-  ['ovate-autumn', '葉 卵形 黄葉', { shape: 'ovate', len: 0.19, wid: 0.1, cols: pal(0xd8a41c, 0xe8bc24, 0xc88418, 0xa8a030), vein: hex(0xf4e090) }, {}],
-  ['lance', '葉 細長(ユーカリ・オリーブ)', { shape: 'lance', len: 0.22, wid: 0.045, cols: pal(0x5d7a5a, 0x6f8a66, 0x7f9a72), vein: hex(0xc0d0b0), veins: 0 }, { n: 13 }],
-  ['dry', '葉 枯れ葉・まばら', { shape: 'ovate', len: 0.17, wid: 0.09, cols: pal(0x8a6a34, 0xa07c3c, 0x6e5228), vein: hex(0xc8a868) }, { n: 5 }],
+  ['ovate', '葉 卵形(イチジク属・ニレ)', { shape: 'ovate', len: 0.13, wid: 0.07, cols: GREEN, vein: hex(0x8fb060) }, { side: 3, n: 6 }],
+  ['ovate-light', '葉 卵形 若葉', { shape: 'ovate', len: 0.125, wid: 0.066, cols: pal(0x5f9a2c, 0x74ac36, 0x86b840), vein: hex(0xc0d888) }, { side: 3, n: 6 }],
+  ['oak', '葉 切れ込み(ナラ)', { shape: 'oak', len: 0.14, wid: 0.09, cols: pal(0x355f22, 0x44702a, 0x587f30), vein: hex(0x9ab868), veins: 4 }, { side: 3, n: 6 }],
+  ['maple', '葉 掌状(カエデ・プラタナス)', { shape: 'maple', len: 0.14, wid: 0.15, cols: pal(0x3d7426, 0x4f8a2e, 0x65992f), vein: hex(0xa8c870) }, { side: 3, n: 5 }],
+  ['maple-autumn', '葉 掌状 紅葉', { shape: 'maple', len: 0.14, wid: 0.15, cols: pal(0xb8341a, 0xd8601c, 0xe89a1e, 0x9a2414), vein: hex(0xf0c060) }, { side: 3, n: 5 }],
+  ['ovate-autumn', '葉 卵形 黄葉', { shape: 'ovate', len: 0.125, wid: 0.066, cols: pal(0xd8a41c, 0xe8bc24, 0xc88418, 0xa8a030), vein: hex(0xf4e090) }, { side: 3, n: 6 }],
+  ['lance', '葉 細長(ユーカリ・オリーブ)', { shape: 'lance', len: 0.15, wid: 0.03, cols: pal(0x5d7a5a, 0x6f8a66, 0x7f9a72), vein: hex(0xc0d0b0), veins: 0 }, { side: 3, n: 9 }],
+  ['dry', '葉 枯れ葉・まばら', { shape: 'ovate', len: 0.12, wid: 0.064, cols: pal(0x8a6a34, 0xa07c3c, 0x6e5228), vein: hex(0xc8a868) }, { side: 2, n: 4 }],
 ];
 for (const [id, label, st, o] of LEAVES) add(`leaf-${id}`, label, [0.6, 0.6], (t, s) => spray(t, s, st, o), CARD);
 

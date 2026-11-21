@@ -67,7 +67,7 @@ function material(id: string, layer: number): THREE.Material {
   m = new THREE.MeshStandardMaterial({
     map: albedo, ...(spec.emissive ? { emissive: 0xffffff, emissiveMap: albedo, emissiveIntensity: spec.emissive } : {}), normalMap: make(d.normal, false), roughnessMap: orm, metalnessMap: orm, roughness: 1, metalness: 1,
     transparent: spec.decal, depthWrite: !spec.decal, ...(spec.cutout ? { alphaTest: 0.4, alphaToCoverage: true } : {}), polygonOffset: layer > 0, polygonOffsetFactor: -layer * 2, polygonOffsetUnits: -layer * 4,
-    side: spec.decal ? THREE.FrontSide : THREE.DoubleSide, shadowSide: THREE.DoubleSide,
+    side: spec.decal || spec.cutout ? THREE.FrontSide : THREE.DoubleSide, shadowSide: THREE.DoubleSide,
   });
   matCache.set(key, m);
   return m;

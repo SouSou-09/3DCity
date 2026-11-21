@@ -15,17 +15,25 @@ function perp(d: V3, a: number): V3 {
 }
 /** Direction in the pose's axes. */
 const dirOf = (f: Pose, x: number, y: number, z: number): V3 => v3.norm(v3.add(v3.add(v3.scale(f.x, x), v3.scale(f.y, y)), v3.scale(f.z, z)));
+/** Both faces of a cut-out quad. With `normal` the two faces are lit alike (foliage shaded as one mass). */
+function leaf(b: MeshBuilder, tex: string, p0: V3, p1: V3, p2: V3, p3: V3, uv: [number, number][], normal?: V3): void {
+  const x = v3.cross(v3.sub(p1, p0), v3.sub(p3, p0));
+  if (v3.len(x) < 1e-12) return;
+  const n = v3.norm(x);
+  b.quad(tex, p0, p1, p2, p3, uv, 0, normal ?? n);
+  b.quad(tex, p1, p0, p3, p2, [uv[1], uv[0], uv[3], uv[2]], 0, normal ?? v3.scale(n, -1));
+}
 /**
  * Cut-out card showing its whole texture. `p` is the bottom centre (where the twig or stem enters the picture),
  * or the middle of the card when `centred`; `up` is the way the picture's top points.
  */
-export function card(b: MeshBuilder, tex: string, p: V3, up: V3, side: V3, w: number, h: number, centred = false): void {
+export function card(b: MeshBuilder, tex: string, p: V3, up: V3, side: V3, w: number, h: number, centred = false, normal?: V3): void {
   const u = v3.norm(up);
   const s = v3.norm(v3.sub(side, v3.scale(u, v3.dot(side, u))));
   const o = centred ? v3.mad(p, u, -h / 2) : p;
   const [a, c] = [v3.mad(o, s, -w / 2), v3.mad(o, s, w / 2)];
   const part = b.part(tex);
-  b.quad(tex, a, c, v3.mad(c, u, h), v3.mad(a, u, h), [[0, 0], [part.mw, 0], [part.mw, part.mh], [0, part.mh]]);
+  leaf(b, tex, a, c, v3.mad(c, u, h), v3.mad(a, u, h), [[0, 0], [part.mw, 0], [part.mw, part.mh], [0, part.mh]], normal);
 }
 /** Flower head facing along `normal`. */
 function head(b: MeshBuilder, tex: string, p: V3, normal: V3, scale: number, rnd: Rand): void {
@@ -70,7 +78,7 @@ export interface TreeOpts {
 export function tree(b: MeshBuilder, f: Pose, o: TreeOpts): void {
   const rnd = new Rand(o.seed);
   const levels = o.levels ?? 3;
-  const size = o.card ?? Math.max(0.6, Math.min(1.1, o.h * 0.09));
+  const size = o.card ?? Math.max(0.7, Math.min(1.3, o.h * 0.1));
   const lift = o.lift ?? 0.3;
   const spread = ((o.spread ?? 45) * Math.PI) / 180;
   const centre = at(f, 0, o.h * 0.6, 0);
@@ -78,12 +86,12 @@ export function tree(b: MeshBuilder, f: Pose, o: TreeOpts): void {
   const leafAt = (p: V3, dir: V3): void => {
     if (!o.leaf) return;
     const out = v3.norm(v3.sub(p, centre));
-    const up: V3 = o.weep ? v3.norm([out[0] * 0.3 + jit(0.5), -1, out[2] * 0.3 + jit(0.5)]) : v3.norm([dir[0] * 0.5 + out[0] * 0.6 + jit(0.9), dir[1] * 0.5 + out[1] * 0.6 + 0.3 + jit(0.6), dir[2] * 0.5 + out[2] * 0.6 + jit(0.9)]);
     const tex = T(o.leaf2 && rnd.chance(o.mix ?? 0.5) ? o.leaf2 : o.leaf);
-    const a = rnd.next() * Math.PI;
-    const s = size * (0.8 + rnd.next() * 0.4);
-    card(b, tex, p, up, perp(up, a), s, s);
-    card(b, tex, p, up, perp(up, a + 1.5708), s, s);
+    for (let i = 0; i < 2; i++) {
+      const up: V3 = o.weep ? v3.norm([out[0] * 0.3 + jit(0.7), -1, out[2] * 0.3 + jit(0.7)]) : v3.norm([dir[0] * 0.45 + out[0] * 0.55 + jit(1.5), dir[1] * 0.45 + out[1] * 0.55 + 0.2 + jit(1.2), dir[2] * 0.45 + out[2] * 0.55 + jit(1.5)]);
+      const s = size * (0.8 + rnd.next() * 0.4);
+      card(b, tex, v3.mad(p, up, -s * 0.12), up, perp(up, rnd.next() * Math.PI), s, s, false, v3.norm([out[0] * 0.8 + jit(0.5), out[1] * 0.8 + 0.4 + jit(0.4), out[2] * 0.8 + jit(0.5)]));
+    }
   };
   const grow = (p0: V3, dir: V3, len: number, r: number, level: number): void => {
     const n = level === 0 ? 5 : 3;
@@ -104,16 +112,17 @@ export function tree(b: MeshBuilder, f: Pose, o: TreeOpts): void {
       return [v3.lerp(pts[i], pts[i + 1], x - i), v3.norm(v3.sub(pts[i + 1], pts[i]))];
     };
     if (twig) {
-      const k = o.cards ?? 3;
+      const k = o.cards ?? 5;
       for (let i = 0; i < k; i++) {
         const [q, dd] = pointAt(0.3 + 0.7 * (i / Math.max(1, k - 1)));
         leafAt(q, dd);
       }
       return;
     }
+    if (level === levels - 1 && level > 0) for (const t of [0.35, 0.6, 0.85]) leafAt(...pointAt(t));
     const whole = level === 0 && o.leader;
     const t0 = whole ? (o.clear ?? 0.3) / 0.94 : 0.35;
-    const kids = whole ? Math.round(o.h * 1.5) : level === 0 ? (o.limbs ?? 4) : level === 1 ? 4 : 3;
+    const kids = whole ? Math.round(o.h * 2.6) : level === 0 ? (o.limbs ?? 5) : level === 1 ? 5 : 4;
     for (let i = 0; i < kids; i++) {
       let t = t0 + (1 - t0) * ((i + 0.3 + rnd.next() * 0.5) / kids);
       let theta = spread * (0.8 + rnd.next() * 0.45);
@@ -126,8 +135,9 @@ export function tree(b: MeshBuilder, f: Pose, o: TreeOpts): void {
         next = Math.min(levels, Math.max(1, levels - 1));
       } else if (level === 0) {
         t = 0.84 + 0.16 * (i / Math.max(1, kids - 1));
-        reach = (o.h - len) * (0.62 + rnd.next() * 0.2);
+        reach = (o.h - len) * (i === 0 ? 0.56 : 0.44 + rnd.next() * 0.14);
         phi = (i / kids) * 6.283 + jit(0.7);
+        if (i === 0) theta = 0.1 + rnd.next() * 0.15;
       }
       const [q, dd] = pointAt(t);
       const cd = v3.add(v3.scale(dd, Math.cos(theta)), v3.scale(perp(dd, phi), Math.sin(theta)));
@@ -136,7 +146,7 @@ export function tree(b: MeshBuilder, f: Pose, o: TreeOpts): void {
     // The limb carries on as a thinner shoot.
     if (level > 0 || whole) grow(pts[n], d, len * (whole ? 0.12 : 0.5), Math.max(0.01, r1 * 0.9), whole ? levels : level + 1);
   };
-  const trunk = o.leader ? o.h * 0.94 : Math.max(0.6, o.h * (o.clear ?? 0.3));
+  const trunk = o.leader ? o.h * 0.94 : Math.max(0.6, o.h * (o.clear ?? 0.3) * 1.15);
   grow(f.o, dirOf(f, jit(0.06), 1, jit(0.06)), trunk, o.r, 0);
 }
 
@@ -173,7 +183,7 @@ export function palm(b: MeshBuilder, f: Pose, o: PalmOpts): void {
   const axis = v3.norm(v3.sub(pts[8], pts[7]));
   const down = v3.scale(f.y, -1);
   if (o.kind === 'date') lathe(b, T('bark-date'), { o: top, x: perp(axis, 0), y: axis, z: v3.cross(perp(axis, 0), axis) }, [[r * 0.8, -1.0], [r * 1.9, -0.35], [r * 1.7, 0.1], [r * 0.6, 0.45]], 10);
-  const n = o.fronds ?? (o.kind === 'fan' ? 30 : 20);
+  const n = o.fronds ?? (o.kind === 'fan' ? 36 : 20);
   for (let i = 0; i < n; i++) {
     const age = i / (n - 1);
     const el = 1.3 - 2.0 * age + (rnd.next() - 0.5) * 0.2;
@@ -181,11 +191,11 @@ export function palm(b: MeshBuilder, f: Pose, o: PalmOpts): void {
     const dir = v3.norm(v3.add(v3.scale(axis, Math.sin(el)), v3.scale(out, Math.cos(el))));
     const deadLeaf = age > 1 - (o.dead ?? 0);
     if (o.kind === 'fan') {
-      const s = (o.size ?? 1.5) * (0.85 + rnd.next() * 0.3);
+      const s = (o.size ?? 1.9) * (0.85 + rnd.next() * 0.3);
       const from = v3.mad(top, axis, -0.25 * age);
-      const base = v3.mad(from, dir, 0.55 + rnd.next() * 0.35);
+      const base = v3.mad(from, dir, 0.9 + rnd.next() * 0.6);
       b.tube(STEM, from, base, 0.018, 4);
-      card(b, T(deadLeaf ? 'fan-dry' : 'fan'), base, v3.norm(v3.add(dir, v3.scale(down, 0.25 * age))), v3.cross(dir, axis), s, s);
+      card(b, T(deadLeaf ? 'fan-dry' : 'fan'), base, v3.norm(v3.add(dir, v3.scale(down, 0.25 * age))), v3.cross(dir, axis), s, s, false, v3.norm(v3.add(v3.scale(axis, 0.7), v3.scale(out, 0.7))));
     } else {
       const tex = T(deadLeaf ? 'frond-dry' : (o.frond ?? 'frond'));
       const part = b.part(tex);
@@ -205,8 +215,9 @@ export function palm(b: MeshBuilder, f: Pose, o: PalmOpts): void {
       }
       for (let k = 0; k < S; k++) {
         const [v0, v1] = [(k / S) * part.mh, ((k + 1) / S) * part.mh];
-        b.quad(tex, rows[k][0], rows[k][1], rows[k + 1][1], rows[k + 1][0], [[0, v0], [part.mw / 2, v0], [part.mw / 2, v1], [0, v1]]);
-        b.quad(tex, rows[k][1], rows[k][2], rows[k + 1][2], rows[k + 1][1], [[part.mw / 2, v0], [part.mw, v0], [part.mw, v1], [part.mw / 2, v1]]);
+        const lit = v3.norm(v3.add(v3.scale(axis, 0.75), v3.scale(out, 0.65)));
+        leaf(b, tex, rows[k][0], rows[k][1], rows[k + 1][1], rows[k + 1][0], [[0, v0], [part.mw / 2, v0], [part.mw / 2, v1], [0, v1]], lit);
+        leaf(b, tex, rows[k][1], rows[k][2], rows[k + 1][2], rows[k + 1][1], [[part.mw / 2, v0], [part.mw, v0], [part.mw, v1], [part.mw / 2, v1]], lit);
       }
     }
   }
@@ -215,7 +226,7 @@ export function palm(b: MeshBuilder, f: Pose, o: PalmOpts): void {
     const y = 0.3 + (i / (skirt * 9)) * skirt;
     const out = perp(axis, i * GOLDEN);
     const s = 1.1 + rnd.next() * 0.4;
-    card(b, T('fan-dry'), v3.add(v3.mad(top, axis, -y), v3.scale(out, r * 0.7)), v3.norm(v3.add(v3.scale(down, 1), v3.scale(out, 0.22 + rnd.next() * 0.2))), v3.cross(out, axis), s, s);
+    card(b, T('fan-dry'), v3.add(v3.mad(top, axis, -y), v3.scale(out, r * 0.7)), v3.norm(v3.add(v3.scale(down, 1), v3.scale(out, 0.22 + rnd.next() * 0.2))), v3.cross(out, axis), s, s, false, v3.norm(v3.add(out, v3.scale(axis, 0.3))));
   }
 }
 
@@ -241,21 +252,22 @@ export function shrub(b: MeshBuilder, f: Pose, o: ShrubOpts): void {
   const s = o.card ?? Math.min(0.4, Math.max(0.22, o.r * 0.7));
   const [rc, hc] = [Math.max(o.r * 0.4, o.r - s * 0.6), Math.max(o.h * 0.4, o.h - s * 0.6)];
   const prof: [number, number][] = [];
-  for (let i = 0; i <= 6; i++) prof.push([Math.max(0, rc * 0.92 * Math.cos(-0.5 + (i / 6) * 2.07)), hc * 0.3 + hc * 0.66 * Math.sin(-0.5 + (i / 6) * 2.07)]);
-  lathe(b, T('foliage-core'), f, [[rc * 0.3, 0], ...prof], 10);
-  const n = Math.round(((7 * (o.r * o.r + 1.5 * o.r * o.h)) / (s * s)) * (o.dense ?? 1));
+  for (let i = 0; i <= 6; i++) prof.push([Math.max(0, rc * 0.8 * Math.cos(-0.5 + (i / 6) * 2.07)), hc * 0.3 + hc * 0.66 * Math.sin(-0.5 + (i / 6) * 2.07)]);
+  lathe(b, T('foliage-core'), f, [[rc * 0.25, 0], ...prof], 10);
+  const n = Math.round(((12 * (o.r * o.r + 1.5 * o.r * o.h)) / (s * s)) * (o.dense ?? 1));
   const spot = (i: number): [V3, V3] => {
-    const sy = -0.35 + 1.35 * Math.pow(rnd.next(), 0.75);
+    const sy = -0.5 + 1.5 * Math.pow(rnd.next(), 0.8);
     const cy = Math.sqrt(Math.max(0, 1 - sy * sy));
     const a = i * GOLDEN + rnd.next() * 0.5;
     return [dirOf(f, cy * Math.cos(a), sy, cy * Math.sin(a)), at(f, cy * Math.cos(a) * rc, hc * 0.3 + sy * hc * 0.68, cy * Math.sin(a) * rc)];
   };
   for (let i = 0; i < n; i++) {
     const [nrm, p] = spot(i);
-    const up = v3.norm([nrm[0] + (rnd.next() - 0.5) * 0.9, nrm[1] + 0.25 + (rnd.next() - 0.5) * 0.6, nrm[2] + (rnd.next() - 0.5) * 0.9]);
-    card(b, T(o.leaf), v3.mad(p, up, -s * 0.2), up, perp(up, rnd.next() * 3.14), s, s);
+    const along = perp(nrm, rnd.next() * 6.283);
+    const up = v3.norm([along[0] + nrm[0] * (0.25 + rnd.next() * 0.7), along[1] + 0.5 + nrm[1] * (0.25 + rnd.next() * 0.7), along[2] + nrm[2] * (0.25 + rnd.next() * 0.7)]);
+    card(b, T(o.leaf), v3.mad(v3.mad(p, up, -s * 0.5), nrm, s * 0.08), up, v3.cross(nrm, up), s, s, false, v3.norm([nrm[0] + (rnd.next() - 0.5) * 0.5, nrm[1] + 0.35 + (rnd.next() - 0.5) * 0.4, nrm[2] + (rnd.next() - 0.5) * 0.5]));
   }
-  const blooms = o.flowers ? Math.round(n * (o.bloom ?? 0.5)) : 0;
+  const blooms = o.flowers ? Math.round(n * (o.bloom ?? 0.5) * 0.45) : 0;
   for (let i = 0; i < blooms; i++) {
     const [nrm, p] = spot(i + 0.5);
     head(b, T(o.flowers![i % o.flowers!.length]), v3.mad(p, nrm, s * (0.45 + rnd.next() * 0.25)), v3.norm([nrm[0] + (rnd.next() - 0.5) * 0.5, nrm[1] + 0.3, nrm[2] + (rnd.next() - 0.5) * 0.5]), (o.flowerScale ?? 1) * (0.8 + rnd.next() * 0.4), rnd);
@@ -282,15 +294,18 @@ export function hedge(b: MeshBuilder, f: Pose, o: HedgeOpts): void {
     [[1, 0, 0], [0, 0, 1], [0, 1, 0], o.w, o.h], [[-1, 0, 0], [0, 0, 1], [0, 1, 0], o.w, o.h],
   ];
   for (const [nl, ul, vl, a, c] of faces) {
-    const count = Math.round(((a * c) / (s * s)) * 3.2 * (o.dense ?? 1));
+    const count = Math.round(((a * c) / (s * s)) * 6 * (o.dense ?? 1));
     for (let i = 0; i < count; i++) {
       const [u, v] = [(rnd.next() - 0.5) * (a - m * 2), nl[1] ? (rnd.next() - 0.5) * (c - m * 2) : m + rnd.next() * (c - m * 2)];
       const centreY = nl[1] ? o.h - m : 0;
       const local: V3 = [ul[0] * u + vl[0] * v + nl[0] * (o.len / 2 - m), centreY + ul[1] * u + vl[1] * v, ul[2] * u + vl[2] * v + nl[2] * (o.w / 2 - m)];
       const p = at(f, local[0], local[1], local[2]);
-      const up = dirOf(f, nl[0] * 0.75 + (rnd.next() - 0.5) * 1.2, nl[1] * 0.75 + 0.15 + (rnd.next() - 0.5) * 1.2, nl[2] * 0.75 + (rnd.next() - 0.5) * 1.2);
-      card(b, T(o.leaf), v3.mad(p, up, -s * 0.3), up, perp(up, rnd.next() * 3.14), s, s);
-      if (o.flowers && i % 4 === 0) head(b, T(o.flowers[(i / 4) % o.flowers.length]), v3.mad(p, dirOf(f, nl[0], nl[1], nl[2]), m * 1.05), dirOf(f, nl[0] + (rnd.next() - 0.5) * 0.4, nl[1] + 0.2, nl[2] + (rnd.next() - 0.5) * 0.4), 0.8 + rnd.next() * 0.4, rnd);
+      const nw = dirOf(f, nl[0], nl[1], nl[2]);
+      const along = perp(nw, rnd.next() * 6.283);
+      const k = 0.2 + rnd.next() * 0.6;
+      const up = v3.norm([along[0] + nw[0] * k, along[1] + nw[1] * k + 0.3, along[2] + nw[2] * k]);
+      card(b, T(o.leaf), v3.mad(v3.mad(p, up, -s * 0.5), nw, s * 0.06), up, v3.cross(nw, up), s, s, false, dirOf(f, nl[0] + (rnd.next() - 0.5) * 0.5, nl[1] + 0.35 + (rnd.next() - 0.5) * 0.4, nl[2] + (rnd.next() - 0.5) * 0.5));
+      if (o.flowers && i % 8 === 0) head(b, T(o.flowers[(i / 8) % o.flowers.length]), v3.mad(p, dirOf(f, nl[0], nl[1], nl[2]), m * 1.05), dirOf(f, nl[0] + (rnd.next() - 0.5) * 0.4, nl[1] + 0.2, nl[2] + (rnd.next() - 0.5) * 0.4), 0.8 + rnd.next() * 0.4, rnd);
     }
   }
 }
@@ -327,8 +342,9 @@ export function flowerBed(b: MeshBuilder, f: Pose, o: BedOpts): void {
     if (o.leaf) {
       const up = v3.norm(v3.add(v3.sub(top, base), v3.scale(out, hh * 0.3)));
       const s = b.part(T(o.leaf)).mw * Math.min(1.4, hh / 0.5);
-      card(b, T(o.leaf), base, up, perp(up, rnd.next() * 3.14), s, s);
-      card(b, T(o.leaf), v3.lerp(base, top, 0.35), up, perp(up, rnd.next() * 3.14), s, s);
+      const lit = v3.norm(v3.add(f.y, v3.scale(out, 0.5)));
+      card(b, T(o.leaf), base, up, perp(up, rnd.next() * 3.14), s, s, false, lit);
+      card(b, T(o.leaf), v3.lerp(base, top, 0.35), up, perp(up, rnd.next() * 3.14), s, s, false, lit);
     } else {
       const s = Math.min(0.3, 0.14 + hh * 0.45);
       card(b, T('whorl'), v3.lerp(base, top, 0.5), v3.norm(v3.add(out, v3.scale(f.y, 0.45 + rnd.next() * 0.4))), perp(f.y, a + 1.57 + (rnd.next() - 0.5)), s, s, true);
@@ -359,7 +375,16 @@ export function clump(b: MeshBuilder, f: Pose, o: ClumpOpts): void {
     const up = dirOf(f, Math.cos(a) * rad * (o.lean ?? 0.25) + (rnd.next() - 0.5) * 0.15, 1, Math.sin(a) * rad * (o.lean ?? 0.25) + (rnd.next() - 0.5) * 0.15);
     const p = at(f, Math.cos(a) * rad * (o.rx ?? o.r), 0, Math.sin(a) * rad * o.r);
     const turnBy = rnd.next() * 3.14;
-    for (let c = 0; c < 2; c++) card(b, tex, p, up, perp(up, turnBy + c * 1.5708), part.mw * k, part.mh * k);
+    for (let c = 0; c < 2; c++) {
+      const side = perp(up, turnBy + c * 1.5708);
+      const face = v3.cross(side, up);
+      // Lit from above on both faces, so a clump does not flicker between bright and dark blades.
+      const p0 = v3.mad(p, side, (-part.mw * k) / 2);
+      const p1 = v3.mad(p, side, (part.mw * k) / 2);
+      const uv: [number, number][] = [[0, 0], [part.mw, 0], [part.mw, part.mh], [0, part.mh]];
+      b.quad(tex, p0, p1, v3.mad(p1, up, part.mh * k), v3.mad(p0, up, part.mh * k), uv, 0, v3.norm(v3.add(v3.scale(f.y, 0.8), v3.scale(face, 0.6))));
+      b.quad(tex, p1, p0, v3.mad(p0, up, part.mh * k), v3.mad(p1, up, part.mh * k), [uv[1], uv[0], uv[3], uv[2]], 0, v3.norm(v3.add(v3.scale(f.y, 0.8), v3.scale(face, -0.6))));
+    }
   }
 }
 
@@ -369,32 +394,32 @@ export function addPlants(): void {
   let seed = 100;
 
   const TREES: [string, string, Omit<TreeOpts, 'seed'>][] = [
-    ['ficus-small', '街路樹 イチジク属 6m', { h: 6, r: 0.11, bark: T('bark-smooth'), leaf: 'leaf-ovate', clear: 0.38, cards: 4 }],
-    ['ficus', '街路樹 イチジク属 9m', { h: 9, r: 0.2, bark: T('bark-smooth'), leaf: 'leaf-ovate', clear: 0.32, cards: 4 }],
-    ['ficus-large', '街路樹 イチジク属 13m', { h: 13, r: 0.36, bark: T('bark-smooth'), leaf: 'leaf-ovate', clear: 0.27, spread: 52, limbs: 5, cards: 4 }],
+    ['ficus-small', '街路樹 イチジク属 6m', { h: 6, r: 0.11, bark: T('bark-smooth'), leaf: 'leaf-ovate', clear: 0.38, cards: 6 }],
+    ['ficus', '街路樹 イチジク属 9m', { h: 9, r: 0.2, bark: T('bark-smooth'), leaf: 'leaf-ovate', clear: 0.32, cards: 6 }],
+    ['ficus-large', '街路樹 イチジク属 13m', { h: 13, r: 0.36, bark: T('bark-smooth'), leaf: 'leaf-ovate', clear: 0.27, spread: 52, limbs: 5, cards: 6 }],
     ['oak', '広葉樹 ナラ 10m', { h: 10, r: 0.3, bark: T('bark-oak'), leaf: 'leaf-oak', clear: 0.26, spread: 58, lift: 0.15, limbs: 5 }],
-    ['oak-old', '広葉樹 ナラ 老木 14m', { h: 14, r: 0.5, bark: T('bark-oak-moss'), leaf: 'leaf-oak', clear: 0.22, spread: 62, lift: 0.1, limbs: 5, cards: 4 }],
-    ['plane', '街路樹 プラタナス 11m', { h: 11, r: 0.27, bark: T('bark-plane'), leaf: 'leaf-maple', clear: 0.34, spread: 42, cards: 4 }],
-    ['plane-large', '街路樹 プラタナス 16m', { h: 16, r: 0.42, bark: T('bark-plane'), leaf: 'leaf-maple', clear: 0.3, spread: 46, limbs: 5, cards: 4 }],
+    ['oak-old', '広葉樹 ナラ 老木 14m', { h: 14, r: 0.5, bark: T('bark-oak-moss'), leaf: 'leaf-oak', clear: 0.22, spread: 62, lift: 0.1, limbs: 5, cards: 6 }],
+    ['plane', '街路樹 プラタナス 11m', { h: 11, r: 0.27, bark: T('bark-plane'), leaf: 'leaf-maple', clear: 0.34, spread: 42, cards: 6 }],
+    ['plane-large', '街路樹 プラタナス 16m', { h: 16, r: 0.42, bark: T('bark-plane'), leaf: 'leaf-maple', clear: 0.3, spread: 46, limbs: 5, cards: 6 }],
     ['plane-autumn', '街路樹 プラタナス 紅葉', { h: 11, r: 0.26, bark: T('bark-plane'), leaf: 'leaf-maple-autumn', clear: 0.34, spread: 42 }],
-    ['maple-autumn', '広葉樹 カエデ 紅葉 7m', { h: 7, r: 0.15, bark: T('bark-young'), leaf: 'leaf-maple-autumn', clear: 0.3, spread: 50, cards: 4 }],
-    ['maple', '広葉樹 カエデ 7m', { h: 7, r: 0.15, bark: T('bark-young'), leaf: 'leaf-maple', clear: 0.3, spread: 50, cards: 4 }],
+    ['maple-autumn', '広葉樹 カエデ 紅葉 7m', { h: 7, r: 0.15, bark: T('bark-young'), leaf: 'leaf-maple-autumn', clear: 0.3, spread: 50, cards: 6 }],
+    ['maple', '広葉樹 カエデ 7m', { h: 7, r: 0.15, bark: T('bark-young'), leaf: 'leaf-maple', clear: 0.3, spread: 50, cards: 6 }],
     ['elm', '街路樹 ニレ つぼ形 12m', { h: 12, r: 0.28, bark: T('bark-oak'), leaf: 'leaf-ovate', clear: 0.36, spread: 30, lift: 0.5 }],
     ['elm-autumn', '街路樹 ニレ 黄葉', { h: 11, r: 0.26, bark: T('bark-oak'), leaf: 'leaf-ovate-autumn', clear: 0.36, spread: 32, lift: 0.5 }],
     ['spring', '広葉樹 若葉 8m', { h: 8, r: 0.17, bark: T('bark-young'), leaf: 'leaf-ovate-light', clear: 0.33 }],
     ['eucalyptus', 'ユーカリ 14m', { h: 14, r: 0.26, bark: T('bark-eucalyptus'), leaf: 'leaf-lance', clear: 0.42, spread: 34, lift: 0.4, limbs: 3, weep: true }],
-    ['eucalyptus-large', 'ユーカリ 20m', { h: 20, r: 0.42, bark: T('bark-eucalyptus'), leaf: 'leaf-lance', clear: 0.4, spread: 36, lift: 0.4, weep: true, cards: 4 }],
-    ['olive', 'オリーブ 5m', { h: 5, r: 0.2, bark: T('bark-oak-moss'), leaf: 'leaf-lance', clear: 0.24, spread: 55, lift: 0.2, card: 0.55, cards: 4 }],
-    ['birch', 'シラカバ 9m', { h: 9, r: 0.1, bark: T('bark-birch'), leaf: 'leaf-ovate-light', leader: true, clear: 0.3, width: 0.22, spread: 55, lift: 0.1, levels: 2, card: 0.6, cards: 3, weep: true }],
-    ['poplar', 'ポプラ 円柱形 15m', { h: 15, r: 0.2, bark: T('bark-young'), leaf: 'leaf-ovate', leader: true, clear: 0.12, width: 0.1, spread: 28, lift: 0.9, levels: 2, card: 0.7, cards: 3 }],
-    ['jacaranda', 'ジャカランダ 花盛り 9m', { h: 9, r: 0.2, bark: T('bark-young'), leaf: 'blossom-jacaranda', leaf2: 'leaf-lance', mix: 0.15, clear: 0.3, spread: 55, lift: 0.2, cards: 4 }],
-    ['jacaranda-large', 'ジャカランダ 花盛り 12m', { h: 12, r: 0.3, bark: T('bark-young'), leaf: 'blossom-jacaranda', leaf2: 'leaf-lance', mix: 0.25, clear: 0.28, spread: 58, lift: 0.2, limbs: 5, cards: 4 }],
-    ['cherry', 'サクラ 花盛り 6m', { h: 6, r: 0.15, bark: T('bark-smooth'), leaf: 'blossom-pink', clear: 0.28, spread: 58, lift: 0.2, card: 0.7, cards: 4 }],
-    ['pear', 'ナシ 白い花 7m', { h: 7, r: 0.14, bark: T('bark-young'), leaf: 'blossom-white', leaf2: 'leaf-ovate-light', mix: 0.2, clear: 0.3, spread: 36, lift: 0.5, card: 0.7, cards: 4 }],
-    ['tabebuia', 'タベブイア 黄色い花 7m', { h: 7, r: 0.14, bark: T('bark-young'), leaf: 'blossom-yellow', clear: 0.34, spread: 48, card: 0.7, cards: 4 }],
-    ['magnolia', 'モクレン 葉と白い花 6m', { h: 6, r: 0.15, bark: T('bark-smooth'), leaf: 'leaf-ovate', leaf2: 'blossom-white', mix: 0.35, clear: 0.25, spread: 48, card: 0.65, cards: 4 }],
-    ['bougainvillea', 'ブーゲンビリア 立ち木 4m', { h: 4, r: 0.09, bark: T('bark-young'), leaf: 'blossom-bougainvillea', clear: 0.3, spread: 60, lift: 0.1, card: 0.6, cards: 4, weep: true }],
-    ['sapling', '若木 3.5m', { h: 3.5, r: 0.035, bark: T('bark-young'), leaf: 'leaf-ovate-light', clear: 0.45, levels: 2, card: 0.5, cards: 3 }],
+    ['eucalyptus-large', 'ユーカリ 20m', { h: 20, r: 0.42, bark: T('bark-eucalyptus'), leaf: 'leaf-lance', clear: 0.4, spread: 36, lift: 0.4, weep: true, cards: 6 }],
+    ['olive', 'オリーブ 5m', { h: 5, r: 0.2, bark: T('bark-oak-moss'), leaf: 'leaf-lance', clear: 0.24, spread: 55, lift: 0.2, card: 0.55, cards: 6 }],
+    ['birch', 'シラカバ 9m', { h: 9, r: 0.1, bark: T('bark-birch'), leaf: 'leaf-ovate-light', leader: true, clear: 0.3, width: 0.22, spread: 55, lift: 0.1, levels: 2, card: 0.6, cards: 5, weep: true }],
+    ['poplar', 'ポプラ 円柱形 15m', { h: 15, r: 0.2, bark: T('bark-young'), leaf: 'leaf-ovate', leader: true, clear: 0.12, width: 0.1, spread: 28, lift: 0.9, levels: 2, card: 0.7, cards: 5 }],
+    ['jacaranda', 'ジャカランダ 花盛り 9m', { h: 9, r: 0.2, bark: T('bark-young'), leaf: 'blossom-jacaranda', leaf2: 'leaf-lance', mix: 0.15, clear: 0.3, spread: 55, lift: 0.2, cards: 6 }],
+    ['jacaranda-large', 'ジャカランダ 花盛り 12m', { h: 12, r: 0.3, bark: T('bark-young'), leaf: 'blossom-jacaranda', leaf2: 'leaf-lance', mix: 0.25, clear: 0.28, spread: 58, lift: 0.2, limbs: 5, cards: 6 }],
+    ['cherry', 'サクラ 花盛り 6m', { h: 6, r: 0.15, bark: T('bark-smooth'), leaf: 'blossom-pink', clear: 0.28, spread: 58, lift: 0.2, card: 0.7, cards: 6 }],
+    ['pear', 'ナシ 白い花 7m', { h: 7, r: 0.14, bark: T('bark-young'), leaf: 'blossom-white', leaf2: 'leaf-ovate-light', mix: 0.2, clear: 0.3, spread: 36, lift: 0.5, card: 0.7, cards: 6 }],
+    ['tabebuia', 'タベブイア 黄色い花 7m', { h: 7, r: 0.14, bark: T('bark-young'), leaf: 'blossom-yellow', clear: 0.34, spread: 48, card: 0.7, cards: 6 }],
+    ['magnolia', 'モクレン 葉と白い花 6m', { h: 6, r: 0.15, bark: T('bark-smooth'), leaf: 'leaf-ovate', leaf2: 'blossom-white', mix: 0.35, clear: 0.25, spread: 48, card: 0.65, cards: 6 }],
+    ['bougainvillea', 'ブーゲンビリア 立ち木 4m', { h: 4, r: 0.09, bark: T('bark-young'), leaf: 'blossom-bougainvillea', clear: 0.3, spread: 60, lift: 0.1, card: 0.6, cards: 6, weep: true }],
+    ['sapling', '若木 3.5m', { h: 3.5, r: 0.035, bark: T('bark-young'), leaf: 'leaf-ovate-light', clear: 0.45, levels: 2, card: 0.5, cards: 5 }],
     ['sparse', '弱った木 葉がまばら 8m', { h: 8, r: 0.18, bark: T('bark-dead'), leaf: 'leaf-dry', clear: 0.33, cards: 2 }],
     ['bare', '落葉した木 10m', { h: 10, r: 0.24, bark: T('bark-oak'), leaf: null, clear: 0.3, levels: 4 }],
     ['bare-plane', '落葉したプラタナス 12m', { h: 12, r: 0.3, bark: T('bark-plane'), leaf: null, clear: 0.33, spread: 42, levels: 4 }],

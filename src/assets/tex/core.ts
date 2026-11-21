@@ -464,7 +464,7 @@ export interface TextureSpec {
   decal: boolean;
   /** Pixels per metre at detail level 1. */
   density: number;
-  /** Alpha is a cut-out mask (leaves, petals): drawn opaque where alpha is high, from both sides. */
+  /** Alpha is a cut-out mask (leaves, petals): drawn opaque where alpha is high. Meshes supply both faces, so foliage can share one lighting normal. */
   cutout?: boolean;
   /** The surface glows with its own colour (lit lamps); 1 = full brightness. */
   emissive?: number;
