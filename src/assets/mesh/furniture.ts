@@ -884,7 +884,7 @@ function planter(b: MeshBuilder, f: Pose, o: PlanterOpts): void {
   const SOIL = 'ground/mulch';
   const up: Pose = { o: f.o, x: f.x, y: neg(f.z), z: f.y };
   if (o.kind === 'bowl') {
-    lathe(b, o.tex ?? 'concrete/walk-exposed', f, [[0.25, 0], [0.3, 0.06], [0.55, 0.4], [0.6, 0.48], [0.56, 0.5]], 16);
+    lathe(b, o.tex ?? 'concrete/walk-exposed', f, [[0.42, 0], [0.45, 0.05], [0.58, 0.42], [0.6, 0.48], [0.56, 0.5]], 16);
     lathe(b, SOIL, f, [[0, 0.47], [0.56, 0.49]], 16);
     plant(b, f, 0.48, 0.5, green, 0.6);
   } else if (o.kind === 'box') {
@@ -924,12 +924,17 @@ function treePit(b: MeshBuilder, f: Pose, o: { grate?: 'round' | 'square'; guard
     box(b, 'structure/steel-black', f, [0, 0.006, 0], [0.62, 0.006, 0.62], 'Yy');
     face(b, F(`grate-${o.grate}`), up, [0, 0, 0.0125], 1.2, 1.2);
   } else {
-    for (const [sx, sz] of CORNERS) box(b, 'structure/brick-red', f, [sx * 0.33 + sz * 0.33, 0.04, sz * 0.33 - sx * 0.33], sx === sz ? [0.36, 0.04, 0.05] : [0.05, 0.04, 0.36], 'Y');
+    for (const s of [-1, 1]) {
+      box(b, 'structure/brick-red', f, [0, 0.04, s * 0.66], [0.71, 0.04, 0.05], 'Y');
+      box(b, 'structure/brick-red', f, [s * 0.66, 0.04, 0], [0.05, 0.04, 0.61], 'Y');
+    }
     face(b, 'ground/mulch', up, [0, 0, 0.03], 1.22, 1.22);
   }
   if (o.tree) {
     lathe(b, P('wood-grey'), f, [[0.06, 0], [0.045, 1.2], [0.035, 2.6], [0, 3.2]], 8);
-    ball(b, F('shrub'), f, 3.2, 0.95, 12, 1.1);
+    ball(b, F('shrub'), f, 3.2, 0.8, 12, 1.1);
+    ball(b, F('shrub'), move(f, 0.38, 0, 0.2), 3.55, 0.55, 10);
+    ball(b, F('shrub'), move(f, -0.32, 0, -0.26), 3.45, 0.6, 10, 0.9);
     for (const a of [0.4, 2.3, 4.4]) pipe(b, P('wood-grey'), [at(f, 0, 2.5, 0), at(f, 0.5 * Math.cos(a), 3.1, 0.5 * Math.sin(a))], 0.018, 5);
   }
   if (o.stakes) {
@@ -1037,8 +1042,8 @@ function adPanel(b: MeshBuilder, f: Pose, front: string, back: string, tex: stri
 }
 /** Three-sided advertising kiosk. */
 function adKiosk(b: MeshBuilder, f: Pose, posters: string[], tex: string): void {
-  lathe(b, tex, turn(f, 30), [[0.74, 0], [0.74, 0.38], [0.7, 0.4]], 3);
-  lathe(b, tex, turn(f, 30), [[0.7, 2.2], [0.78, 2.24], [0.78, 2.32], [0.3, 2.5], [0, 2.52]], 3);
+  lathe(b, tex, turn(f, 90), [[0.74, 0], [0.74, 0.38], [0.7, 0.4]], 3);
+  lathe(b, tex, turn(f, 90), [[0.7, 2.2], [0.78, 2.24], [0.78, 2.32], [0.3, 2.5], [0, 2.52]], 3);
   for (let k = 0; k < 3; k++) {
     const g = turn(f, k * 120);
     face(b, F(`poster-${posters[k]}`), g, [0, 1.3, 0.349], 1.2, 1.8);
