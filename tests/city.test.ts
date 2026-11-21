@@ -5,7 +5,7 @@ import { City, generateCity } from '../src/gen/city';
 import { isStreet } from '../src/gen/streamlines';
 import { isWater } from '../src/gen/terrain';
 
-const SEEDS = [1, 2, 3, 4, 5, 6, 7, 8];
+const SEEDS = [1, 2, 3, 4, 5, 6, 7, 8, 16, 21];
 const cities = new Map<number, City>();
 const city = (seed: number): City => {
   let c = cities.get(seed);
@@ -124,6 +124,11 @@ describe('city generation', () => {
         }
       }
       expect(sharp).toBeLessThanOrEqual(3);
+    });
+
+    it('lets only arterials and collectors cross the freeway', () => {
+      const { edges, crossings } = city(seed).graph;
+      for (const c of crossings) expect(edges[c.street].cls, `edge ${c.street} at ${c.x},${c.y}`).not.toBe('local');
     });
 
     it('has no streets crossing without a junction', () => {

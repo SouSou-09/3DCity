@@ -250,6 +250,17 @@ function nearEdge(t: Terrain, x: number, y: number): boolean {
   return x < 12 || y < 12 || x > t.size - 12 || y > t.size - 12;
 }
 
+/** True if the edge passes over or under a freeway or ramp, which local streets must not do. */
+function crossesFreeway(g: Builder, e: TmpEdge): boolean {
+  for (const f of g.edges) {
+    if (!f.alive || isStreet(f.cls)) continue;
+    for (let i = 1; i < e.pts.length; i++) {
+      for (let j = 1; j < f.pts.length; j++) if (segSeg(e.pts[i - 1], e.pts[i], f.pts[j - 1], f.pts[j])) return true;
+    }
+  }
+  return false;
+}
+
 /** Removes stubs; a share of longer ones survive as cul-de-sacs. */
 function pruneDeadEnds(g: Builder, ctx: Ctx): void {
   const queue: number[] = [];
@@ -276,7 +287,7 @@ function pruneDeadEnds(g: Builder, ctx: Ctx): void {
       keep = decided;
     }
     if (keep) {
-      if (e.cls === 'collector' && e.len < 220) e.cls = 'local';
+      if (e.cls === 'collector' && e.len < 220 && !crossesFreeway(g, e)) e.cls = 'local';
       if (e.cls === 'local' && e.len > MAX_DEAD_END) {
         // Shorten over-long dead ends.
         const target = ctx.rng.range(65, 115);
