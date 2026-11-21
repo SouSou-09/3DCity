@@ -81,6 +81,7 @@ export interface LandUsePlan {
 }
 
 const G = 3;
+const INSET = 2.5;
 const FREE = 0;
 const OBSTACLE = 1;
 const STREET = 2;
@@ -563,8 +564,10 @@ export function planLandUse(graph: RoadGraph, t: Terrain, districts: Districts, 
         const startsAtCorner = s < 30 && nodes[e.a].degree >= 3;
         const f0 = frame(s);
         const fm = frame(s + Math.min(clear, 16) / 2);
-        const room = Math.min(probe(f0.p, f0.nx, f0.ny, row, 165), probe(fm.p, fm.nx, fm.ny, row, 165));
-        const roomThrough = Math.min(probe(f0.p, f0.nx, f0.ny, row, 165, true), probe(fm.p, fm.nx, fm.ny, row, 165, true));
+        // Look just inside the side line: the line itself is shared with the neighbour.
+        const fi = frame(s + INSET);
+        const room = Math.min(probe(fi.p, fi.nx, fi.ny, row, 165), probe(fm.p, fm.nx, fm.ny, row, 165));
+        const roomThrough = Math.min(probe(fi.p, fi.nx, fi.ny, row, 165, true), probe(fm.p, fm.nx, fm.ny, row, 165, true));
         if (room < 12) {
           s += 6;
           run = null;
@@ -628,7 +631,8 @@ export function planLandUse(graph: RoadGraph, t: Terrain, districts: Districts, 
         // The far end and the middle must have the room too.
         const fe = frame(s + width);
         const fc = frame(s + width / 2);
-        depth = Math.min(depth, probe(fe.p, fe.nx, fe.ny, row, depth + G), probe(fc.p, fc.nx, fc.ny, row, depth + G));
+        const fo = frame(s + width - INSET);
+        depth = Math.min(depth, probe(fo.p, fo.nx, fo.ny, row, depth + G, THROUGH[use]), probe(fc.p, fc.nx, fc.ny, row, depth + G, THROUGH[use]));
         let made = false;
         for (let attempt = 0; attempt < 3 && depth >= dim.d[0] * MIN_DEPTH; attempt++, depth *= 0.8) {
           const poly: Vec2[] = [];

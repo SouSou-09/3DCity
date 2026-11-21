@@ -22,11 +22,13 @@
       <p class="hint"><a href="catalog.html">道路アセットのカタログ(テクスチャ・3Dモデル)</a></p>
       <fieldset id="layers">
         <legend>表示</legend>
+        <label><input type="checkbox" data-layer="land" /> 用途と敷地・駅</label>
         <label><input type="checkbox" data-layer="districts" /> 地区</label>
         <label><input type="checkbox" data-layer="nodes" /> 交差点</label>
         <label><input type="checkbox" data-layer="field" /> 方向場</label>
         <label><input type="checkbox" data-layer="raw" /> 生成直後の線</label>
       </fieldset>
+      <div id="legend"></div>
       <pre id="stats"></pre>
       <p class="hint">ドラッグで移動(3Dは回転、右ドラッグで移動) / ホイールで拡大縮小</p>
     </div>

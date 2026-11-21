@@ -1,3 +1,4 @@
+import { LAND_USES, LandUse } from '../gen/landuse';
 import { City } from '../gen/city';
 import { DistrictType } from '../gen/districts';
 import { RoadClass } from '../gen/streamlines';
@@ -9,7 +10,26 @@ export interface Layers {
   nodes: boolean;
   field: boolean;
   raw: boolean;
+  /** Lots coloured by land use, and station positions. */
+  land: boolean;
 }
+
+export const USE_COLOR: Record<LandUse, string> = {
+  R1: '#f6e58d',
+  R2: '#f0b75a',
+  R3: '#d98232',
+  C1: '#f29a9a',
+  C2: '#e0564f',
+  C3: '#c2478f',
+  C4: '#8e2f6d',
+  O1: '#8fb5e8',
+  O2: '#3f6fc4',
+  I1: '#b3a4d6',
+  I2: '#7a62b0',
+  PK: '#b9b9b9',
+  CV: '#44b8a8',
+  OS: '#a9d48f',
+};
 
 const ROAD_STYLE: Record<RoadClass, { width: number; minPx: number; fill: string; casing: string }> = {
   path: { width: 3, minPx: 0.6, fill: '#f3ead2', casing: '#b9a67c' },
@@ -40,7 +60,7 @@ export class MapView {
   private base: HTMLCanvasElement | null = null;
   private baseKey = '';
   private city: City | null = null;
-  layers: Layers = { districts: false, nodes: false, field: false, raw: false };
+  layers: Layers = { districts: false, nodes: false, field: false, raw: false, land: true };
   /** Pixels per metre and pan offset in pixels. */
   private zoom = 1;
   private needsFit = false;
@@ -94,6 +114,15 @@ export class MapView {
     this.zoom = (Math.min(w, h) * 0.96) / s;
     this.ox = (w - s * this.zoom) / 2;
     this.oy = (h - s * this.zoom) / 2;
+  }
+
+  /** Centre the view on a point (metres) at `zoom` pixels per metre. */
+  focus(x: number, y: number, zoom: number): void {
+    this.zoom = zoom;
+    this.ox = this.canvas.clientWidth / 2 - x * zoom;
+    this.oy = this.canvas.clientHeight / 2 - y * zoom;
+    this.needsFit = false;
+    this.render();
   }
 
   private buildBase(city: City): HTMLCanvasElement {
@@ -207,6 +236,25 @@ export class MapView {
       ctx.stroke();
     }
 
+    if (this.layers.land) {
+      ctx.lineJoin = 'miter';
+      ctx.lineWidth = Math.min(0.6, 0.8 / z);
+      ctx.strokeStyle = 'rgba(60, 50, 40, 0.55)';
+      const outline = z > 0.45;
+      for (const use of LAND_USES) {
+        ctx.fillStyle = USE_COLOR[use];
+        ctx.beginPath();
+        for (const l of city.land.lots) {
+          if (l.use !== use) continue;
+          ctx.moveTo(l.poly[0].x, l.poly[0].y);
+          for (let i = 1; i < l.poly.length; i++) ctx.lineTo(l.poly[i].x, l.poly[i].y);
+          ctx.closePath();
+        }
+        ctx.fill();
+        if (outline) ctx.stroke();
+      }
+    }
+
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
     const edges = city.graph.edges;
@@ -298,6 +346,30 @@ export class MapView {
     for (const c of ['ramp', 'highway'] as RoadClass[]) for (const b of [false, true]) stroke(c, true, b);
     for (const c of ['ramp', 'highway'] as RoadClass[]) for (const b of [false, true]) stroke(c, false, b);
 
+    if (this.layers.land) {
+      // Stations: platform length along the track, with the walking catchments.
+      for (const s of city.stations) {
+        ctx.setLineDash([14, 10]);
+        ctx.lineWidth = Math.max(1.2 / z, 1.5);
+        ctx.strokeStyle = 'rgba(200, 30, 60, 0.75)';
+        for (const r of [250, 500]) {
+          ctx.beginPath();
+          ctx.arc(s.x, s.y, r, 0, Math.PI * 2);
+          ctx.stroke();
+        }
+        ctx.setLineDash([]);
+        ctx.save();
+        ctx.translate(s.x, s.y);
+        ctx.rotate(s.angle);
+        ctx.fillStyle = s.kind === 'central' ? '#c81e3c' : '#e8553d';
+        ctx.strokeStyle = '#fff';
+        ctx.lineWidth = Math.max(1.5 / z, 2);
+        const w = Math.max(9 / z, 22);
+        ctx.fillRect(-110, -w / 2, 220, w);
+        ctx.strokeRect(-110, -w / 2, 220, w);
+        ctx.restore();
+      }
+    }
     if (this.layers.raw) {
       ctx.strokeStyle = 'rgba(220, 0, 120, 0.8)';
       ctx.lineWidth = 1.5 / z;
