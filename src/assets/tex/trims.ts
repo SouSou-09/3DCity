@@ -501,4 +501,79 @@ function grimeDecal(tex: Tex, seed: number, top: boolean): TextureData {
 add('trim', 'grime-base', '壁の裾の汚れ', [3, 1], (t, s) => grimeDecal(t, s, false), { decal: true, tile: 'x', density: 128 });
 add('trim', 'grime-top', '雨だれ', [3, 2], (t, s) => grimeDecal(t, s, true), { decal: true, tile: 'x', density: 128 });
 
+
+// --- Weathering overlays. Buildings lay these over their walls and roofs so that no two stretches of the same material look alike. ---
+const DIRT: RGB = [0.13, 0.12, 0.1];
+const DUST: RGB = [0.74, 0.7, 0.63];
+const ALGAE: RGB = [0.16, 0.2, 0.11];
+type Soil = 'light' | 'mid' | 'heavy' | 'pale';
+const SOIL: Record<Soil, [number, string]> = { light: [0.26, '薄い'], mid: [0.42, '中'], heavy: [0.6, '濃い'], pale: [0.3, '白っぽい'] };
+/** An overlay whose opacity is `fn`, tinted with patches of green where water lingers. */
+function soil(tex: Tex, seed: number, kind: Soil, fn: (x: number, y: number) => number, green = 0.5): TextureData {
+  const base = kind === 'pale' ? DUST : DIRT;
+  const L = new Layers(tex, base, 0.95, 0);
+  const tint = tex.noise(1.7, 1.7, seed + 9, 2);
+  const k0 = SOIL[kind][0];
+  tex.map((x, y, k) => {
+    const g = kind === 'pale' ? 0 : sstep(0.15, 0.6, tint(x, y)) * green;
+    L.r[k] = lerp(base[0], ALGAE[0], g);
+    L.g[k] = lerp(base[1], ALGAE[1], g);
+    L.b[k] = lerp(base[2], ALGAE[2], g);
+    L.alpha[k] = clamp01(fn(x, y)) * k0;
+    return 0;
+  });
+  return L.finish();
+}
+/** Blotches and long faint streaks over a whole wall. */
+function stain(tex: Tex, seed: number, kind: Soil): TextureData {
+  const blotch = tex.noise(2.6, 2, seed, 4);
+  const streak = tex.noise(0.16, 3, seed + 1, 3);
+  const fine = tex.noise(0.25, 0.25, seed + 2, 2);
+  const band = tex.noise(4, 0.5, seed + 3, 2);
+  return soil(tex, seed, kind, (x, y) => 0.12 + sstep(-0.15, 0.55, blotch(x, y)) * 0.55 + sstep(0.1, 0.6, streak(x, y)) * 0.45 * (0.5 + 0.5 * sstep(-0.3, 0.3, blotch(x, y))) + fine(x, y) * 0.12 + sstep(0.35, 0.7, band(x, y)) * 0.2);
+}
+/** Dirt thrown up from the pavement: densest at the foot of the wall, with a ragged upper edge. */
+function splash(tex: Tex, seed: number, kind: Soil): TextureData {
+  const edge = tex.noise(0.5, 0.3, seed, 3);
+  const spot = tex.noise(0.07, 0.07, seed + 1, 2);
+  return soil(tex, seed, kind, (x, y) => {
+    const v = y / tex.mh;
+    const reach = 0.55 + edge(x, y) * 0.35;
+    return sstep(reach, reach * 0.15, v) * (0.7 + spot(x, y) * 0.3) + sstep(0.12, 0, v) * 0.4;
+  }, 0.8);
+}
+/** Streaks running down from a ledge at the top edge. `ends` gathers them at the two ends, as below a window sill. */
+function runoff(tex: Tex, seed: number, kind: Soil, ends: boolean): TextureData {
+  const len = tex.noise(ends ? 0.09 : 0.14, 50, seed, 2);
+  const wisp = tex.noise(0.04, 0.9, seed + 1, 2);
+  const tile = !ends;
+  return soil(tex, seed, kind, (x, y) => {
+    const v = 1 - y / tex.mh;
+    const u = x / tex.mw;
+    const side = ends ? Math.max(sstep(0.2, 0.06, u), sstep(0.8, 0.94, u)) * sstep(0, 0.04, u) * sstep(1, 0.96, u) : 0;
+    const reach = clamp01((tile ? 0.3 : 0.16) + sstep(-0.2, 0.7, len(x, 0)) * 0.6 + side * 0.55);
+    const body = sstep(reach, reach * 0.2, v) * (0.45 + side * 0.55 + sstep(0, 0.6, wisp(x, y)) * 0.4);
+    const fade = ends ? sstep(0, 0.03, u) * sstep(1, 0.97, u) : 1;
+    return (body + sstep(0.07, 0, v) * 0.5) * fade * sstep(1, 0.92, v);
+  }, 0.7);
+}
+/** Where puddles dry on a flat roof: dark patches with a tide mark round the edge. */
+function pond(tex: Tex, seed: number): TextureData {
+  const n = tex.noise(2.2, 2.2, seed, 3);
+  const fine = tex.noise(0.3, 0.3, seed + 1, 2);
+  const track = tex.noise(0.5, 6, seed + 2, 2);
+  return soil(tex, seed, 'mid', (x, y) => {
+    const d = n(x, y);
+    return sstep(0.05, 0.3, d) * 0.5 + sstep(0.06, 0, Math.abs(d - 0.08)) * 0.5 + 0.15 + fine(x, y) * 0.15 + sstep(0.3, 0.7, track(x, y)) * 0.2;
+  }, 0.9);
+}
+for (const kind of ['light', 'mid', 'heavy', 'pale'] as Soil[]) {
+  const name = SOIL[kind][1];
+  for (let i = 1; i <= 3; i++) add('trim', `stain-${kind}-${i}`, `壁のしみ ${name} ${i}`, [8, 6], (t, s) => stain(t, s, kind), { decal: true, tile: 'xy', density: 48 });
+  for (let i = 1; i <= 3; i++) add('trim', `splash-${kind}-${i}`, `壁の裾の泥はね ${name} ${i}`, [4, 1.2], (t, s) => splash(t, s, kind), { decal: true, tile: 'x', density: 96 });
+  for (let i = 1; i <= 2; i++) add('trim', `drip-${kind}-${i}`, `窓台の下の雨だれ ${name} ${i}`, [1.6, 1.6], (t, s) => runoff(t, s, kind, true), { decal: true, density: 128 });
+  for (let i = 1; i <= 2; i++) add('trim', `runoff-${kind}-${i}`, `笠木の下の雨だれ ${name} ${i}`, [6, 2], (t, s) => runoff(t, s, kind, false), { decal: true, tile: 'x', density: 96 });
+}
+for (let i = 1; i <= 3; i++) add('trim', `pond-${i}`, `陸屋根の水たまり跡 ${i}`, [8, 8], (t, s) => pond(t, s), { decal: true, tile: 'xy', density: 48 });
+
 export const TRIM_TEXTURES: readonly TextureSpec[] = list;
