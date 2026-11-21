@@ -6,7 +6,7 @@ import { DistrictType } from '../gen/districts';
 import { RoadClass } from '../gen/streamlines';
 import { Junction, JunctionArm, RoadModel } from './roadModel';
 
-export type FurnitureKind = 'signal' | 'ped' | 'cabinet' | 'stop' | 'street' | 'speed' | 'light';
+export type FurnitureKind = 'signal' | 'ped' | 'cabinet' | 'stop' | 'street' | 'speed' | 'light' | 'oneway' | 'warning' | 'guide';
 
 /** One catalogue model standing in the city. */
 export interface Placed {
@@ -93,7 +93,7 @@ const facing = (d: Vec2): number => Math.atan2(-d.x, d.y);
 export function placeStreetFurniture(city: City, roads: RoadModel): StreetFurniture {
   const { graph, profiles } = city;
   const items: Placed[] = [];
-  const stats: Record<FurnitureKind, number> = { signal: 0, ped: 0, cabinet: 0, stop: 0, street: 0, speed: 0, light: 0 };
+  const stats: Record<FurnitureKind, number> = { signal: 0, ped: 0, cabinet: 0, stop: 0, street: 0, speed: 0, light: 0, oneway: 0, warning: 0, guide: 0 };
   const seed = city.config.seed;
 
   // Poles keep clear of each other.
@@ -130,7 +130,97 @@ export function placeStreetFurniture(city: City, roads: RoadModel): StreetFurnit
   /** Distance behind the kerb for a pole: in the pavement where there is room, else just off the edge. */
   const behind = (w: number): number => (w >= 1.2 ? 0.7 : w + 0.4);
 
+  /** Walks a road as built: its length and the point `d` along it and `x` to its right, with the road's direction there. */
+  const track = (id: number): { len: number; lay: Layout; at: (d: number, x: number) => { x: number; y: number; h: number; t: Vec2 } } | null => {
+    const line = roads.lines[id];
+    const cross = roads.cross[id];
+    if (!line || !cross || line.length < 2) return null;
+    const lay = layout(roads.sections[id]);
+    const s = [0];
+    for (let k = 1; k < line.length; k++) s.push(s[k - 1] + Math.hypot(line[k][0] - line[k - 1][0], line[k][2] - line[k - 1][2]));
+    const at = (d: number, x: number): { x: number; y: number; h: number; t: Vec2 } => {
+      let k = 1;
+      while (k < line.length - 1 && s[k] < d) k++;
+      const [a, b]: [V3, V3] = [line[k - 1], line[k]];
+      const q = Math.min(1, Math.max(0, (d - s[k - 1]) / (s[k] - s[k - 1] || 1)));
+      const l = Math.hypot(b[0] - a[0], b[2] - a[2]) || 1;
+      const t = { x: (b[0] - a[0]) / l, y: (b[2] - a[2]) / l };
+      const r = right(t);
+      const raised = x > lay.road[1] ? lay.outerY[1] : x < lay.road[0] ? lay.outerY[0] : 0;
+      const c = cross[k - 1] + (cross[k] - cross[k - 1]) * q;
+      return { x: a[0] + (b[0] - a[0]) * q + r.x * x, y: a[2] + (b[2] - a[2]) * q + r.y * x, h: a[1] + (b[1] - a[1]) * q + c * x + raised, t };
+    };
+    return { len: s[s.length - 1], lay, at };
+  };
+  const rev = (t: Vec2): Vec2 => ({ x: -t.x, y: -t.y });
+  const isStreet = (id: number): boolean => {
+    const c = graph.edges[id].cls;
+    return c !== 'highway' && c !== 'ramp' && c !== 'path';
+  };
+
+  /**
+   * Whether a ramp carries traffic off the freeway. Traffic keeps right, so a ramp that leaves the freeway's
+   * right-hand side (seen along the carriageway it peels away from) is an exit and one on the left an entrance.
+   * Also gives the freeway edge upstream of the fork and the fork's node.
+   */
+  type Ramp = { exit: boolean; node: number; upstream: number | null; t: Vec2 };
+  const ramps = new Map<number, Ramp | null>();
+  const rampInfo = (id: number): Ramp | null => {
+    let r = ramps.get(id);
+    if (r === undefined) ramps.set(id, (r = rampOf(id)));
+    return r;
+  };
+  const rampOf = (id: number): Ramp | null => {
+    const e = graph.edges[id];
+    for (const node of [e.a, e.b]) {
+      const hw = graph.nodes[node].edges.filter((o) => graph.edges[o].cls === 'highway');
+      if (!hw.length) continue;
+      const leave = (o: number): Vec2 => {
+        const ed = graph.edges[o];
+        const pts = ed.a === node ? ed.points : [...ed.points].reverse();
+        const q = pts[Math.min(pts.length - 1, 3)];
+        const l = Math.hypot(q.x - pts[0].x, q.y - pts[0].y) || 1;
+        return { x: (q.x - pts[0].x) / l, y: (q.y - pts[0].y) / l };
+      };
+      const r = leave(id);
+      // The freeway edge the ramp runs alongside, and the one it came from.
+      let ahead = hw[0];
+      for (const o of hw) if (leave(o).x * r.x + leave(o).y * r.y > leave(ahead).x * r.x + leave(ahead).y * r.y) ahead = o;
+      const t = leave(ahead);
+      const exit = right(t).x * r.x + right(t).y * r.y > 0;
+      let upstream: number | null = null;
+      for (const o of hw) if (o !== ahead && (upstream === null || leave(o).x * t.x + leave(o).y * t.y < leave(upstream).x * t.x + leave(upstream).y * t.y)) upstream = o;
+      return { exit, node, upstream, t };
+    }
+    return null;
+  };
+
+  /** Whether traffic can come into the junction along this arm. */
+  const arrives = (a: JunctionArm): boolean => {
+    const c = graph.edges[a.edge].cls;
+    if (c === 'ramp') return rampInfo(a.edge)?.exit ?? true;
+    return !(c === 'local' && profiles[a.edge].oneWay && a.end === 0);
+  };
+
   roads.junctions.forEach((j, ji) => {
+    // Where a ramp meets the streets: keep drivers out of an exit, and show the way onto an entrance.
+    const mouth = j.arms.filter((a) => graph.edges[a.edge].cls === 'ramp' && roads.lines[a.edge] && Number.isFinite(a.reach));
+    if (mouth.length && j.arms.some((a) => isStreet(a.edge))) {
+      mouth.forEach((a, ai) => {
+        const info = rampInfo(a.edge);
+        if (!info || j.nodes.includes(info.node)) return;
+        const lay = armLay(a);
+        const d = a.reach + 1.5;
+        const back = rev(a.dir);
+        if (info.exit) {
+          put({ model: 'sign/do-not-enter-wrong-way', kind: 'oneway', ...armPoint(j, a, lay, d, lay.outer[1] - 0.2), yaw: facing(back), junction: ji, arm: ai }, 0.8);
+          put({ model: 'sign/do-not-enter', kind: 'oneway', ...armPoint(j, a, lay, d, lay.outer[0] + 0.2), yaw: facing(back), junction: ji, arm: ai }, 0.8);
+        } else {
+          const model = hash(seed, ji, ai, 8) < 0.2 ? 'sign/route-freeway-entrance-old' : 'sign/route-freeway-entrance';
+          put({ model, kind: 'guide', ...armPoint(j, a, lay, d, lay.outer[1] - 0.2), yaw: facing(back), junction: ji, arm: ai }, 0.8);
+        }
+      });
+    }
     const arms = j.arms.filter((a) => roads.lines[a.edge] && Number.isFinite(a.reach));
     if (arms.length < 3) return;
     const street = (a: JunctionArm): boolean => {
@@ -144,18 +234,28 @@ export function placeStreetFurniture(city: City, roads: RoadModel): StreetFurnit
         const L = a.reach - a.approach;
         const wr = lay.outer[1] - lay.road[1];
         const wl = lay.road[0] - lay.outer[0];
-        // Traffic leaving along this arm from the far side looks at a mast standing at the arm's right-hand corner.
-        const opposite = arms.some((o) => o !== a && o.dir.x * a.dir.x + o.dir.y * a.dir.y < -0.64);
-        if (opposite) {
-          const need = lay.road[1] + behind(wr) + 0.5;
-          const mast = MASTS.find(([len]) => len >= need) ?? MASTS[MASTS.length - 1];
-          const p = armPoint(j, a, lay, L + 0.2, lay.road[1] + behind(wr));
-          put({ model: mast[1], kind: 'signal', ...p, yaw: along(right(a.dir)), junction: ji, arm: ai }, 0.8);
-        }
-        if (a.control === 'signal' && !arms.some((o) => o !== a && o.dir.x * a.dir.x + o.dir.y * a.dir.y < -0.64)) {
-          // Nothing straight ahead to hang a mast over: a post at the stop line instead.
-          const p = armPoint(j, a, lay, a.reach - 0.6, lay.road[0] - behind(wl));
-          put({ model: 'signal/post-top-ped', kind: 'signal', ...p, yaw: facing(a.dir), junction: ji, arm: ai }, 0.8);
+        if (a.control === 'signal' && arrives(a)) {
+          // Drivers coming in look across the junction at a mast on the far right-hand corner, its arm over their lanes.
+          let far: JunctionArm | null = null;
+          let dot = -0.64;
+          for (const o of arms) {
+            const v = o.dir.x * a.dir.x + o.dir.y * a.dir.y;
+            if (o !== a && v < dot) [far, dot] = [o, v];
+          }
+          let hung = false;
+          if (far) {
+            const fl = armLay(far);
+            const fw = fl.outer[1] - fl.road[1];
+            const need = fl.road[1] + behind(fw) + 0.5;
+            const mast = MASTS.find(([len]) => len >= need) ?? MASTS[MASTS.length - 1];
+            const p = armPoint(j, far, fl, far.reach - far.approach + 0.2, fl.road[1] + behind(fw));
+            hung = put({ model: mast[1], kind: 'signal', ...p, yaw: along(right(far.dir)), junction: ji, arm: ai }, 0.8);
+          }
+          if (!hung) {
+            // Nothing straight ahead to hang a mast over: a post at the stop line instead.
+            const p = armPoint(j, a, lay, a.reach - 0.6, lay.road[0] - behind(wl));
+            put({ model: 'signal/post-top-ped', kind: 'signal', ...p, yaw: facing(a.dir), junction: ji, arm: ai }, 0.8);
+          }
         }
         if (a.crosswalk) {
           // A pedestrian head at each end of the crossing, looking across it.
@@ -182,7 +282,7 @@ export function placeStreetFurniture(city: City, roads: RoadModel): StreetFurnit
     const stops = arms.filter((a) => a.control === 'stop');
     let named = false;
     arms.forEach((a, ai) => {
-      if (a.control !== 'stop') return;
+      if (a.control !== 'stop' || !arrives(a)) return;
       const lay = armLay(a);
       const wl = lay.road[0] - lay.outer[0];
       const p = armPoint(j, a, lay, a.reach - 0.5, lay.road[0] - behind(wl));
@@ -208,33 +308,50 @@ export function placeStreetFurniture(city: City, roads: RoadModel): StreetFurnit
         put({ model, kind: 'street', ...p, yaw: along(a.dir), junction: ji }, 0.8);
       }
     }
+    // One light at a corner, on the left of the busiest road's arm.
+    let lead: JunctionArm | null = null;
+    const RANK: Record<string, number> = { arterial: 3, collector: 2, local: 1 };
+    for (const a of arms) if (isStreet(a.edge) && (RANK[graph.edges[a.edge].cls] ?? 0) > (lead ? RANK[graph.edges[lead.edge].cls] ?? 0 : 0)) lead = a;
+    if (lead) {
+      const lay = armLay(lead);
+      const pr = profiles[lead.edge];
+      const set = LIGHTS[pr.type as DistrictType] ?? LIGHTS.residential;
+      const model = set[graph.edges[lead.edge].cls === 'arterial' ? 0 : 1];
+      const p = armPoint(j, lead, lay, lead.reach - lead.approach + 0.3, lay.road[0] - behind(lay.road[0] - lay.outer[0]));
+      put({ model, kind: 'light', ...p, yaw: along(rev(right(lead.dir))), junction: ji }, 1.5);
+    }
   });
+
+  // One-way streets: arrows for the cross traffic where the street starts, and no entry where it ends.
+  roads.junctions.forEach((j, ji) => {
+    if (j.arms.length < 3) return;
+    j.arms.forEach((a, ai) => {
+      const e = graph.edges[a.edge];
+      if (e.cls !== 'local' || !profiles[a.edge].oneWay || !roads.lines[a.edge] || !Number.isFinite(a.reach)) return;
+      const lay = armLay(a);
+      const L = a.reach - a.approach;
+      const [wl, wr] = [lay.road[0] - lay.outer[0], lay.outer[1] - lay.road[1]];
+      if (a.end === 0) {
+        const r = right(a.dir);
+        put({ model: 'sign/one-way-right', kind: 'oneway', ...armPoint(j, a, lay, L + 0.6, lay.road[1] + behind(wr)), yaw: facing(r), junction: ji, arm: ai }, 0.7);
+        put({ model: 'sign/one-way-left', kind: 'oneway', ...armPoint(j, a, lay, L + 0.6, lay.road[0] - behind(wl)), yaw: facing(rev(r)), junction: ji, arm: ai }, 0.7);
+      } else {
+        put({ model: 'sign/do-not-enter', kind: 'oneway', ...armPoint(j, a, lay, a.reach + 1, lay.road[1] + behind(wr)), yaw: facing(rev(a.dir)), junction: ji, arm: ai }, 0.7);
+      }
+    });
+  });
+
+  const signalAt = new Set<number>();
+  for (const j of roads.junctions) if (j.signal) for (const n of j.nodes) signalAt.add(n);
 
   // Along the roads.
   graph.edges.forEach((e) => {
-    const line = roads.lines[e.id];
-    const cross = roads.cross[e.id];
-    if (!line || !cross || line.length < 2) return;
     const cls: RoadClass = e.cls;
     if (cls === 'alley' || cls === 'path') return;
-    const lay = layout(roads.sections[e.id]);
+    const tr = track(e.id);
+    if (!tr) return;
+    const { len, lay, at } = tr;
     const p = profiles[e.id];
-    const s = [0];
-    for (let k = 1; k < line.length; k++) s.push(s[k - 1] + Math.hypot(line[k][0] - line[k - 1][0], line[k][2] - line[k - 1][2]));
-    const len = s[s.length - 1];
-    /** Point at distance d along the road and x to its right, with the direction of the road there. */
-    const at = (d: number, x: number): { x: number; y: number; h: number; t: Vec2 } => {
-      let k = 1;
-      while (k < line.length - 1 && s[k] < d) k++;
-      const [a, b]: [V3, V3] = [line[k - 1], line[k]];
-      const q = Math.min(1, Math.max(0, (d - s[k - 1]) / (s[k] - s[k - 1] || 1)));
-      const l = Math.hypot(b[0] - a[0], b[2] - a[2]) || 1;
-      const t = { x: (b[0] - a[0]) / l, y: (b[2] - a[2]) / l };
-      const r = right(t);
-      const raised = x > lay.road[1] ? lay.outerY[1] : x < lay.road[0] ? lay.outerY[0] : 0;
-      const c = cross[k - 1] + (cross[k] - cross[k - 1]) * q;
-      return { x: a[0] + (b[0] - a[0]) * q + r.x * x, y: a[2] + (b[2] - a[2]) * q + r.y * x, h: a[1] + (b[1] - a[1]) * q + c * x + raised, t };
-    };
     const offR = lay.road[1] + behind(lay.outer[1] - lay.road[1]);
     const offL = lay.road[0] - behind(lay.road[0] - lay.outer[0]);
 
@@ -244,12 +361,36 @@ export function placeStreetFurniture(city: City, roads: RoadModel): StreetFurnit
         const q = at(d, 0);
         put({ model: 'furniture/light-cobra-twin', kind: 'light', x: q.x, y: q.y, h: q.h, yaw: along(right(q.t)), edge: e.id }, 6);
       }
+      if (len > 260 && hash(seed, e.id, 9) < 0.4) {
+        const fwd = at(len * 0.3, lay.outer[1] - 0.15);
+        put({ model: 'sign/speed-65', kind: 'speed', x: fwd.x, y: fwd.y, h: fwd.h, yaw: facing(rev(fwd.t)), edge: e.id }, 1.5);
+        const back = at(len * 0.7, lay.outer[0] + 0.15);
+        put({ model: 'sign/speed-65', kind: 'speed', x: back.x, y: back.y, h: back.h, yaw: facing(back.t), edge: e.id }, 1.5);
+      }
       return;
     }
     if (cls === 'ramp') {
       for (let d = 25 + 30 * hash(seed, e.id, 1); d < len - 15; d += 55) {
         const q = at(d, lay.outer[1] - 0.15);
         put({ model: 'furniture/light-cobra-12-long', kind: 'light', x: q.x, y: q.y, h: q.h, yaw: along(right(q.t)), edge: e.id }, 6);
+      }
+      const info = rampInfo(e.id);
+      if (info?.exit) {
+        // The exit sign where the ramp has parted from the freeway, and a board over the freeway before the fork.
+        const from = info.node === e.a;
+        const d = Math.min(len * 0.5, 70);
+        const g = at(from ? d : len - d, from ? lay.outer[0] + 0.2 : lay.outer[1] - 0.2);
+        const dir = from ? g.t : rev(g.t);
+        put({ model: hash(seed, e.id, 10) < 0.25 ? 'sign/guide-gore-old' : 'sign/guide-gore', kind: 'guide', x: g.x, y: g.y, h: g.h, yaw: facing(rev(dir)), edge: e.id }, 1.5);
+        const up = info.upstream === null ? null : track(info.upstream);
+        if (up && info.upstream !== null) {
+          const ends = graph.edges[info.upstream].b === info.node;
+          const back = Math.min(up.len * 0.6, 160);
+          // Traffic towards the fork runs with the edge if the edge ends there; the board stands on its right-hand barrier.
+          const q = up.at(ends ? up.len - back : back, ends ? up.lay.outer[1] - 0.3 : up.lay.outer[0] + 0.3);
+          const t = ends ? q.t : rev(q.t);
+          put({ model: hash(seed, e.id, 12) < 0.5 ? 'sign/overhead-cantilever-exit' : 'sign/overhead-tube-arm', kind: 'guide', x: q.x, y: q.y, h: q.h, yaw: along(right(t)), edge: info.upstream }, 6);
+        }
       }
       return;
     }
@@ -272,6 +413,26 @@ export function placeStreetFurniture(city: City, roads: RoadModel): StreetFurnit
         let model = base;
         if (hash(seed, e.id, k, 4) < 0.05) model = TIRED.find(([m]) => base.includes(m))?.[1] ?? base;
         put({ model, kind: 'light', x: q.x, y: q.y, h: q.h, yaw: along(side > 0 ? r : { x: -r.x, y: -r.y }), edge: e.id }, 2.5);
+      }
+    }
+
+    // No way through: said at the mouth of a street that ends blind.
+    if (cls === 'local' && len > 45) {
+      const [da, db] = [graph.nodes[e.a].degree, graph.nodes[e.b].degree];
+      if ((da === 1) !== (db === 1)) {
+        const q = db === 1 ? at(9, offR) : at(len - 9, offL);
+        const model = hash(seed, e.id, 13) < 0.15 ? 'sign/warn-dead-end-old' : 'sign/warn-dead-end';
+        put({ model, kind: 'warning', x: q.x, y: q.y, h: q.h, yaw: facing(db === 1 ? rev(q.t) : q.t), edge: e.id }, 1.5);
+      }
+    }
+    // Signals ahead, on the long fast runs into them.
+    if (cls === 'arterial' && len > 220) {
+      for (const end of [0, 1] as const) {
+        if (end === 0 && p.oneWay) continue;
+        const node = end === 0 ? e.a : e.b;
+        if (!signalAt.has(node)) continue;
+        const q = end === 1 ? at(len - 95, offR) : at(95, offL);
+        put({ model: hash(seed, e.id, end, 14) < 0.15 ? 'sign/warn-signal-ahead-old' : 'sign/warn-signal-ahead', kind: 'warning', x: q.x, y: q.y, h: q.h, yaw: facing(end === 1 ? rev(q.t) : q.t), edge: e.id }, 1.5);
       }
     }
 
