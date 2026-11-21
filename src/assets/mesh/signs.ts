@@ -278,12 +278,16 @@ function gantry(b: MeshBuilder, f: Pose, o: GantryOpts): void {
     for (const x of xs) column(b, tex, move(f, x, 0, 0), yb + hgt + (cols === 'round' ? 0.15 : 0), cols, dep);
     truss(b, tex, f, x0, x1, yb, hgt, dep);
     if (o.walkway) {
-      box(b, tex, f, [(x0 + x1) / 2, yb - 0.03, dep / 2 + 0.75], [(x1 - x0) / 2 - 0.6, 0.02, 0.3]);
+      // Inspection walkway hung below the panels.
+      const yw = clear - 0.28;
+      const zw = dep / 2 + 1.25;
+      box(b, tex, f, [(x0 + x1) / 2, yw, zw - 0.3], [(x1 - x0) / 2 - 0.6, 0.02, 0.3]);
       for (let x = x0 + 0.8; x < x1 - 0.5; x += 1.6) {
-        b.tube(tex, at(f, x, yb, dep / 2), at(f, x, yb - 0.04, dep / 2 + 1.05), 0.025, 6);
-        b.tube(tex, at(f, x, yb - 0.04, dep / 2 + 1.05), at(f, x, yb + 1.0, dep / 2 + 1.05), 0.02, 6);
+        b.tube(tex, at(f, x, yb, dep / 2), at(f, x, yw, dep / 2 + 0.2), 0.025, 6);
+        b.tube(tex, at(f, x, yw, dep / 2 + 0.2), at(f, x, yw, zw), 0.025, 6);
+        b.tube(tex, at(f, x, yw, zw), at(f, x, yw + 0.95, zw), 0.02, 6);
       }
-      b.tube(tex, at(f, x0 + 0.8, yb + 1.0, dep / 2 + 1.05), at(f, x1 - 0.6, yb + 1.0, dep / 2 + 1.05), 0.02, 6);
+      for (const dy of [0.5, 0.95]) b.tube(tex, at(f, x0 + 0.8, yw + dy, zw), at(f, x1 - 0.6, yw + dy, zw), 0.018, 6);
     }
     zf = dep / 2 + 0.11;
   }
