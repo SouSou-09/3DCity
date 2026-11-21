@@ -475,7 +475,7 @@ function verticalPanel(b: MeshBuilder, f: Pose, left: boolean): void {
   face(b, `sign/stripes-orange-${left ? 'l' : 'r'}`, f, [0, 0.78, 0.0095], 0.2, 0.6, [0, 0, 0.2, 0.6]);
   face(b, `sign/stripes-orange-${left ? 'r' : 'l'}`, turn(f, 180), [0, 0.78, 0.0095], 0.2, 0.6, [0, 0, 0.2, 0.6]);
 }
-/** Trailer-mounted flashing arrow board. */
+/** Trailer-mounted flashing arrow board; the tow bar points along +x and the board faces -x. */
 function arrowBoard(b: MeshBuilder, f: Pose, mode: 'left' | 'right' | 'double' | 'caution' | 'off', cy = 2.9): void {
   const Y = 'signal/housing-yellow';
   // Trailer.
@@ -491,9 +491,9 @@ function arrowBoard(b: MeshBuilder, f: Pose, mode: 'left' | 'right' | 'double' |
     for (const sx of [-1, 1]) b.tube(ZINC, at(f, sx * 0.8, 0.02, sz * 0.4), at(f, sx * 0.8, 0.46, sz * 0.4), 0.022, 6, 0.022, true);
   }
   box(b, 'signal/cabinet-side', f, [0.35, 0.8, 0], [0.4, 0.25, 0.35]);
-  box(b, Y, f, [-0.45, (0.55 + cy) / 2, -0.1], [0.05, (cy - 0.55) / 2, 0.05]);
+  box(b, Y, f, [-0.34, (0.55 + cy) / 2, 0], [0.05, (cy - 0.55) / 2, 0.05]);
   // Board.
-  const g = move(turn(f, 90), 0, cy, 0.45);
+  const g = move(turn(f, -90), 0, cy, 0.45);
   box(b, BLACK, g, [0, 0, 0], [1.22, 0.62, 0.05]);
   const lamps: [number, number, boolean][] = [];
   const lit = (x: number, y: number, on: boolean): number => lamps.push([x, y, on]);
@@ -652,7 +652,7 @@ export function addSigns(): void {
   add('marker-chevron-row', 'カーブ誘導 シェブロン5本', (b) => {
     for (let i = 0; i < 5; i++) {
       const a = -24 + i * 12;
-      const r = 28;
+      const r = 14;
       signPost(b, stand([Math.sin((a * Math.PI) / 180) * r, 0, (Math.cos((a * Math.PI) / 180) - 1) * r], a), { kind: 'u', clear: 1.2, items: ['chevron-right'] });
     }
   });
@@ -676,9 +676,9 @@ export function addSigns(): void {
     ['four', '街路名板 4枚重ね', 'round', ['market-st', '12th-ave', 'market-st', '12th-ave']],
     ['single', '街路名板 1枚', 'u', ['alder-way']],
     ['old-leaning', '街路名板 古い・傾き', 'rusty', ['mission-st-old', 'main-st-old'], { yaw: -8, lean: 6 }],
-    ['wood', '街路名板 木柱', 'wood', ['pier-9', 'bay-st']],
-    ['black-pole', '街路名板 黒い装飾柱', 'black', ['grand-ave', 'harbor-blvd']],
-    ['green-pole', '街路名板 緑の装飾柱', 'green', ['bay-st', 'market-st']],
+    ['wood', '街路名板 交差2枚', 'wood', ['pier-9', 'bay-st']],
+    ['black-pole', '街路名板 交差2枚', 'black', ['grand-ave', 'harbor-blvd']],
+    ['green-pole', '街路名板 交差2枚', 'green', ['bay-st', 'market-st']],
     ['parallel', '街路名板 同方向2枚', 'square', ['3rd-st', 'mission-st'], { parallel: true }],
   ];
   for (const [id, label, kind, names, o] of NAMES) {
@@ -738,8 +738,8 @@ export function addSigns(): void {
     ['next-exits', '2本柱', { id: 'guide-next-exits', kind: 'u', clear: 1.5 }],
     ['rest-area', '2本柱', { id: 'service-rest-area', kind: 'square', clear: 1.5 }],
     ['gas-food', '2本柱', { id: 'service-gas-food', kind: 'wood', clear: 1.5 }],
-    ['gore', '分岐点', { id: 'guide-gore', kind: 'square', clear: 1.2, spread: 0.7 }],
-    ['gore-old', '分岐点・傾き', { id: 'guide-gore-old', kind: 'rusty', clear: 1.2, spread: 0.7, lean: 4 }],
+    ['gore', '2本柱', { id: 'guide-gore', kind: 'square', clear: 1.2, spread: 0.7 }],
+    ['gore-old', '2本柱・傾き', { id: 'guide-gore-old', kind: 'rusty', clear: 1.2, spread: 0.7, lean: 4 }],
     ['road-closed-fixed', '2本柱', { id: 'work-road-closed-old', kind: 'wood', clear: 1.2 }],
     ['detour', '2本柱', { id: 'work-detour-left', kind: 'u', clear: 1.5 }],
   ];
@@ -849,14 +849,14 @@ export function addSigns(): void {
   add('work-vertical-panel-row', '縦型パネル 4枚の列', (b) => {
     for (let i = 0; i < 4; i++) verticalPanel(b, stand([i * 2 - 3, 0, i * 0.5 - 0.75]), false);
   });
-  add('work-arrow-board-right', '矢印板トレーラー 右', (b) => arrowBoard(b, O, 'right'));
-  add('work-arrow-board-left', '矢印板トレーラー 左', (b) => arrowBoard(b, O, 'left', 2.6));
-  add('work-arrow-board-double', '矢印板トレーラー 両矢印', (b) => arrowBoard(b, O, 'double'));
-  add('work-arrow-board-caution', '矢印板トレーラー 四隅点滅', (b) => arrowBoard(b, O, 'caution'));
-  add('work-arrow-board-stowed', '矢印板トレーラー 格納', (b) => arrowBoard(b, O, 'off', 1.75));
+  add('work-arrow-board-right', '矢印板トレーラー 右', (b) => arrowBoard(b, turn(O, 90), 'right'));
+  add('work-arrow-board-left', '矢印板トレーラー 左', (b) => arrowBoard(b, turn(O, 90), 'left', 2.6));
+  add('work-arrow-board-double', '矢印板トレーラー 両矢印', (b) => arrowBoard(b, turn(O, 90), 'double'));
+  add('work-arrow-board-caution', '矢印板トレーラー 四隅点滅', (b) => arrowBoard(b, turn(O, 90), 'caution'));
+  add('work-arrow-board-stowed', '矢印板トレーラー 格納', (b) => arrowBoard(b, turn(O, 90), 'off', 1.75));
   add('work-lane-closure', '車線規制セット 標識+矢印板+コーン', (b) => {
     workStand(b, stand([4.5, 0, 9]), { id: 'work-right-lane-closed', flags: true });
-    arrowBoard(b, stand([2.2, 0, 0], -90), 'left');
+    arrowBoard(b, stand([2.2, 0, 0], 90), 'left');
     for (let i = 0; i < 7; i++) cone(b, stand([3.6 - i * 0.55, 0, 7 - i * 1.6]));
     for (let i = 0; i < 3; i++) drum(b, stand([0.2, 0, -4 - i * 2.5]), i === 0);
   });
