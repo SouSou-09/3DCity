@@ -161,13 +161,11 @@ export interface JunctionOpts {
   box?: boolean;
 }
 
-/** At-grade junction of any number of arms: floor, rounded kerb corners, pavements and approaches. */
-export function junction(b: MeshBuilder, o: JunctionOpts): void {
-  const arms = [...o.arms].sort((a, c) => a.angle - c.angle).map(geo);
+interface Corner { c: { t: number; u: number } | null; r: number; T: number; theta: number }
+
+/** Kerb corners between neighbouring arms (sorted by angle); pushes each arm's start out past its corners. */
+function settle(arms: ArmGeo[], R: number): Corner[] {
   const n = arms.length;
-  const R = o.radius ?? 4;
-  const paint = o.paint ?? arms[0].arm.section.paint;
-  interface Corner { c: { t: number; u: number } | null; r: number; T: number; theta: number }
   const corners: Corner[] = [];
   for (let i = 0; i < n; i++) {
     const a = arms[i];
@@ -183,6 +181,23 @@ export function junction(b: MeshBuilder, o: JunctionOpts): void {
       c.L = Math.max(c.L, m.u + T + 0.3);
     } else corners.push({ c: null, r: 0, T: 0, theta });
   }
+  return corners;
+}
+
+/** Distance from the centre at which each arm's approach starts, in the order the arms were given. */
+export function armReach(arms: Arm[], radius = 4): number[] {
+  const gs = arms.map(geo);
+  settle([...gs].sort((a, c) => a.arm.angle - c.arm.angle), radius);
+  return gs.map((g) => g.L);
+}
+
+/** At-grade junction of any number of arms: floor, rounded kerb corners, pavements and approaches. */
+export function junction(b: MeshBuilder, o: JunctionOpts): void {
+  const arms = [...o.arms].sort((a, c) => a.angle - c.angle).map(geo);
+  const n = arms.length;
+  const R = o.radius ?? 4;
+  const paint = o.paint ?? arms[0].arm.section.paint;
+  const corners = settle(arms, R);
   const ring: P2[] = [];
   for (let i = 0; i < n; i++) {
     const a = arms[i];
