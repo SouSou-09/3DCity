@@ -118,7 +118,10 @@ class Stage {
     const r = Math.hypot(max[0] - min[0], max[1] - min[1], max[2] - min[2]) / 2;
     const d = new THREE.Vector3(...dir).normalize();
     // Closest distance at which all eight corners of the bounding box stay in view.
-    const right = new THREE.Vector3().crossVectors(new THREE.Vector3(0, 1, 0), d).normalize();
+    const right = new THREE.Vector3().crossVectors(new THREE.Vector3(0, 1, 0), d);
+    // Looking straight down (or up) leaves no horizontal axis to derive from.
+    if (right.lengthSq() < 1e-8) right.set(1, 0, 0);
+    right.normalize();
     const up = new THREE.Vector3().crossVectors(d, right);
     const tv = Math.tan((this.camera.fov * Math.PI) / 360);
     const th = tv * this.camera.aspect;
