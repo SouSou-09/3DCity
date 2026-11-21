@@ -1,11 +1,11 @@
 import { resample } from '../core/geom';
 import { Vec2, clamp, mix } from '../core/vec2';
+import { HIGHWAY_LIFT } from './highways';
 import { Rail } from './rail';
 import { RoadEdge, RoadGraph, RoadNode } from './roadGraph';
 import { Terrain, heightAt } from './terrain';
 
-/** Height of a freeway deck above the ground it crosses. */
-export const HIGHWAY_LIFT = 6.2;
+export { HIGHWAY_LIFT };
 /** Lowest bridge deck above the water. */
 export const DECK_HEIGHT = 5;
 /** Lowest road surface next to water. */

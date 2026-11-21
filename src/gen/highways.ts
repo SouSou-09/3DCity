@@ -3,7 +3,7 @@ import { catmullRom, cubicBezier, pointAt, polyLength, resample, segSeg, Segment
 import { Vec2, addScaled, angleDiff, clamp, dist, dot, norm, perp, sub } from '../core/vec2';
 import { Districts } from './districts';
 import { RoadBuilder } from './streamlines';
-import { REF_SIZE, Terrain, featureScale, hillAt, inBounds, isWater, seaDistAt } from './terrain';
+import { REF_SIZE, Terrain, featureScale, heightAt, hillAt, inBounds, isWater, seaDistAt } from './terrain';
 
 export interface Highways {
   /** Runs roughly parallel to the coast, behind downtown. */
@@ -215,9 +215,19 @@ interface Crossing {
   p: Vec2;
 }
 
-const RAMP_LENGTH = 115;
+/** Height of a freeway deck above the ground it crosses. */
+export const HIGHWAY_LIFT = 6.2;
+/** Shortest ramp, and the longest one worth building. */
+const RAMP_LENGTH = 200;
+const RAMP_MAX = 330;
+/** Part of a ramp that cannot be used to change level: beside the freeway until the two decks have parted, and the level stretch at the street. */
+const RAMP_LEVEL = 95;
+/** Grade a ramp is laid out for, and the steepest it may end up with. */
+const RAMP_GRADE = 0.055;
+const RAMP_STEEPEST = 0.075;
 const RAMP_OFFSET = 48;
-const INTERCHANGE_SPACING = 380;
+/** Clear run of freeway between the ramps of two interchanges. */
+const INTERCHANGE_GAP = 90;
 
 /** Diamond interchanges where arterials cross a freeway. */
 export function addRamps(builder: RoadBuilder, hwIds: number[], forbidden: { line: number; s: number }[]): number {
@@ -256,9 +266,8 @@ export function addRamps(builder: RoadBuilder, hwIds: number[], forbidden: { lin
     crossings.sort((p, q) => p.s - q.s);
     let last = -Infinity;
     for (const c of crossings) {
-      if (c.s - last < INTERCHANGE_SPACING) continue;
+      if (c.s - RAMP_LENGTH - last < INTERCHANGE_GAP) continue;
       if (c.s < RAMP_LENGTH + 40 || c.s > total - RAMP_LENGTH - 40) continue;
-      if (forbidden.some((f) => f.line === hid && Math.abs(f.s - c.s) < 240)) continue;
       const art = builder.lines[c.line].points;
       const artLen = cumOf(c.line)[art.length - 1];
       const tf = pointAt(hw, c.s).tan;
@@ -269,24 +278,51 @@ export function addRamps(builder: RoadBuilder, hwIds: number[], forbidden: { lin
       const along = RAMP_OFFSET / Math.abs(lateral);
       if (c.sA < along + 15 || c.sA > artLen - along - 15) continue;
       const ramps: Vec2[][] = [];
-      let ok = true;
+      /** Furthest any ramp reaches along the freeway, back and ahead of the crossing. */
+      const span = [0, 0];
       for (const side of [1, -1]) {
         const g = pointAt(art, c.sA + side * Math.sign(lateral) * along).p;
-        if (isWater(t, g.x, g.y)) ok = false;
+        if (isWater(t, g.x, g.y)) continue;
         for (const sf of [1, -1]) {
-          const f = pointAt(hw, c.s + sf * RAMP_LENGTH).p;
+          // Long enough to come down from the deck to the street at an easy grade.
+          let len = RAMP_LENGTH;
+          let drop = 0;
+          for (let it = 0; it < 3; it++) {
+            const q = pointAt(hw, clamp(c.s + sf * len, 0, total)).p;
+            drop = Math.max(0, heightAt(t, q.x, q.y)) + HIGHWAY_LIFT - Math.max(0, heightAt(t, g.x, g.y));
+            len = clamp(RAMP_LEVEL + drop / RAMP_GRADE, RAMP_LENGTH, RAMP_MAX);
+          }
+          const s0 = c.s + sf * len;
+          if (drop / (len - RAMP_LEVEL) > RAMP_STEEPEST || s0 < 40 || s0 > total - 40) continue;
+          // Clear of the previous interchange and of the places where another freeway leaves this one.
+          if (sf < 0 && s0 - last < INTERCHANGE_GAP) continue;
+          if (forbidden.some((f) => f.line === hid && Math.abs(f.s - c.s) < len + 125)) continue;
+          const f = pointAt(hw, s0).p;
           const toX = { x: -tf.x * sf, y: -tf.y * sf };
-          const p1 = addScaled(addScaled(f, toX, RAMP_LENGTH * 0.5), nf, side * 6);
-          const p2 = addScaled(g, toX, -RAMP_LENGTH * 0.3);
-          const pts = cubicBezier(f, p1, p2, g, 14);
+          const p1 = addScaled(addScaled(f, toX, len * 0.4), nf, side * 10);
+          const p2 = addScaled(g, toX, -len * 0.3);
+          const pts = cubicBezier(f, p1, p2, g, Math.round(len / 8));
           pts[0] = f;
           pts[pts.length - 1] = g;
+          // Once it has started down, a ramp cannot pass over water or another main road.
+          let ok = true;
+          for (let i = 1; i < pts.length && ok; i++) {
+            const [a, b] = [pts[i - 1], pts[i]];
+            if (isWater(t, b.x, b.y)) ok = false;
+            arterials.query(Math.min(a.x, b.x), Math.min(a.y, b.y), Math.max(a.x, b.x), Math.max(a.y, b.y), (r) => {
+              if (r.line === c.line && i >= pts.length - 2) return;
+              if (i > 0.3 * pts.length && segSeg(a, b, r.a, r.b)) ok = false;
+            });
+          }
+          if (!ok) continue;
+          span[sf < 0 ? 0 : 1] = Math.max(span[sf < 0 ? 0 : 1], len);
           ramps.push(pts);
         }
       }
-      if (!ok) continue;
+      // Half an interchange is still an interchange; a single ramp is not.
+      if (ramps.length < 2) continue;
       for (const pts of ramps) builder.addLine({ points: pts, cls: 'ramp', family: -1, ends: ['fixed', 'fixed'] });
-      last = c.s;
+      last = c.s + span[1];
       count++;
     }
   }
