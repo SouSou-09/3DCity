@@ -243,7 +243,7 @@ export class MapView {
     }
     if (this.layers.nodes) {
       for (const n of city.graph.nodes) {
-        const d = Math.min(6, n.edges.length);
+        const d = Math.min(6, n.degree);
         if (d === 2) continue;
         ctx.fillStyle = DEGREE_COLOR[d];
         ctx.beginPath();

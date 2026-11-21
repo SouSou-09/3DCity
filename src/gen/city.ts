@@ -48,7 +48,7 @@ export function generateCity(config: CityConfig = DEFAULT_CONFIG): City {
   const graph = buildRoadGraph(roads.lines, terrain, districts, rng.fork('graph'));
 
   const degree = [0, 0, 0, 0, 0, 0, 0];
-  for (const n of graph.nodes) degree[Math.min(6, n.edges.length)]++;
+  for (const n of graph.nodes) degree[Math.min(6, n.degree)]++;
   const length: Record<RoadClass, number> = { highway: 0, ramp: 0, arterial: 0, collector: 0, local: 0 };
   let bridges = 0;
   for (const e of graph.edges) {

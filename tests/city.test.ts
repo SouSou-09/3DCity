@@ -47,7 +47,10 @@ describe('city generation', () => {
         expect(nodes[e.b].edges).toContain(e.id);
         expect(e.length).toBeGreaterThan(1);
       }
-      for (const n of nodes) expect(n.edges.length).toBeGreaterThan(0);
+      for (const n of nodes) {
+        expect(n.edges.length).toBeGreaterThan(0);
+        expect(n.degree).toBe(edges.filter((e) => e.a === n.id).length + edges.filter((e) => e.b === n.id).length);
+      }
     });
 
     it('is one connected network that includes the freeway', () => {

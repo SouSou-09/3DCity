@@ -11,6 +11,8 @@ export interface RoadNode {
   y: number;
   /** Ids of connected edges. */
   edges: number[];
+  /** Number of road arms; an edge that loops back to this node counts twice. */
+  degree: number;
 }
 
 export interface RoadEdge {
@@ -756,7 +758,7 @@ export function buildRoadGraph(lines: RoadLine[], t: Terrain, districts: Distric
   g.nodes.forEach((n, i) => {
     if (!n.alive || n.edges.size === 0) return;
     nodeId[i] = nodes.length;
-    nodes.push({ id: nodes.length, x: n.x, y: n.y, edges: [] });
+    nodes.push({ id: nodes.length, x: n.x, y: n.y, edges: [], degree: g.degree(i) });
   });
   const edges: RoadEdge[] = [];
   for (const e of g.edges) {
