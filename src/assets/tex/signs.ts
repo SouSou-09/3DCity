@@ -170,6 +170,26 @@ sign('truck-route', '大型車経路 TRUCK ROUTE', 'rect', 0.6, 0.45, W, (p) => 
   p.border(G, 0.012, 0.01);
   p.centred(G, ['TRUCK', 'ROUTE'], 0.11);
 });
+plate('ramp-one-car', 'ランプメーター 1台ずつ', ['ONE CAR', 'PER', 'GREEN'], 0.1);
+plate('crosswalk-stop-on-red', '横断歩道 赤で停止', ['CROSSWALK', 'STOP', 'ON RED'], 0.09, (p) => p.disc(R, 0.3, 0.12, 0.06), 0.48);
+plate('left-turn-signal', '左折専用信号', ['LEFT', 'TURN', 'SIGNAL'], 0.1);
+plate('left-on-green-arrow', '左折は青矢印のみ', ['LEFT ON', 'GREEN', 'ARROW', 'ONLY'], 0.085);
+sign('plaque-school', '補助板 SCHOOL', 'rect', 0.6, 0.3, LM, (p) => {
+  p.border(K, 0.008, 0.007);
+  p.centred(K, ['SCHOOL'], 0.11);
+});
+sign('plaque-when-flashing', '補助板 WHEN FLASHING', 'rect', 0.6, 0.3, W, (p) => {
+  p.border(K, 0.008, 0.007);
+  p.centred(K, ['WHEN', 'FLASHING'], 0.08);
+});
+sign('plaque-ahead', '補助板 AHEAD', 'rect', 0.6, 0.3, LM, (p) => {
+  p.border(K, 0.008, 0.007);
+  p.centred(K, ['AHEAD'], 0.11);
+});
+sign('plaque-diagonal-arrow', '補助板 斜め矢印', 'rect', 0.6, 0.3, LM, (p) => {
+  p.border(K, 0.008, 0.007);
+  p.arrow(K, [[0.2, 0.24], [0.42, 0.07]], 0.028, 0.07, 0.1);
+});
 sign('ped-button', '押しボタン案内', 'rect', 0.23, 0.3, W, (p) => {
   p.border(K, 0.006, 0.005);
   p.lines(K, ['PUSH BUTTON', 'TO CROSS'], 0.275, 0.026, { fit: 0.18 });
