@@ -270,7 +270,7 @@ function motel(b: MeshBuilder, o: { seed: number; units: number; wall: string; t
   }
   void ww;
   const back: Opening[] = [];
-  for (let f = 0; f < 2; f++) back.push(...spread(rnd, 1, w - 1, WIN('frosted-small'), f * fh + 1.5, { depth: 0.08 }, o.units));
+  for (let f = 0; f < 2; f++) back.push(...spread(rnd, 1, w - 1, WIN('frosted-aluminium'), f * fh + 1.5, { depth: 0.08 }, o.units));
   shell(b, 0, 0, w, d, fh * 2, o.wall, [front, [], back, []]);
   // Walkway, posts and stairs at both ends.
   box(b, 'structure/wall-smooth', stand(), [0, fh - 0.09, d / 2 + 0.75], [w / 2, 0.09, 0.75]);
@@ -315,7 +315,7 @@ export function addWorks(): void {
   // Vaulted sheds and Quonset huts.
   ([['block-grey', 'seam-galvanized', 24, 30], ['brick-red-common', 'corrugated-rusty', 18, 26], ['concrete-panel', 'seam-white', 30, 40]] as [string, string, number, number][])
     .forEach(([wl, rf, w, d], i) => add('industrial', `vault-${i + 1}`, `かまぼこ屋根の倉庫 ${i + 1}`, warehouse, { w, d, h: 5, wall: W(wl), trim: T('grey'), dock: DOCKS, docks: 2, shutters: SHUT.slice(i * 2, i * 2 + 2), roof: 'barrel', roofMat: `roof/${rf}`, rise: w * 0.22, windows: WIN('steel-wide-black') }));
-  ([['corrugated-galvanized', 'metal-corrugated-galvanized', 9, 16], ['corrugated-rusty', 'metal-corrugated-rusty', 7, 12], ['corrugated-galvanized', 'wood-barn-red', 12, 22]] as [string, string, number, number][])
+  ([['corrugated-galvanized', 'metal-corrugated-galvanized', 9, 16], ['corrugated-rusty', 'metal-corrugated-rusty', 7, 12], ['corrugated-galvanized', 'wood-dark', 12, 22]] as [string, string, number, number][])
     .forEach(([rf, en, w, d], i) => add('industrial', `quonset-${i + 1}`, `かまぼこ兵舎型の小屋 ${i + 1}`, quonset, { w, d, mat: `roof/${rf}`, end: W(en), door: SHUT[i * 3] }));
   // Multi-storey brick mills.
   ([['brick-red-common', 'steel-loft-black', 5, 24, 30], ['brick-brown-common', 'steel-loft-black', 4, 30, 22], ['brick-buff-sooty', 'steel-loft-black', 6, 20, 26], ['brick-painted-white-peeling', 'steel-loft-black', 3, 36, 24]] as [string, string, number, number, number][])
@@ -337,7 +337,7 @@ export function addWorks(): void {
     ['fastfood-1', 'ファストフード店 1', { w: 11, d: 17, h: 3.4, wall: W('brick-red'), trim: T('white'), win: WIN('shop-low-aluminium'), door: D('glass-double-aluminium'), roof: 'mansard', roofMat: 'roof/seam-red', rise: 1.5, sign: 'trim/sign-burgers', pole: 'trim/billboard-burger', drive: true }],
     ['fastfood-2', 'ファストフード店 2', { w: 12, d: 15, h: 3.6, wall: W('stucco-yellow'), trim: T('red'), win: WIN('shop-low-black'), door: D('glass-double-red'), roof: 'flat', roofMat: 'roof/flat-membrane-dirty', rise: 0, sign: 'trim/sign-tacos-el-rey', stripe: T('red'), pole: 'trim/billboard-cola', drive: true }],
     ['fastfood-3', 'ファストフード店 3', { w: 10, d: 14, h: 3.4, wall: W('tile-white'), trim: T('orange'), win: WIN('shop-low-aluminium'), door: D('glass-aluminium'), roof: 'mansard', roofMat: 'roof/seam-blue', rise: 1.3, sign: 'trim/sign-donuts', drive: true }],
-    ['fastfood-4', 'ファストフード店 4', { w: 13, d: 18, h: 3.8, wall: W('stucco-cream'), trim: T('brown'), win: WIN('shop-low-black'), door: D('glass-double-bronze'), roof: 'hip', roofMat: 'roof/tile-barrel-red', rise: 1.6, sign: 'trim/sign-pizza', pole: 'trim/billboard-burger' }],
+    ['fastfood-4', 'ファストフード店 4', { w: 13, d: 18, h: 3.8, wall: W('stucco-cream'), trim: T('brown'), win: WIN('shop-low-black'), door: D('glass-double-bronze'), roof: 'hip', roofMat: 'roof/clay-terracotta', rise: 1.6, sign: 'trim/sign-pizza', pole: 'trim/billboard-burger' }],
     ['fastfood-5', 'ファストフード店 5', { w: 9, d: 12, h: 3.4, wall: W('block-red'), trim: T('yellow'), win: WIN('shop-low-aluminium'), door: D('glass-red'), roof: 'shed', roofMat: 'roof/seam-white', rise: 1.4, sign: 'trim/sign-noodle-house', stripe: T('yellow') }],
     ['diner-1', 'ダイナー 1', { w: 16, d: 6, h: 3.3, wall: W('metal-panel-silver'), trim: T('red'), win: WIN('band-black'), door: D('glass-red'), roof: 'flat', roofMat: 'roof/flat-membrane-grey', rise: 0, stripe: T('red'), blade: 'trim/blade-diner', lift: 0.6, sign: 'trim/sign-cafe-luna' }],
     ['diner-2', 'ダイナー 2', { w: 18, d: 7, h: 3.3, wall: W('metal-panel-silver'), trim: T('teal'), win: WIN('band-white'), door: D('glass-aluminium'), roof: 'flat', roofMat: 'roof/flat-membrane-grey', rise: 0, stripe: T('teal'), blade: 'trim/blade-diner', lift: 0.6 }],
@@ -359,7 +359,7 @@ export function addWorks(): void {
   // Dingbats and motel-style walk-ups.
   ([['stucco-white', 'teal', 'slider-aluminium', 'teal', 'rail-black'], ['stucco-pink', 'white', 'slider-white', 'brown', 'rail-white'], ['stucco-sand', 'brown', 'slider-bronze', 'orange', 'rail-brown'], ['stucco-mint', 'white', 'louver-aluminium', 'yellow', 'rail-ornate']] as [string, string, string, string, string][])
     .forEach(([wl, tr, wn, ac, rl], i) => add('apartment', `dingbat-${i + 1}`, `1階が駐車場のアパート ${i + 1}`, dingbat, { w: 12 + (i % 2) * 3, d: 18 + (i % 3) * 2, wall: W(wl), trim: T(tr), win: WIN(wn), accent: T(ac), rail: `trim/${rl}` }));
-  ([['stucco-cream', 'brown', 'slider-bronze', 'rail-brown', 'flat', 'flat-gravel', 6], ['stucco-white', 'teal', 'slider-aluminium', 'rail-white', 'hip', 'shingle-grey', 8], ['block-white', 'red', 'slider-white', 'rail-black', 'flat', 'flat-bitumen-silver', 10], ['stucco-peach', 'white', 'slider-white', 'rail-white', 'hip', 'tile-barrel-red', 5]] as [string, string, string, string, RoofOpts['kind'], string, number][])
+  ([['stucco-cream', 'brown', 'slider-bronze', 'rail-brown', 'flat', 'flat-gravel', 6], ['stucco-white', 'teal', 'slider-aluminium', 'rail-white', 'hip', 'shingle-grey', 8], ['block-white', 'red', 'slider-white', 'rail-black', 'flat', 'flat-bitumen-silver', 10], ['stucco-peach', 'white', 'slider-white', 'rail-white', 'hip', 'clay-terracotta', 5]] as [string, string, string, string, RoofOpts['kind'], string, number][])
     .forEach(([wl, tr, wn, rl, rk, rf, n], i) => add('apartment', `motel-${i + 1}`, `外廊下のアパート・モーテル ${i + 1}`, motel, {
       units: n, wall: W(wl), trim: T(tr), win: WIN(wn), doors: [D('front-teal-2'), D('front-teal-4'), D('front-red-1'), D('front-white-2')].slice(i % 2, (i % 2) + 2), rail: `trim/${rl}`, roof: rk, roofMat: `roof/${rf}`, ...(i % 2 ? { blade: 'trim/blade-motel' } : { blade: 'trim/blade-apts' }),
     }));
