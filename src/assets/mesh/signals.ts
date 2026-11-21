@@ -418,7 +418,7 @@ export function span(b: MeshBuilder, f: Pose, o: SpanOpts): void {
     for (const sx of [-1, 1]) pipe(b, ZINC, [at(f, s.x + sx * w * 0.35, y, 0), at(f, s.x + sx * w * 0.35, y - 0.14, 0)], 0.008, 4, false);
     low = Math.min(low, y - 0.12 - hh);
   }
-  if (o.tether) {
+  if (o.tether && Number.isFinite(low)) {
     const y = low - 0.08;
     pipe(b, ZINC, [at(f, -half, y + 0.25, 0), ...o.heads.map((hd) => at(f, hd.x, y, 0)).sort((p, q) => p[0] - q[0]), at(f, half, y + 0.25, 0)], 0.005, 4, false);
     for (const hd of o.heads) pipe(b, BLK, [at(f, hd.x, y, 0), at(f, hd.x, y + 0.1, 0)], 0.012, 5, false);
