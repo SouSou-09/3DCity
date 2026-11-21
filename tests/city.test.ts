@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { pointSeg, segSeg } from '../src/core/geom';
+import { SegmentIndex, pointSeg, segSeg } from '../src/core/geom';
 import { angleDiff } from '../src/core/vec2';
 import { City, DEFAULT_CONFIG, generateCity } from '../src/gen/city';
 import { RAIL_MAX_GRADE, RAIL_MIN_RADIUS, RAIL_STEP, RailIndex, sharpestRailTurn } from '../src/gen/rail';
@@ -159,7 +159,8 @@ describe('city generation', () => {
 
     it('has no streets crossing without a junction', () => {
       const { edges } = city(seed).graph;
-      const streets = edges.filter((e) => isStreet(e.cls));
+      // Alleys and paths included.
+      const streets = edges.filter((e) => e.cls !== 'highway' && e.cls !== 'ramp');
       let crossings = 0;
       for (let i = 0; i < streets.length; i++) {
         for (let j = i + 1; j < streets.length; j++) {
@@ -175,6 +176,33 @@ describe('city generation', () => {
       }
       expect(crossings).toBe(0);
     });
+    it('adds alleys, streets, cul-de-sacs and paths inside deep blocks, clear of water, freeway and tracks', () => {
+      const c = city(seed);
+      const s = c.stats.infill;
+      expect(s.alleys).toBeGreaterThan(30 * AREA);
+      expect(s.streets).toBeGreaterThan(8 * AREA);
+      expect(s.culDeSacs).toBeGreaterThan(15 * AREA);
+      expect(s.paths).toBeGreaterThan(3 * AREA);
+      const added = c.graph.edges.filter((e) => e.infill);
+      expect(c.graph.edges.filter((e) => e.cls === 'alley' || e.cls === 'path').every((e) => e.infill)).toBe(true);
+      const freeway = new SegmentIndex(60);
+      for (const e of c.graph.edges) if (e.cls === 'highway' || e.cls === 'ramp') freeway.addLine(e.id, e.points);
+      const index = new RailIndex(c.rail);
+      let bad = 0;
+      for (const e of added) {
+        if (e.bridge || e.length < 15) bad++;
+        for (let i = 1; i < e.points.length; i++) {
+          const a = e.points[i - 1];
+          const b = e.points[i];
+          if (isWater(c.terrain, b.x, b.y) || index.crossings(a, b).length) bad++;
+          freeway.query(Math.min(a.x, b.x), Math.min(a.y, b.y), Math.max(a.x, b.x), Math.max(a.y, b.y), (r) => {
+            if (segSeg(a, b, r.a, r.b)) bad++;
+          });
+        }
+      }
+      expect(bad).toBe(0);
+    });
+
     it('has a main railway line across the map, with gentle curves and grades', () => {
       const { rail } = city(seed);
       const main = rail.lines[0];

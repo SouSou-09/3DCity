@@ -1,6 +1,6 @@
 import { Heap } from '../core/heap';
 import { Rng } from '../core/rng';
-import { SegmentIndex, pointSeg, polyLength, segSeg, simplify } from '../core/geom';
+import { SegmentIndex, pointAt, pointSeg, polyLength, segSeg, simplify } from '../core/geom';
 import { Vec2, angleDiff, clamp, dist, norm } from '../core/vec2';
 import { DistrictType, Districts, districtAt } from './districts';
 import { Rail } from './rail';
@@ -243,7 +243,7 @@ export function addInfillRoads(graph: RoadGraph, t: Terrain, districts: District
         const lx = -d.y;
         const ly = d.x;
         const fwd = { x: q.x + d.x * STEP, y: q.y + d.y * STEP };
-        const turn = clamp(((depthAt(fwd.x + lx * 5, fwd.y + ly * 5) - depthAt(fwd.x - lx * 5, fwd.y - ly * 5)) / 10) * 0.5, -0.07, 0.07);
+        const turn = clamp(((depthAt(fwd.x + lx * 5, fwd.y + ly * 5) - depthAt(fwd.x - lx * 5, fwd.y - ly * 5)) / 10) * 0.25, -0.04, 0.04);
         d = { x: d.x * Math.cos(turn) - d.y * Math.sin(turn), y: d.x * Math.sin(turn) + d.y * Math.cos(turn) };
       }
       const nq = { x: q.x + d.x * STEP, y: q.y + d.y * STEP };
@@ -367,6 +367,25 @@ export function addInfillRoads(graph: RoadGraph, t: Terrain, districts: District
     return true;
   };
 
+  /** Checks the finished shape of the new road against the arms of the junction it makes at end k. */
+  const armsOk = (pts: Vec2[], k: 0 | 1, tr: Trace, join: End): boolean => {
+    const own = k ? pts.slice().reverse() : pts;
+    const from = join.node >= 0 ? nodes[join.node] : own[0];
+    let i = 1;
+    while (i < own.length - 1 && dist(own[i], from) < 12) i++;
+    const arm = Math.atan2(own[i].y - from.y, own[i].x - from.x);
+    if (join.node >= 0) {
+      for (const id of nodes[join.node].edges) if (edges[id].a !== edges[id].b && angleDiff(leave(edges[id], join.node), arm) < ROOM) return false;
+      return true;
+    }
+    const at = locate(tr.root, from);
+    for (const s of [at.s - 12, at.s + 12]) {
+      const q = pointAt(at.edge.points, clamp(s, 0, at.edge.length)).p;
+      if (angleDiff(Math.atan2(q.y - from.y, q.x - from.x), arm) < ROOM) return false;
+    }
+    return true;
+  };
+
   const commit = (pts: Vec2[], ends: [Trace | null, Trace | null], joins: [End | null, End | null], plan: Plan): void => {
     const endNode = (k: 0 | 1): number => {
       const p = k ? pts[pts.length - 1] : pts[0];
@@ -469,7 +488,7 @@ export function addInfillRoads(graph: RoadGraph, t: Terrain, districts: District
         if (ext > STEP) stem.push({ x: p.x + out.x * ext, y: p.y + out.y * ext });
         const pts = shape(stem, plan);
         const len = polyLength(pts);
-        if (len < 36 || len > 190 || !clear(pts, [true, false])) continue;
+        if (len < 36 || len > 190 || !clear(pts, [true, false]) || !armsOk(pts, 0, back, join)) continue;
         commit(pts, [back, null], [join, null], plan);
         return true;
       }
@@ -510,9 +529,15 @@ export function addInfillRoads(graph: RoadGraph, t: Terrain, districts: District
     }
     if (!s1.join && !s2.join) return false;
     if (s1.join && s2.join && s1.join.node >= 0 && s1.join.node === s2.join.node) return false;
-    const pts = shape([...s1.tr.pts.slice().reverse(), ...s2.tr.pts.slice(1)], plan);
+    let pts = [...s1.tr.pts.slice().reverse(), ...s2.tr.pts.slice(1)];
+    // Following the middle of the block leaves small kinks; round them off.
+    for (let k = 0; k < 6; k++) {
+      pts = pts.map((q, i) => (i === 0 || i === pts.length - 1 ? q : { x: 0.25 * pts[i - 1].x + 0.5 * q.x + 0.25 * pts[i + 1].x, y: 0.25 * pts[i - 1].y + 0.5 * q.y + 0.25 * pts[i + 1].y }));
+    }
+    pts = shape(pts, plan);
     if (pts.length < 3 || polyLength(pts) < (type === 'industrial' ? 60 : 32)) return false;
     if (!clear(pts, [!!s1.join, !!s2.join])) return false;
+    if ((s1.join && !armsOk(pts, 0, s1.tr, s1.join)) || (s2.join && !armsOk(pts, 1, s2.tr, s2.join))) return false;
     commit(pts, [s1.tr, s2.tr], [s1.join, s2.join], plan);
     return true;
   };
