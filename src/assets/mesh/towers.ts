@@ -100,7 +100,7 @@ export function tower(b: MeshBuilder, o: TowerOpts): void {
     for (const s of faces) {
       const f: Pose = { ...s.f, o: [s.f.o[0], y + lift, s.f.o[2]] };
       const cw = o.corners && !cut ? o.corners : 0;
-      wall(b, skin, move(f, cw, 0, 0), s.w - 2 * cw, h, [], cw ? 0 : (Math.round(s.w / bay) % 2) * 0, 0);
+      wall(b, skin, move(f, cw, 0, 0), s.w - 2 * cw, h, []);
       if (cw) {
         wall(b, o.base, f, cw, h, [], 0, lift);
         wall(b, o.base, move(f, s.w - cw, 0, 0), cw, h, [], s.w - cw, lift);
@@ -159,7 +159,6 @@ export function tower(b: MeshBuilder, o: TowerOpts): void {
     const [x0, x1, z0, z1] = [cx - w / 2 + 0.3, cx + w / 2 - 0.3, cz - d / 2 + 0.3, cz + d / 2 - 0.3];
     const sk = o.tiers[o.tiers.length - 1].skin ?? o.skin;
     const len = Math.hypot(x1 - x0, hh);
-    b.quad(sk, [x0, y, z1], [x1, y, z1], [x1, y + hh, z1], [x0, y + hh, z1], [[0, 0], [x1 - x0, 0], [x1 - x0, hh], [0, hh]]);
     b.tri(sk, [x0, y, z1], [x1, y, z1], [x1, y + hh, z1], [[0, 0], [x1 - x0, 0], [x1 - x0, hh]]);
     b.tri(sk, [x1, y, z0], [x0, y, z0], [x1, y + hh, z0], [[0, 0], [x1 - x0, 0], [0, hh]]);
     b.quad(sk, [x1, y, z1], [x1, y, z0], [x1, y + hh, z0], [x1, y + hh, z1], [[0, 0], [z1 - z0, 0], [z1 - z0, hh], [0, hh]]);
@@ -182,8 +181,7 @@ export function carPark(b: MeshBuilder, o: { seed: number; w: number; d: number;
     const y = i * fh;
     if (i > 0) box(b, o.column, f0, [0, y - 0.2, 0], [w / 2 - 0.1, 0.2, d / 2 - 0.1]);
     if (i > 0) for (const s of sides(0, 0, w, d, y - 0.45)) {
-      const open = i === 1 && s === undefined;
-      if (!open) box(b, o.panel, s.f, [s.w / 2, 0.8, -0.08], [s.w / 2, 0.8, 0.09]);
+      box(b, o.panel, s.f, [s.w / 2, 0.8, -0.08], [s.w / 2, 0.8, 0.09]);
     }
   }
   const [nx, nz] = [Math.max(2, Math.round(w / 8)), Math.max(2, Math.round(d / 8))];
@@ -196,7 +194,7 @@ export function carPark(b: MeshBuilder, o: { seed: number; w: number; d: number;
   const top = levels * fh;
   b.quad('roof/deck-parking', [-w / 2 + 0.2, top + 0.01, d / 2 - 0.2], [w / 2 - 0.2, top + 0.01, d / 2 - 0.2], [w / 2 - 0.2, top + 0.01, -d / 2 + 0.2], [-w / 2 + 0.2, top + 0.01, -d / 2 + 0.2], [[0, 0], [w, 0], [w, d], [0, d]]);
   const sx = w / 2 - 2.2;
-  for (const s of sides(sx, d / 2 - 1.6, 4, 5.4)) wall(b, o.stair, s.f, s.w, top + 3, s === undefined ? [] : []);
+  for (const s of sides(sx, d / 2 - 1.6, 4, 5.4)) wall(b, o.stair, s.f, s.w, top + 3);
   flatRoof(b, sx, d / 2 - 1.6, 4, 5.4, top + 3, { mat: 'roof/flat-concrete', inner: o.stair });
   bulkhead(b, stand([-w / 2 + 3, top, -d / 2 + 3.5]), 3, 3.6, 2.6, o.stair);
   if (o.sign) blade(b, stand([sx - 2.6, top - 1.2, d / 2]), 'trim/blade-parking', 1.6, 0.4);
@@ -240,7 +238,7 @@ export function addTowers(): void {
     ['blue', 'stone-limestone', 'grey', [{ bx: 32, bz: 20, floors: 3, skin: C('clear') }, { bx: 14, bz: 14, floors: 30, ox: 6 }], 'slope'],
     ['teal', 'metal-panel-white', 'white', [{ bx: 18, bz: 18, floors: 20, chamfer: 2 }, { bx: 12, bz: 12, floors: 10, oz: -3 }], 'mast'],
     ['gold', 'stone-granite-black', 'black', [{ bx: 16, bz: 16, floors: 18, chamfer: 4 }], 'mech'],
-    ['grey-panel', 'concrete-panel', 'grey', [{ bx: 24, bz: 16, floors: 5 }, { bx: 12, bz: 16, floors: 14, ox: -6 }, { bx: 12, bz: 16, floors: 9, ox: 6 }], 'plant'],
+    ['grey-panel', 'concrete-panel', 'grey', [{ bx: 24, bz: 16, floors: 5 }, { bx: 12, bz: 16, floors: 14, ox: -6 }, { bx: 8, bz: 12, floors: 9, ox: -6 }], 'plant'],
     ['copper', 'stone-travertine', 'bronze', [{ bx: 20, bz: 14, floors: 12, chamfer: 2 }, { bx: 14, bz: 10, floors: 16, oz: -2, chamfer: 2 }], 'slope'],
   ];
   STEP.forEach(([sk, base, tr, tiers, crown], i) => office(`setback-${i + 1}`, `段状・基壇つきの高層ビル ${i + 1}`, {
