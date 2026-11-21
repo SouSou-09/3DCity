@@ -86,8 +86,8 @@ function basket(b: MeshBuilder, f: Pose, y: number, side: number, tex: string, f
   pipe(b, tex, sweep(f, [side * 0.05, y, 0], side * 0.55, 0.25), 0.012, 6);
   const g = move(f, side * 0.6, y - 0.2, 0);
   for (let i = 0; i < 3; i++) b.tube(tex, at(g, 0, 0.45, 0), at(g, 0.2 * Math.cos(i * 2.1), 0, 0.2 * Math.sin(i * 2.1)), 0.004, 4);
-  lathe(b, F('coat-brown'), g, [[0, -0.2], [0.12, -0.17], [0.21, -0.02], [0.22, 0]], 10);
-  ball(b, F(flowers), g, 0.02, 0.24, 10, 0.75, 0.4, 1);
+  lathe(b, F('coat-brown'), g, [[0, -0.14], [0.12, -0.12], [0.2, -0.02], [0.21, 0]], 10);
+  ball(b, F(flowers), g, 0.04, 0.3, 10, 0.7, 0.35, 1);
 }
 type Top = 'globe' | 'acorn' | 'lantern' | 'disc';
 /** Post-top lamp standing on the pose. */
