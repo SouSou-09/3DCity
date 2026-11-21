@@ -5,9 +5,10 @@ import { Section, edgeElement, layout, reversed, stamp, sweepSection } from './s
 import { addSidewalks } from './sidewalks';
 import { addSignals } from './signals';
 import { addSigns } from './signs';
+import { addFurniture } from './furniture';
 import { addStructures } from './structures';
 
-export type ModelCategory = 'segment' | 'highway' | 'slope' | 'curve' | 'junction' | 'roundabout' | 'sidewalk' | 'bridge' | 'elevated' | 'signal' | 'sign';
+export type ModelCategory = 'segment' | 'highway' | 'slope' | 'curve' | 'junction' | 'roundabout' | 'sidewalk' | 'bridge' | 'elevated' | 'signal' | 'sign' | 'furniture';
 export const MODEL_CATEGORIES: [ModelCategory, string][] = [
   ['segment', '道路区間'],
   ['highway', '高速道路・ランプ'],
@@ -19,7 +20,7 @@ export const MODEL_CATEGORIES: [ModelCategory, string][] = [
   ['bridge', '橋'],
   ['elevated', '高架・立体交差'],
   ['signal', '信号機'],
-  ['sign', '標識・工事用品'],
+  ['sign', '標識・工事用品'], ['furniture', '歩道設備'],
 ];
 
 export interface ModelSpec {
@@ -281,5 +282,6 @@ addSidewalks();
 addStructures();
 addSignals();
 addSigns();
+addFurniture();
 
 export const MODELS: readonly ModelSpec[] = models;

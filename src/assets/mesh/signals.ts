@@ -213,7 +213,7 @@ function button(b: MeshBuilder, f: Pose, r: number, y = 1.07, sign = 'sign/ped-b
 
 export type Lamp = 'cobra' | 'cobra-on' | 'led' | 'led-on' | 'shoebox' | 'shoebox-on';
 /** Street light fitting whose neck is at the pose's origin, reaching along -x and lighting downwards. */
-function fitting(b: MeshBuilder, f: Pose, kind: Lamp, tex: string): void {
+export function fitting(b: MeshBuilder, f: Pose, kind: Lamp, tex: string): void {
   const on = kind.endsWith('-on');
   const down: Pose = { o: f.o, x: f.x, y: f.z, z: [-f.y[0], -f.y[1], -f.y[2]] };
   if (kind.startsWith('cobra')) {
@@ -230,7 +230,7 @@ function fitting(b: MeshBuilder, f: Pose, kind: Lamp, tex: string): void {
   }
 }
 /** Street light arm from a pole top (pose origin) reaching `len` along -x. */
-function luminaire(b: MeshBuilder, f: Pose, len: number, kind: Lamp, tex: string, rise = 0.5): void {
+export function luminaire(b: MeshBuilder, f: Pose, len: number, kind: Lamp, tex: string, rise = 0.5): void {
   const pts: V3[] = [];
   for (let i = 0; i <= 10; i++) {
     const q = i / 10;
