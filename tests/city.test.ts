@@ -1,10 +1,14 @@
 import { describe, expect, it, vi } from 'vitest';
 import { SegmentIndex, pointSeg, segSeg } from '../src/core/geom';
-import { angleDiff } from '../src/core/vec2';
+import { angleDiff, clamp, dist, mix } from '../src/core/vec2';
 import { City, DEFAULT_CONFIG, generateCity } from '../src/gen/city';
+import { LAND_USES, LandUse, Site, useWeights } from '../src/gen/landuse';
+import { STREET_CLEARANCE } from '../src/gen/roadHeights';
+import { profileWidth } from '../src/gen/roadSections';
+import { EDGE_STUB, RoadModel, buildRoadModel } from '../src/place/roadModel';
 import { RAIL_MAX_GRADE, RAIL_MIN_RADIUS, RAIL_STEP, RailIndex, sharpestRailTurn } from '../src/gen/rail';
 import { isStreet } from '../src/gen/streamlines';
-import { REF_SIZE, isWater, seaDistAt } from '../src/gen/terrain';
+import { REF_SIZE, inBounds, isWater, seaDistAt, waterDistAt } from '../src/gen/terrain';
 
 const SEEDS = [1, 2, 3, 4, 5, 6, 7, 8, 16, 21];
 // Generating a full-size city takes several seconds.
@@ -38,6 +42,9 @@ describe('city generation', () => {
     expect(a.graph.edges).toEqual(b.graph.edges);
     expect(a.rail).toEqual(b.rail);
     expect(a.railCrossings).toEqual(b.railCrossings);
+    expect(a.stations).toEqual(b.stations);
+    expect(a.land.lots).toEqual(b.land.lots);
+    expect(a.profiles).toEqual(b.profiles);
   });
 
   it('adds districts, parks, a tributary and a second freeway on a bigger map instead of stretching the small one', () => {
@@ -262,5 +269,258 @@ describe('city generation', () => {
       }
       expect(along).toBe(0);
     });
+  });
+});
+
+const site = (o: Partial<Site> = {}): Site => ({ type: 'residential', road: 'collector', roadWidth: 19, relief: 0.5, slope: 0.01, station: 2500, ramp: 300, centre: 300, access: 0.5, sea: 1500, river: 1500, nuisance: 600, park: 1500, majorJunction: 1500, ...o });
+/** Share of the given uses in the weights for a site. */
+function share(s: Site, uses: LandUse[], corner = false): number {
+  const w = useWeights(s, corner);
+  const total = LAND_USES.reduce((sum, u) => sum + w[u], 0);
+  return uses.reduce((sum, u) => sum + w[u], 0) / total;
+}
+
+describe('land use', () => {
+  it('gets denser and more commercial towards a station', () => {
+    const dense: LandUse[] = ['C2', 'R3', 'O1', 'C1'];
+    expect(share(site({ station: 120 }), dense)).toBeGreaterThan(3 * share(site({ station: 400 }), dense));
+    expect(share(site({ station: 120 }), ['R1'])).toBeLessThan(share(site({ station: 400 }), ['R1']));
+    expect(share(site({ station: 400 }), ['R1'])).toBeLessThan(share(site(), ['R1']) * 0.5);
+    expect(share(site({ station: 400 }), ['R2', 'R3'])).toBeGreaterThan(share(site(), ['R2', 'R3']));
+  });
+
+  it('puts trade on wide roads and houses on narrow ones', () => {
+    const trade: LandUse[] = ['C1', 'C2', 'C3', 'C4'];
+    const wide = site({ road: 'arterial', roadWidth: 28 });
+    const narrow = site({ road: 'local', roadWidth: 15 });
+    expect(share(wide, trade)).toBeGreaterThan(share(site(), trade));
+    expect(share(site(), trade)).toBeGreaterThan(share(narrow, trade));
+    expect(share(narrow, ['R1'])).toBeGreaterThan(share(wide, ['R1']) * 2);
+    expect(share(site({ road: 'arterial', roadWidth: 28, ramp: 20 }), ['C3', 'C4'])).toBeGreaterThan(share(wide, ['C3', 'C4']));
+  });
+
+  it('keeps buildings off steep ground', () => {
+    const total = (s: Site) => LAND_USES.reduce((sum, u) => sum + useWeights(s)[u], 0);
+    expect(total(site({ slope: 0.13 }))).toBe(0);
+    expect(total(site({ relief: 7 }))).toBe(0);
+    const sloping = useWeights(site({ slope: 0.1 }));
+    expect(sloping.R1).toBeGreaterThan(0);
+    for (const u of LAND_USES) if (u !== 'R1') expect(sloping[u]).toBe(0);
+    expect(useWeights(site({ type: 'hills', slope: 0.13, road: 'local' })).R1).toBeGreaterThan(0);
+  });
+
+  it.each(SEEDS)('seed %i: stations sit on the main line, apart from each other, with one in the centre', (seed) => {
+    const c = city(seed);
+    expect(c.stations.length).toBeGreaterThanOrEqual(2);
+    expect(c.stations.filter((s) => s.kind === 'central').length).toBe(1);
+    const main = c.rail.lines[0];
+    c.stations.forEach((s, i) => {
+      expect(s.line).toBe(0);
+      expect(dist(s, main.points[s.index])).toBeLessThan(1);
+      expect(inBounds(c.terrain, s.x, s.y, 60)).toBe(true);
+      expect(main.structure[s.index]).not.toBe('tunnel');
+      expect(main.structure[s.index]).not.toBe('bridge');
+      if (i > 0) expect(dist(s, c.stations[i - 1])).toBeGreaterThan(600);
+    });
+  });
+
+  it.each(SEEDS)('seed %i: lots front a street, on dry land, clear of the freeway and the tracks', (seed) => {
+    const c = city(seed);
+    const { lots, grid, cell, n } = c.land;
+    expect(lots.length).toBeGreaterThan(1500 * AREA);
+    const cells = new Int32Array(lots.length);
+    for (const v of grid) if (v > 0) cells[v - 1]++;
+    const freeway = c.graph.edges.filter((e) => e.cls === 'highway');
+    const bad = { id: 0, use: 0, small: 0, cells: 0, outside: 0, wet: 0, front: 0, freeway: 0 };
+    lots.forEach((l, i) => {
+      if (l.id !== i) bad.id++;
+      if (!LAND_USES.includes(l.use)) bad.use++;
+      if (!(l.area > 20)) bad.small++;
+      // Each lot owns cells of the plan's grid: no two lots share ground.
+      if (!cells[i]) bad.cells++;
+      const m = { x: l.poly.reduce((s, p) => s + p.x, 0) / l.poly.length, y: l.poly.reduce((s, p) => s + p.y, 0) / l.poly.length };
+      if (!inBounds(c.terrain, m.x, m.y)) bad.outside++;
+      if (!(waterDistAt(c.terrain, m.x, m.y) > 0)) bad.wet++;
+      const e = c.graph.edges[l.edge];
+      if (e.cls === 'highway' || e.cls === 'ramp' || e.bridge) bad.front++;
+      if (freeway.some((f) => f.points.some((p, k) => k > 0 && pointSeg(m.x, m.y, f.points[k - 1], p).d < 16))) bad.freeway++;
+    });
+    expect(bad).toEqual({ id: 0, use: 0, small: 0, cells: 0, outside: 0, wet: 0, front: 0, freeway: 0 });
+    expect(grid.length).toBe(n * n);
+    expect(cell).toBeGreaterThan(0);
+    let onTrack = 0;
+    for (const line of c.rail.lines) {
+      line.points.forEach((p, k) => {
+        if (line.structure[k] === 'ground' && inBounds(c.terrain, p.x, p.y, 2) && grid[Math.floor(p.y / cell) * n + Math.floor(p.x / cell)] !== 0) onTrack++;
+      });
+    }
+    expect(onTrack).toBe(0);
+  });
+
+  it('builds denser around the stations than far from them', () => {
+    const near = { dense: 0, houses: 0, all: 0 };
+    const far = { dense: 0, houses: 0, all: 0 };
+    for (const seed of SEEDS) {
+      for (const l of city(seed).land.lots) {
+        const t = l.site.station < 250 ? near : l.site.station > 800 ? far : null;
+        if (!t) continue;
+        t.all += l.area;
+        if (l.use === 'R1') t.houses += l.area;
+        if (l.use === 'C2' || l.use === 'R3' || l.use === 'O1' || l.use === 'O2') t.dense += l.area;
+      }
+    }
+    expect(near.all).toBeGreaterThan(0);
+    expect(near.dense / near.all).toBeGreaterThan(3 * (far.dense / far.all));
+    expect(near.houses / near.all).toBeLessThan(0.3 * (far.houses / far.all));
+  });
+
+  it.each(SEEDS)('seed %i: every road gets a cross-section that fits its right of way', (seed) => {
+    const c = city(seed);
+    expect(c.profiles.length).toBe(c.graph.edges.length);
+    const wrong = c.graph.edges.filter((e) => {
+      const p = c.profiles[e.id];
+      if (isStreet(e.cls) && profileWidth(p) > p.row + 0.01) return true;
+      return (e.cls === 'highway' && p.lanes !== 3) || (e.cls === 'path' && p.lanes !== 0) || (p.type === 'hills' && p.parking !== 0);
+    });
+    expect(wrong.map((e) => e.id)).toEqual([]);
+    // Main roads carry more lanes than side streets, and shopping streets have wider pavements than housing streets.
+    const mean = (xs: number[]) => xs.reduce((s, v) => s + v, 0) / (xs.length || 1);
+    const lanes = (cls: string) => mean(c.graph.edges.filter((e) => e.cls === cls).map((e) => c.profiles[e.id].lanes * (c.profiles[e.id].oneWay ? 1 : 2)));
+    expect(lanes('arterial')).toBeGreaterThan(lanes('local') + 1);
+    const walk = (f: (p: (typeof c.profiles)[number]) => boolean) => mean(c.graph.edges.filter((e) => (e.cls === 'collector' || e.cls === 'local') && f(c.profiles[e.id])).map((e) => c.profiles[e.id].walk));
+    expect(walk((p) => p.trade > 0.5)).toBeGreaterThan(walk((p) => p.homes > 0.8));
+  });
+});
+
+const MODEL_SEEDS = [1, 2, 3, 7, 16];
+const models = new Map<number, RoadModel>();
+const model = (seed: number): RoadModel => {
+  let m = models.get(seed);
+  if (!m) models.set(seed, (m = buildRoadModel(city(seed))));
+  return m;
+};
+
+describe('roads in 3D', () => {
+  it('is deterministic', () => {
+    const a = model(3);
+    const b = buildRoadModel(city(3));
+    expect(b.stats).toEqual(a.stats);
+    expect(b.lines).toEqual(a.lines);
+    expect(b.tiles[0].parts[0].positions).toEqual(a.tiles[0].parts[0].positions);
+  });
+
+  it.each(MODEL_SEEDS)('seed %i: builds nearly every road, with finite geometry', (seed) => {
+    const c = city(seed);
+    const m = model(seed);
+    expect(m.stats.triangles).toBeGreaterThan(100000);
+    for (const t of m.tiles) for (const p of t.parts) for (const v of p.positions) if (!Number.isFinite(v)) throw new Error(`bad vertex in ${p.material}`);
+    const total = c.graph.edges.reduce((s, e) => s + e.length, 0);
+    const missing = c.graph.edges.filter((e) => !m.lines[e.id]);
+    // Short links between two overlapping junctions become part of the junction; nothing long may go missing.
+    expect(missing.reduce((s, e) => s + e.length, 0)).toBeLessThan(0.006 * total);
+    for (const e of missing) expect(e.length).toBeLessThan(90);
+    expect(missing.filter((e) => e.cls === 'ramp' && e.length > 40)).toEqual([]);
+    for (const e of c.graph.edges) if (e.cls === 'highway') expect(m.lines[e.id]).not.toBeNull();
+    expect(m.stats.signals).toBeGreaterThan(20);
+    expect(m.stats.piers).toBeGreaterThan(50);
+  });
+
+  it.each(MODEL_SEEDS)('seed %i: roads meet their junctions without a step', (seed) => {
+    const c = city(seed);
+    const m = model(seed);
+    for (const j of m.junctions) {
+      for (const a of j.arms) {
+        const line = m.lines[a.edge];
+        if (!line || !Number.isFinite(a.reach)) continue;
+        const p = a.end === 0 ? line[0] : line[line.length - 1];
+        const x = j.x + a.dir.x * a.reach;
+        const y = j.y + a.dir.y * a.reach;
+        expect(Math.hypot(p[0] - x, p[2] - y)).toBeLessThan(0.01);
+        expect(p[1]).toBeCloseTo(j.plane.h + j.plane.gx * (x - j.x) + j.plane.gy * (y - j.y), 2);
+      }
+    }
+    // Streets are not built steeper than a street can be, bar a few metres on the worst hillsides.
+    let all = 0;
+    let steep = 0;
+    for (const e of c.graph.edges) {
+      const line = m.lines[e.id];
+      if (!line || e.cls === 'highway' || e.cls === 'ramp') continue;
+      for (let i = 1; i < line.length; i++) {
+        const run = Math.hypot(line[i][0] - line[i - 1][0], line[i][2] - line[i - 1][2]);
+        all += run;
+        if (run > 0.5 && Math.abs(line[i][1] - line[i - 1][1]) / run > 0.2) steep += run;
+      }
+    }
+    expect(steep).toBeLessThan(0.004 * all);
+  });
+
+  it.each(MODEL_SEEDS)('seed %i: the ground is graded to the streets', (seed) => {
+    const c = city(seed);
+    const m = model(seed);
+    const t = c.terrain;
+    const ground = (x: number, y: number): number => {
+      const fx = clamp(x / t.cell, 0, t.n - 1.001);
+      const fy = clamp(y / t.cell, 0, t.n - 1.001);
+      const [i, j] = [Math.floor(fx), Math.floor(fy)];
+      const [u, v] = [fx - i, fy - j];
+      const g = m.ground;
+      return (g[j * t.n + i] * (1 - u) + g[j * t.n + i + 1] * u) * (1 - v) + (g[(j + 1) * t.n + i] * (1 - u) + g[(j + 1) * t.n + i + 1] * u) * v;
+    };
+    let samples = 0;
+    let above = 0;
+    let below = 0;
+    let buried = 0;
+    for (const e of c.graph.edges) {
+      const line = m.lines[e.id];
+      if (!line || e.cls === 'highway' || e.cls === 'ramp' || e.bridge) continue;
+      for (let i = 1; i < line.length; i++) {
+        for (const q of [0.25, 0.75]) {
+          const x = mix(line[i - 1][0], line[i][0], q);
+          const y = mix(line[i - 1][2], line[i][2], q);
+          if (!inBounds(t, x, y, 12)) continue;
+          const d = ground(x, y) - mix(line[i - 1][1], line[i][1], q);
+          samples++;
+          if (d > 0.5) buried++;
+          if (d > 0.05) above++;
+          if (d < -0.8) below++;
+        }
+      }
+    }
+    // The ground does not cover the road, and the road does not float. (Two roads that run side by side
+    // at different heights on a hillside share ground that can only match one of them.)
+    expect(buried).toBeLessThan(0.002 * samples);
+    expect(above).toBeLessThan(0.005 * samples);
+    expect(below).toBeLessThan(0.005 * samples);
+  });
+
+  it.each(MODEL_SEEDS)('seed %i: the freeway clears every street below it and runs on past the edge of the map', (seed) => {
+    const c = city(seed);
+    const m = model(seed);
+    const heightNear = (id: number, x: number, y: number): number => {
+      let best = Infinity;
+      let h = NaN;
+      for (const p of m.lines[id] ?? []) {
+        const d = Math.hypot(p[0] - x, p[2] - y);
+        if (d < best) [best, h] = [d, p[1]];
+      }
+      return h;
+    };
+    for (const x of c.graph.crossings) {
+      if (c.graph.edges[x.highway].cls !== 'highway' || !m.lines[x.street]) continue;
+      expect(heightNear(x.highway, x.x, x.y) - heightNear(x.street, x.x, x.y)).toBeGreaterThan(STREET_CLEARANCE - 0.5);
+    }
+    for (const e of c.graph.edges) {
+      if (e.cls !== 'highway') continue;
+      const lv = m.levels.edges[e.id];
+      expect(Math.min(...lv.h.map((h, i) => h - lv.ground[i]))).toBeGreaterThan(3);
+    }
+    const ends = c.graph.nodes.filter((n) => n.degree === 1 && c.graph.edges[n.edges[0]].cls === 'highway' && Math.min(n.x, n.y, c.terrain.size - n.x, c.terrain.size - n.y) < 3);
+    expect(ends.length).toBeGreaterThanOrEqual(2);
+    expect(m.cuts.length).toBe(ends.length);
+    for (const cut of m.cuts) {
+      const outside = Math.max(-cut.x, -cut.y, cut.x - c.terrain.size, cut.y - c.terrain.size);
+      expect(outside).toBeGreaterThan(EDGE_STUB * 0.5);
+      expect(outside).toBeLessThanOrEqual(EDGE_STUB + 3);
+    }
   });
 });

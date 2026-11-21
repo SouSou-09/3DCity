@@ -15,6 +15,8 @@ const TILE = 800;
 const AIM = 28;
 /** Longest edge that two overlapping junctions may swallow to become one. */
 const MERGE_MAX = 60;
+/** Smallest angle between two neighbouring arms of a junction. */
+const MIN_GAP = (34 * Math.PI) / 180;
 /** How far a freeway that leaves the map sticks out past its edge before it is cut off. */
 export const EDGE_STUB = 30;
 const RANK: Record<RoadClass, number> = { highway: 4, arterial: 3, collector: 2, ramp: 2, local: 1, alley: 0, path: 0 };
@@ -255,17 +257,41 @@ export function buildRoadModel(city: City): RoadModel {
       if (Math.hypot(p.x - c.x, p.y - c.y) > 0.5) a.dir = norm2(p.x - c.x, p.y - c.y);
       return !!hit;
     };
+    // Roads that leave side by side would need a very long junction: fan them out, the lesser road giving way.
+    const spread = (): void => {
+      const gapMin = Math.min(MIN_GAP, (Math.PI * 1.8) / n);
+      const ang = c.arms.map((a) => Math.atan2(a.dir.y, a.dir.x));
+      for (let it = 0; it < 8; it++) {
+        const idx = ang.map((_, i) => i).sort((p, q) => ang[p] - ang[q]);
+        let moved = false;
+        for (let k = 0; k < n; k++) {
+          const i = idx[k];
+          const j = idx[(k + 1) % n];
+          const gap = ang[j] - ang[i] + (k === n - 1 ? Math.PI * 2 : 0);
+          if (i === j || gap >= gapMin) continue;
+          const need = gapMin - gap + 0.01;
+          const wi = rank[i] < rank[j] ? 1 : rank[i] > rank[j] ? 0 : 0.5;
+          ang[i] -= need * wi;
+          ang[j] += need * (1 - wi);
+          moved = true;
+        }
+        if (!moved) break;
+      }
+      c.arms.forEach((a, i) => (a.dir = { x: Math.cos(ang[i]), y: Math.sin(ang[i]) }));
+    };
     // Aim each arm at a point a little way out, past the member node it starts from.
     const start = c.arms.map((a) => {
       const p = out(a.edge, a.end)[0];
       return Math.hypot(p.x - c.x, p.y - c.y);
     });
     c.arms.forEach((a, i) => aim(i, start[i] + Math.min(12, 0.45 * graph.edges[a.edge].length)));
+    spread();
     const first = armReach(arms(), c.radius);
     const target = first.map((l, i) => l + approach[i]);
     c.arms.forEach((a, i) => {
       if (!aim(i, Math.max(start[i] + 4, Math.min(target[i], AIM)))) a.reach = Infinity;
     });
+    spread();
     const jarms = arms();
     const second = armReach(jarms, c.radius);
     c.arms.forEach((a, i) => {
@@ -282,7 +308,9 @@ export function buildRoadModel(city: City): RoadModel {
     const p = { x: c.x + a.dir.x * a.reach, y: c.y + a.dir.y * a.reach };
     const on = chordPoint(pts, c, a.reach);
     if (!on) return null;
-    const hit = chordPoint(pts, c, a.reach + 1.5 + 2.5 * Math.hypot(on.p.x - p.x, on.p.y - p.y));
+    // On a road that curves away quickly, settle for a sharper swing rather than no road at all.
+    const off = Math.hypot(on.p.x - p.x, on.p.y - p.y);
+    const hit = chordPoint(pts, c, a.reach + 1.5 + 2.5 * off) ?? chordPoint(pts, c, a.reach + 1.5 + off) ?? chordPoint(pts, c, a.reach + 1.5);
     return hit ? { p, i: hit.i } : null;
   };
 
@@ -478,6 +506,9 @@ export function buildRoadModel(city: City): RoadModel {
       while (i1 > i0 + 1 && near[i1][1]!.d < hp - hc + 0.6) i1--;
     } else if (!sp.p1) i1 = n - 1;
 
+    // A ramp that is still beside the freeway where its street junction begins keeps at least a stub.
+    if (child[0] && i0 > i1) i0 = Math.max(0, i1);
+    if (child[1] && i1 < i0) i1 = Math.min(n - 1, i0);
     const a = armOf[id * 2];
     const b = armOf[id * 2 + 1];
     const ca = clusterOf[id * 2];
@@ -510,7 +541,10 @@ export function buildRoadModel(city: City): RoadModel {
       ([[e.a, 0], [e.b, 1]] as const).forEach(([node, end]) => {
         const nd = graph.nodes[node];
         if (nd.degree !== 1 || Math.min(nd.x, nd.y, t.size - nd.x, t.size - nd.y) > 3) return;
-        const tg = end === 0 ? { x: -tan[0].x, y: -tan[0].y } : tan[tan.length - 1];
+        let tg = end === 0 ? { x: -tan[0].x, y: -tan[0].y } : tan[tan.length - 1];
+        // A route that meets the edge of the map at a shallow angle still has to leave it.
+        const outward = [{ x: -1, y: 0, d: nd.x }, { x: 1, y: 0, d: t.size - nd.x }, { x: 0, y: -1, d: nd.y }, { x: 0, y: 1, d: t.size - nd.y }].sort((p, q) => p.d - q.d)[0];
+        if (tg.x * outward.x + tg.y * outward.y < 0.75) tg = norm2(tg.x + outward.x * 1.5, tg.y + outward.y * 1.5);
         const from = end === 0 ? pts[0] : pts[pts.length - 1];
         const h = end === 0 ? base[0] : base[base.length - 1];
         const p = { x: from.x + tg.x * EDGE_STUB, y: from.y + tg.y * EDGE_STUB };
@@ -530,6 +564,10 @@ export function buildRoadModel(city: City): RoadModel {
       const ph = cl.plane.h + cl.plane.gx * (pts[k].x - cl.x) + cl.plane.gy * (pts[k].y - cl.y);
       return clamp(Math.max(20, Math.abs(ph - base[k]) / 0.05), 0.01, room * 0.5);
     });
+    // Distance along the road from its start, for easing out of the junction at either end.
+    const arc = [0];
+    for (let k = 1; k < pts.length; k++) arc.push(arc[k - 1] + Math.hypot(pts[k].x - pts[k - 1].x, pts[k].y - pts[k - 1].y));
+    const end = arc[arc.length - 1];
     const hs: number[] = [];
     const cross: number[] = [];
     pts.forEach((p, k) => {
@@ -537,13 +575,6 @@ export function buildRoadModel(city: City): RoadModel {
       let c = 0;
       const rx = -tan[k].y;
       const ry = tan[k].x;
-      for (const [arm, cl, blend] of [[a, ca, ease[0]], [b, cb, ease[1]]] as const) {
-        if (!arm || !cl) continue;
-        const w = smoothstep(arm.reach, arm.reach + blend, Math.hypot(p.x - cl.x, p.y - cl.y));
-        const ph = cl.plane.h + cl.plane.gx * (p.x - cl.x) + cl.plane.gy * (p.y - cl.y);
-        h = mix(ph, h, w);
-        c = mix(cl.plane.gx * rx + cl.plane.gy * ry, c, w);
-      }
       // Still on the freeway's deck: ride just above it.
       if (zone[k] >= 0) {
         near[zone[k]].forEach((nr) => {
@@ -552,6 +583,13 @@ export function buildRoadModel(city: City): RoadModel {
           if (e.cls === 'ramp') h += 0.03 * (1 - smoothstep(hp + hc, hp + hc + 6, nr.d));
           else h = mix(nr.h + 0.03, h, smoothstep(hp + hc, hp + hc + 26, nr.d));
         });
+      }
+      for (const [arm, cl, along] of [[a, ca, arc[k] / ease[0]], [b, cb, (end - arc[k]) / ease[1]]] as const) {
+        if (!arm || !cl) continue;
+        const w = smoothstep(0, 1, along);
+        const ph = cl.plane.h + cl.plane.gx * (p.x - cl.x) + cl.plane.gy * (p.y - cl.y);
+        h = mix(ph, h, w);
+        c = mix(cl.plane.gx * rx + cl.plane.gy * ry, c, w);
       }
       hs.push(h);
       cross.push(c);
