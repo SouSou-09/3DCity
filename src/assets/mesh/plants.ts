@@ -40,7 +40,7 @@ function head(b: MeshBuilder, tex: string, p: V3, normal: V3, scale: number, rnd
   const n = v3.norm(normal);
   const up = perp(n, rnd.next() * 6.283);
   const size = b.part(tex).mw * scale;
-  card(b, tex, p, up, v3.cross(n, up), size, size, true);
+  card(b, tex, p, up, v3.cross(n, up), size, size, true, n);
 }
 
 // --- Trees. ---
@@ -252,25 +252,25 @@ export function shrub(b: MeshBuilder, f: Pose, o: ShrubOpts): void {
   const s = o.card ?? Math.min(0.4, Math.max(0.22, o.r * 0.7));
   const [rc, hc] = [Math.max(o.r * 0.4, o.r - s * 0.6), Math.max(o.h * 0.4, o.h - s * 0.6)];
   const prof: [number, number][] = [];
-  for (let i = 0; i <= 6; i++) prof.push([Math.max(0, rc * 0.8 * Math.cos(-0.5 + (i / 6) * 2.07)), hc * 0.3 + hc * 0.66 * Math.sin(-0.5 + (i / 6) * 2.07)]);
-  lathe(b, T('foliage-core'), f, [[rc * 0.25, 0], ...prof], 10);
-  const n = Math.round(((12 * (o.r * o.r + 1.5 * o.r * o.h)) / (s * s)) * (o.dense ?? 1));
+  for (let i = 0; i <= 6; i++) prof.push([Math.max(0, rc * 0.66 * Math.cos(-0.3 + (i / 6) * 1.87)), hc * 0.2 + hc * 0.62 * Math.sin(-0.3 + (i / 6) * 1.87)]);
+  lathe(b, T('foliage-core'), f, [[rc * 0.4, 0], ...prof], 10);
+  const n = Math.round(((22 * (o.r * o.r + 1.5 * o.r * o.h)) / (s * s)) * (o.dense ?? 1));
   const spot = (i: number): [V3, V3] => {
-    const sy = -0.5 + 1.5 * Math.pow(rnd.next(), 0.8);
+    const sy = -0.3 + 1.3 * Math.pow(rnd.next(), 0.85);
     const cy = Math.sqrt(Math.max(0, 1 - sy * sy));
     const a = i * GOLDEN + rnd.next() * 0.5;
-    return [dirOf(f, cy * Math.cos(a), sy, cy * Math.sin(a)), at(f, cy * Math.cos(a) * rc, hc * 0.3 + sy * hc * 0.68, cy * Math.sin(a) * rc)];
+    return [dirOf(f, cy * Math.cos(a), sy, cy * Math.sin(a)), at(f, cy * Math.cos(a) * rc, hc * 0.24 + sy * hc * 0.74, cy * Math.sin(a) * rc)];
   };
   for (let i = 0; i < n; i++) {
     const [nrm, p] = spot(i);
     const along = perp(nrm, rnd.next() * 6.283);
     const up = v3.norm([along[0] + nrm[0] * (0.25 + rnd.next() * 0.7), along[1] + 0.5 + nrm[1] * (0.25 + rnd.next() * 0.7), along[2] + nrm[2] * (0.25 + rnd.next() * 0.7)]);
-    card(b, T(o.leaf), v3.mad(v3.mad(p, up, -s * 0.5), nrm, s * 0.08), up, v3.cross(nrm, up), s, s, false, v3.norm([nrm[0] + (rnd.next() - 0.5) * 0.5, nrm[1] + 0.35 + (rnd.next() - 0.5) * 0.4, nrm[2] + (rnd.next() - 0.5) * 0.5]));
+    card(b, T(o.leaf), v3.mad(v3.mad(p, up, -s * 0.5), nrm, i % 3 ? s * 0.08 : -s * 0.22), up, v3.cross(nrm, up), s, s, false, v3.norm([nrm[0] + (rnd.next() - 0.5) * 0.5, nrm[1] + 0.35 + (rnd.next() - 0.5) * 0.4, nrm[2] + (rnd.next() - 0.5) * 0.5]));
   }
-  const blooms = o.flowers ? Math.round(n * (o.bloom ?? 0.5) * 0.45) : 0;
+  const blooms = o.flowers ? Math.round(n * (o.bloom ?? 0.5) * 0.25) : 0;
   for (let i = 0; i < blooms; i++) {
     const [nrm, p] = spot(i + 0.5);
-    head(b, T(o.flowers![i % o.flowers!.length]), v3.mad(p, nrm, s * (0.45 + rnd.next() * 0.25)), v3.norm([nrm[0] + (rnd.next() - 0.5) * 0.5, nrm[1] + 0.3, nrm[2] + (rnd.next() - 0.5) * 0.5]), (o.flowerScale ?? 1) * (0.8 + rnd.next() * 0.4), rnd);
+    head(b, T(o.flowers![i % o.flowers!.length]), v3.mad(p, nrm, s * (0.2 + rnd.next() * 0.12)), v3.norm([nrm[0] + (rnd.next() - 0.5) * 0.5, nrm[1] + 0.3, nrm[2] + (rnd.next() - 0.5) * 0.5]), (o.flowerScale ?? 1) * (0.8 + rnd.next() * 0.4), rnd);
   }
 }
 export interface HedgeOpts {
@@ -288,15 +288,16 @@ export function hedge(b: MeshBuilder, f: Pose, o: HedgeOpts): void {
   const rnd = new Rand(o.seed);
   const s = o.card ?? 0.3;
   const m = s * 0.35;
-  box(b, T('foliage-core'), f, [0, (o.h - m) / 2, 0], [o.len / 2 - m, (o.h - m) / 2, o.w / 2 - m], 'Y');
+  const ci = Math.min(s * 0.75, o.w * 0.3);
+  box(b, T('foliage-core'), f, [0, (o.h - ci) / 2, 0], [o.len / 2 - ci, (o.h - ci) / 2, o.w / 2 - ci], 'Y');
   const faces: [V3, V3, V3, number, number][] = [
     [[0, 1, 0], [1, 0, 0], [0, 0, 1], o.len, o.w], [[0, 0, 1], [1, 0, 0], [0, 1, 0], o.len, o.h], [[0, 0, -1], [1, 0, 0], [0, 1, 0], o.len, o.h],
     [[1, 0, 0], [0, 0, 1], [0, 1, 0], o.w, o.h], [[-1, 0, 0], [0, 0, 1], [0, 1, 0], o.w, o.h],
   ];
   for (const [nl, ul, vl, a, c] of faces) {
-    const count = Math.round(((a * c) / (s * s)) * 6 * (o.dense ?? 1));
+    const count = Math.round(((a * c) / (s * s)) * 8 * (o.dense ?? 1));
     for (let i = 0; i < count; i++) {
-      const [u, v] = [(rnd.next() - 0.5) * (a - m * 2), nl[1] ? (rnd.next() - 0.5) * (c - m * 2) : m + rnd.next() * (c - m * 2)];
+      const [u, v] = [(rnd.next() - 0.5) * (a - m * 2), nl[1] ? (rnd.next() - 0.5) * (c - m * 2) : rnd.next() * (c - m * 1.5)];
       const centreY = nl[1] ? o.h - m : 0;
       const local: V3 = [ul[0] * u + vl[0] * v + nl[0] * (o.len / 2 - m), centreY + ul[1] * u + vl[1] * v, ul[2] * u + vl[2] * v + nl[2] * (o.w / 2 - m)];
       const p = at(f, local[0], local[1], local[2]);
@@ -304,8 +305,8 @@ export function hedge(b: MeshBuilder, f: Pose, o: HedgeOpts): void {
       const along = perp(nw, rnd.next() * 6.283);
       const k = 0.2 + rnd.next() * 0.6;
       const up = v3.norm([along[0] + nw[0] * k, along[1] + nw[1] * k + 0.3, along[2] + nw[2] * k]);
-      card(b, T(o.leaf), v3.mad(v3.mad(p, up, -s * 0.5), nw, s * 0.06), up, v3.cross(nw, up), s, s, false, dirOf(f, nl[0] + (rnd.next() - 0.5) * 0.5, nl[1] + 0.35 + (rnd.next() - 0.5) * 0.4, nl[2] + (rnd.next() - 0.5) * 0.5));
-      if (o.flowers && i % 8 === 0) head(b, T(o.flowers[(i / 8) % o.flowers.length]), v3.mad(p, dirOf(f, nl[0], nl[1], nl[2]), m * 1.05), dirOf(f, nl[0] + (rnd.next() - 0.5) * 0.4, nl[1] + 0.2, nl[2] + (rnd.next() - 0.5) * 0.4), 0.8 + rnd.next() * 0.4, rnd);
+      card(b, T(o.leaf), v3.mad(v3.mad(p, up, -s * 0.5), nw, i % 3 ? s * 0.06 : -s * 0.22), up, v3.cross(nw, up), s, s, false, dirOf(f, nl[0] + (rnd.next() - 0.5) * 0.5, nl[1] + 0.35 + (rnd.next() - 0.5) * 0.4, nl[2] + (rnd.next() - 0.5) * 0.5));
+      if (o.flowers && i % 11 === 0) head(b, T(o.flowers[(i / 11) % o.flowers.length]), v3.mad(p, nw, s * 0.2), dirOf(f, nl[0] + (rnd.next() - 0.5) * 0.5, nl[1] * 0.6 + 0.25, nl[2] + (rnd.next() - 0.5) * 0.5 + nl[1] * (rnd.next() - 0.5)), 0.8 + rnd.next() * 0.4, rnd);
     }
   }
 }
@@ -477,7 +478,7 @@ export function addPlants(): void {
     ['low', '生垣 低い 2m', { len: 2, w: 0.5, h: 0.6, leaf: 'leaf-small' }],
     ['tall', '生垣 高い 3m', { len: 3, w: 0.7, h: 1.6, leaf: 'leaf-small' }],
     ['light', '生垣 若葉 3m', { len: 3, w: 0.6, h: 1.0, leaf: 'leaf-small-light' }],
-    ['dry', '生垣 枯れ気味・すき間', { len: 3, w: 0.6, h: 0.9, leaf: 'leaf-small-dry', dense: 0.55 }],
+    ['dry', '生垣 枯れ気味・すき間', { len: 3, w: 0.6, h: 0.9, leaf: 'leaf-small-dry', dense: 0.75 }],
     ['hibiscus', '生垣 ハイビスカス', { len: 3, w: 0.8, h: 1.3, leaf: 'leaf-shrub', card: 0.4, flowers: ['flower-hibiscus-red', 'flower-hibiscus-pink'] }],
     ['broadleaf', '生垣 広葉 4m', { len: 4, w: 0.8, h: 1.2, leaf: 'leaf-shrub', card: 0.4 }],
   ];

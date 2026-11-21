@@ -521,9 +521,9 @@ add('foliage-core', '茂みの内側(不透明)', [0.5, 0.5], (tex, seed) => {
   tex.map((x, y, k) => {
     const cl = leaf(x, y);
     const m = (0.5 + cl.id * 0.5) * (0.55 + 0.45 * sstep(0, 0.25, cl.f2 - cl.f1)) * (0.8 + clump(x, y) * 0.3);
-    L.r[k] = 0.13 * m;
-    L.g[k] = 0.24 * m;
-    L.b[k] = 0.09 * m;
+    L.r[k] = 0.2 * m;
+    L.g[k] = 0.36 * m;
+    L.b[k] = 0.13 * m;
     L.height[k] = cl.id * 0.008;
     return 0;
   });
