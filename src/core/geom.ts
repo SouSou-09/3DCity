@@ -36,11 +36,13 @@ export function polyLength(pts: Vec2[]): number {
 /** Point and unit tangent at arc length s along a polyline (clamped). */
 export function pointAt(pts: Vec2[], s: number): { p: Vec2; tan: Vec2; seg: number } {
   let acc = 0;
+  let last = -1;
   for (let i = 1; i < pts.length; i++) {
     const a = pts[i - 1];
     const b = pts[i];
     const l = dist(a, b);
     if (l < 1e-9) continue;
+    last = i;
     if (s <= acc + l || i === pts.length - 1) {
       const t = Math.max(0, Math.min(1, (s - acc) / l));
       return {
@@ -50,6 +52,13 @@ export function pointAt(pts: Vec2[], s: number): { p: Vec2; tan: Vec2; seg: numb
       };
     }
     acc += l;
+  }
+  // Past the end of a line whose last points coincide: the end of its last real segment.
+  if (last > 0) {
+    const a = pts[last - 1];
+    const b = pts[last];
+    const l = dist(a, b);
+    return { p: { ...b }, tan: { x: (b.x - a.x) / l, y: (b.y - a.y) / l }, seg: last - 1 };
   }
   return { p: { ...pts[0] }, tan: { x: 1, y: 0 }, seg: 0 };
 }

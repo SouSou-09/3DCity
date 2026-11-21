@@ -15,3 +15,6 @@ body.mode3d #scene { display: block; }
 body.mode3d #map, body.mode3d #layers { display: none; }
 #panel button.active { font-weight: bold; }
 .hint a { color: #2a6fdb; }
+#legend { display: grid; grid-template-columns: 1fr 1fr; gap: 1px 6px; margin: 4px 0 6px; font-size: 11px; }
+#legend i { display: inline-block; width: 10px; height: 10px; margin-right: 4px; border: 1px solid rgba(0, 0, 0, 0.3); vertical-align: -1px; }
+body.mode3d #legend { display: none; }
