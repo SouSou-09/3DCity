@@ -10,6 +10,7 @@ import { addPlants } from './plants';
 import { addHouses } from './houses';
 import { addBlocks } from './blocks';
 import { addTowers } from './towers';
+import { addWorks } from './works';
 import { addStructures } from './structures';
 
 export type ModelCategory = 'segment' | 'highway' | 'slope' | 'curve' | 'junction' | 'roundabout' | 'sidewalk' | 'bridge' | 'elevated' | 'signal' | 'sign' | 'furniture' | 'plant' | 'house' | 'apartment' | 'shop' | 'office' | 'industrial' | 'buildpart';
@@ -292,5 +293,6 @@ addPlants();
 addHouses();
 addBlocks();
 addTowers();
+addWorks();
 
 export const MODELS: readonly ModelSpec[] = models;
