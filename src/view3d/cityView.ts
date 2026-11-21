@@ -91,6 +91,7 @@ export class CityView {
     this.content.traverse((o) => {
       if (o instanceof THREE.Mesh) {
         o.geometry.dispose();
+        if (o instanceof THREE.InstancedMesh) o.dispose();
         // Road materials are shared and cached; only the terrain and water own theirs.
         if (o.userData.ownMaterial) (o.material as THREE.Material).dispose();
       }
