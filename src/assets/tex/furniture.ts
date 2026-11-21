@@ -145,7 +145,7 @@ const COAT: [string, string, number, number][] = [
   ['teal', '青緑', 0x1f5e5c, 0], ['burgundy', 'えんじ', 0x6a1f26, 0], ['brown', '茶', 0x4a3324, 0], ['cream', 'クリーム', 0xcfc6a8, 0.05],
   ['bin-green', 'ゴミ箱の濃緑', 0x21402c, 0.1], ['bin-green-old', 'ゴミ箱の濃緑・錆', 0x2a4632, 0.5], ['dumpster-blue', '大型ゴミ箱の青・錆', 0x24457a, 0.4],
   ['transformer-green', '変圧器の緑', 0x3f5a45, 0.08], ['can-grey', '柱上変圧器の灰', 0x8c9091, 0.15], ['can-grey-old', '柱上変圧器の灰・錆', 0x868a88, 0.55],
-  ['stainless', 'ステンレス', 0, 0],
+  ['stainless', 'ステンレス', 0xb4b8bb, 0],
 ];
 for (const [id, name, c, rust] of COAT) {
   add(`coat-${id}`, `塗装鋼板 ${name}`, [1, 1], (t, s) => S.metal(t, { seed: s, ...(c ? { paint: hex(c) } : {}), rust, streaks: rust > 0.1 ? rust : 0 }), tiled);

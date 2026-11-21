@@ -433,7 +433,7 @@ function rubbish(b: MeshBuilder, f: Pose, y: number, r: number): void {
 }
 /** Tied refuse sack sitting on the ground. */
 function sack(b: MeshBuilder, f: Pose, r = 0.26): void {
-  ball(b, DARK, f, r * 0.78, r, 10, 0.78);
+  ball(b, DARK, f, r * 0.78, r, 14, 0.78);
   lathe(b, DARK, f, [[0.03, r * 1.5], [0.012, r * 1.57], [0.05, r * 1.7]], 6);
 }
 type BinKind = 'mesh' | 'post' | 'drum' | 'concrete' | 'hood' | 'dome' | 'solar' | 'slat';
@@ -512,7 +512,7 @@ function dumpster(b: MeshBuilder, f: Pose, tex: string, open = false): void {
   prism(b, tex, f, [[-0.75, 0.16], [0.72, 0.16], [0.9, 1.08], [-0.75, 1.36]], -1, 1);
   for (const s of [-1, 1]) {
     if (open && s === 1) {
-      prism(b, F('litter'), f, [[-0.72, 1.3], [0.86, 1.04], [0.86, 1.07], [-0.72, 1.33]], 0.03, 0.97);
+      prism(b, F('litter'), f, [[-0.72, 1.36], [0.87, 1.085], [0.87, 1.13], [-0.72, 1.41]], 0.03, 0.97);
       box(b, BLACK, f, [0.5, 0.92, -0.78], [0.5, 0.44, 0.02]);
     } else prism(b, BLACK, f, [[-0.78, 1.37], [0.94, 1.09], [0.94, 1.13], [-0.78, 1.41]], s === 1 ? 0.02 : -1.02, s === 1 ? 1.02 : -0.02);
   }
@@ -680,8 +680,8 @@ function bollard(b: MeshBuilder, f0: Pose, o: BollardOpts): number {
       ball(b, o.tex ?? 'concrete/walk-exposed', f, 0, 0.32, 14, 1, 0.5, 1);
       return 0.3;
     case 'sphere':
-      lathe(b, o.tex ?? 'concrete/walk-plain', f, [[0.17, 0], [0.19, 0.05], [0.12, 0.07]], 14);
-      ball(b, o.tex ?? 'concrete/walk-plain', f, 0.31, 0.27, 14);
+      lathe(b, o.tex ?? 'structure/wall-smooth', f, [[0.17, 0], [0.19, 0.05], [0.12, 0.07]], 14);
+      ball(b, o.tex ?? 'structure/wall-smooth', f, 0.31, 0.27, 14);
       return 0.5;
     case 'wood':
       lathe(b, o.tex ?? P('wood'), f, [[0.09, 0], [0.09, 0.72], [0.065, 0.8], [0, 0.8]], 8);
