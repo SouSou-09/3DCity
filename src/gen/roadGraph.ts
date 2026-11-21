@@ -135,7 +135,15 @@ function splitLines(lines: RoadLine[], g: Builder): void {
   const polys = lines.map((l) => ({ pts: simplify(l.points, 0.35), cls: l.cls }));
   const index = new SegmentIndex(50);
   polys.forEach((p, i) => index.addLine(i, p.pts));
-  const splits: { seg: number; t: number; x: number; y: number }[][] = polys.map(() => []);
+  // Cuts that belong to one junction share a Junction, so they all end up on the same node.
+  type Junction = { node: number };
+  const splits: { seg: number; t: number; x: number; y: number; j: Junction }[][] = polys.map(() => []);
+  const ends: (Junction | undefined)[][] = polys.map(() => [undefined, undefined]);
+  const nodeOf = (j: Junction | undefined, p: Vec2): number => {
+    if (!j) return g.nodeAt(p.x, p.y);
+    if (j.node < 0) j.node = g.nodeAt(p.x, p.y);
+    return j.node;
+  };
 
   polys.forEach((p, li) => {
     if (!isStreet(p.cls)) return;
@@ -147,8 +155,9 @@ function splitLines(lines: RoadLine[], g: Builder): void {
         if (!isStreet(polys[r.line].cls)) return;
         const h = segSeg(a, b, r.a, r.b);
         if (!h) return;
-        splits[li].push({ seg: si, t: h.t, x: h.x, y: h.y });
-        splits[r.line].push({ seg: r.seg, t: h.u, x: h.x, y: h.y });
+        const j = { node: -1 };
+        splits[li].push({ seg: si, t: h.t, x: h.x, y: h.y, j });
+        splits[r.line].push({ seg: r.seg, t: h.u, x: h.x, y: h.y, j });
       });
     }
   });
@@ -167,13 +176,15 @@ function splitLines(lines: RoadLine[], g: Builder): void {
       });
       // Snap onto the strongest road; the others get a cut that merges into the same node.
       let best = -1;
+      const j = { node: -1 };
       for (const [line, h] of hits) {
-        splits[line].push({ seg: h.seg, t: h.t, x: h.x, y: h.y });
+        splits[line].push({ seg: h.seg, t: h.t, x: h.x, y: h.y, j });
         if (best < 0 || CLASS_RANK[polys[line].cls] > CLASS_RANK[polys[best].cls]) best = line;
       }
       if (best >= 0) {
         const h = hits.get(best)!;
         p.pts[end] = { x: h.x, y: h.y };
+        ends[li][end === 0 ? 0 : 1] = j;
       }
     }
   });
@@ -182,25 +193,25 @@ function splitLines(lines: RoadLine[], g: Builder): void {
     const cuts = splits[li].sort((u, v) => u.seg - v.seg || u.t - v.t);
     let piece: Vec2[] = [p.pts[0]];
     let ci = 0;
-    const flush = (end: Vec2) => {
+    let a = nodeOf(ends[li][0], p.pts[0]);
+    const flush = (end: Vec2, b: number) => {
       piece.push(end);
-      const a = g.nodeAt(piece[0].x, piece[0].y);
-      const b = g.nodeAt(end.x, end.y);
       const pts = piece.slice();
       pts[0] = { x: g.nodes[a].x, y: g.nodes[a].y };
       pts[pts.length - 1] = { x: g.nodes[b].x, y: g.nodes[b].y };
       const len = polyLength(pts);
       if (len > 0.5 && !(a === b && len < 60)) g.addEdge(a, b, p.cls, pts);
       piece = [end];
+      a = b;
     };
     for (let si = 0; si + 1 < p.pts.length; si++) {
       while (ci < cuts.length && cuts[ci].seg === si) {
-        flush({ x: cuts[ci].x, y: cuts[ci].y });
+        flush({ x: cuts[ci].x, y: cuts[ci].y }, nodeOf(cuts[ci].j, cuts[ci]));
         ci++;
       }
       if (si + 2 < p.pts.length) piece.push(p.pts[si + 1]);
     }
-    flush(p.pts[p.pts.length - 1]);
+    flush(p.pts[p.pts.length - 1], nodeOf(ends[li][1], p.pts[p.pts.length - 1]));
   });
 }
 
