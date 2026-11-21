@@ -492,15 +492,19 @@ function connectComponents(g: Builder, ctx: Ctx): void {
         const angle = Math.atan2(nb.y - na.y, nb.x - na.x);
         if (!roomAt(g, pair.a, angle) || !roomAt(g, pair.b, angle + Math.PI)) continue;
         const strongest = Math.max(...[...na.edges, ...nb.edges].map((k) => CLASS_RANK[g.edges[k].cls]));
-        const cls: RoadClass = strongest > CLASS_RANK.local ? 'collector' : 'local';
+        let cls: RoadClass = strongest > CLASS_RANK.local ? 'collector' : 'local';
         const pa = { x: na.x, y: na.y };
         const pb = { x: nb.x, y: nb.y };
         const ignore = new Set([...na.edges, ...nb.edges]);
         let check = buildable(g, ctx, pa, pb, cls, ignore);
-        if (!check.ok && cls === 'local') check = buildable(g, ctx, pa, pb, 'collector', ignore);
+        if (!check.ok && cls === 'local') {
+          // Only a collector may bridge the river or cross the freeway.
+          cls = 'collector';
+          check = buildable(g, ctx, pa, pb, cls, ignore);
+        }
         if (!check.ok) continue;
         if (check.water) ctx.bridges.push(...waterCrossings(ctx.t, resample([pa, pb], 6)));
-        g.addEdge(pair.a, pair.b, check.water ? 'collector' : cls, [pa, pb]);
+        g.addEdge(pair.a, pair.b, cls, [pa, pb]);
         linked = true;
         break;
       }
