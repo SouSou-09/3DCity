@@ -1,11 +1,11 @@
 import { resample } from '../core/geom';
 import { Vec2, clamp, mix } from '../core/vec2';
+import { HIGHWAY_LIFT } from './highways';
 import { Rail } from './rail';
 import { RoadEdge, RoadGraph, RoadNode } from './roadGraph';
 import { Terrain, heightAt } from './terrain';
 
-/** Height of a freeway deck above the ground it crosses. */
-export const HIGHWAY_LIFT = 6.2;
+export { HIGHWAY_LIFT };
 /** Lowest bridge deck above the water. */
 export const DECK_HEIGHT = 5;
 /** Lowest road surface next to water. */
@@ -50,6 +50,21 @@ function ground(t: Terrain, x: number, y: number, r = 8): number {
 }
 
 const elevated = (e: RoadEdge): boolean => e.cls === 'highway' || e.cls === 'ramp';
+
+/** The freeway edges within `reach` metres of a node along the freeway: what a ramp leaving there runs beside. */
+export function freewayRun(graph: RoadGraph, node: number, reach = 420): number[] {
+  const found = new Set<number>();
+  const walk = (n: number, left: number): void => {
+    for (const id of graph.nodes[n].edges) {
+      const e = graph.edges[id];
+      if (e.cls !== 'highway' || found.has(id)) continue;
+      found.add(id);
+      if (e.length < left) walk(e.a === n ? e.b : e.a, left - e.length);
+    }
+  };
+  walk(node, reach);
+  return [...found];
+}
 
 /**
  * Vertical alignment of every road. Streets follow the (smoothed) ground and bridge water on a level deck;
@@ -237,7 +252,7 @@ export function roadLevels(graph: RoadGraph, t: Terrain, rail: Rail): RoadLevels
     const L = lv.s[n - 1] || 1;
     for (const end of [e.a, e.b]) {
       if (kind[end] !== 'highway') continue;
-      const hw = graph.nodes[end].edges.filter((id) => graph.edges[id].cls === 'highway');
+      const hw = freewayRun(graph, end);
       const at = (k: number): number => (end === e.a ? k : n - 1 - k);
       const deck = (p: Vec2): { d: number; h: number } => {
         let best = { d: Infinity, h: 0 };
@@ -268,6 +283,15 @@ export function roadLevels(graph: RoadGraph, t: Terrain, rail: Rail): RoadLevels
         const sk = Math.abs(lv.s[i] - lv.s[at(0)]);
         if (k <= sep) lv.h[i] = deck(lv.pts[i]).d < RAMP_CLEAR + 30 ? deck(lv.pts[i]).h : hs;
         else lv.h[i] = Math.max(mix(hs, nodes[other].h, clamp((sk - s0) / Math.max(1, L - tail - s0), 0, 1)), Math.min(lv.ground[i] + 0.3, hs));
+      }
+      // Round off the crest where the descent begins and the sag where it ends.
+      for (let pass = 0; pass < 12; pass++) {
+        let prev = lv.h[at(sep)];
+        for (let k = sep + 1; k < n - 1; k++) {
+          const v = 0.25 * prev + 0.5 * lv.h[at(k)] + 0.25 * lv.h[at(k + 1)];
+          prev = lv.h[at(k)];
+          lv.h[at(k)] = v;
+        }
       }
     }
   }

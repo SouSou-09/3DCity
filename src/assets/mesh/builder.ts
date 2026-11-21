@@ -284,12 +284,42 @@ export interface Strip {
   flip?: boolean;
 }
 
+/**
+ * A cross-section point carried along a path. Where the path turns more tightly than the point is far out, the point
+ * would run backwards and the surface fold over itself: there it stays put at the inside of the bend instead.
+ */
+function carried(path: Path, x: number, y: number): V3[] {
+  const out = path.map((f) => offset(f, x, y));
+  if (Math.abs(x) < 0.5) return out;
+  const back = (j: number): boolean => {
+    const d = v3.sub(path[j + 1].p, path[j].p);
+    const e = v3.sub(out[j + 1], out[j]);
+    return d[0] * e[0] + d[2] * e[2] < -1e-9;
+  };
+  for (let pass = 0; pass < 4; pass++) {
+    let found = false;
+    for (let j = 0; j + 1 < path.length; j++) {
+      if (!back(j)) continue;
+      let k = j + 1;
+      while (k + 1 < path.length && back(k)) k++;
+      const mid: V3 = [0, 0, 0];
+      for (let i = j; i <= k; i++) for (let c = 0; c < 3; c++) mid[c] += out[i][c] / (k - j + 1);
+      for (let i = j; i <= k; i++) out[i] = mid;
+      found = true;
+      j = k;
+    }
+    if (!found) break;
+  }
+  return out;
+}
+
 /** Extrudes cross-section strips along a path. */
 export function sweep(b: MeshBuilder, path: Path, strips: Strip[]): void {
   for (const st of strips) {
     const part = b.part(st.material, st.layer ?? 0);
     const lift = (st.layer ?? 0) * 0.006;
     let acc = 0;
+    const rows = st.pts.map(([x, y]) => carried(path, x, y + lift));
     for (let i = 0; i + 1 < st.pts.length; i++) {
       const [x0, y0] = st.pts[i];
       const [x1, y1] = st.pts[i + 1];
@@ -311,10 +341,10 @@ export function sweep(b: MeshBuilder, path: Path, strips: Strip[]): void {
         const nrm = (f: Frame): V3 => v3.add(v3.scale(f.r, nx), v3.scale(f.u, ny));
         b.quad(
           st.material,
-          offset(f0, x0, y0 + lift),
-          offset(f0, x1, y1 + lift),
-          offset(f1, x1, y1 + lift),
-          offset(f1, x0, y0 + lift),
+          rows[i][j],
+          rows[i + 1][j],
+          rows[i + 1][j + 1],
+          rows[i][j + 1],
           [uv(c0, f0), uv(c1, f0), uv(c1, f1), uv(c0, f1)],
           st.layer ?? 0,
           [nrm(f0), nrm(f0), nrm(f1), nrm(f1)],

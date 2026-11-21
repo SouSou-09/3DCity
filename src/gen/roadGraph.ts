@@ -47,6 +47,8 @@ export interface RoadGraph {
 
 const MERGE_RADIUS = 6;
 const SNAP_DIST = 2.5;
+/** A junction this close to another street's centre line is joined to it. */
+const NEAR_MISS = 6;
 const MIN_EDGE = 22;
 const MIN_DEAD_END = 35;
 const MAX_DEAD_END = 130;
@@ -387,8 +389,8 @@ function buildable(g: Builder, ctx: Ctx, a: Vec2, b: Vec2, cls: RoadClass, ignor
   for (let k = 0; k < g.edges.length; k++) {
     const e = g.edges[k];
     if (!e.alive) continue;
-    // Bigger streets pass over or under the freeway; everything else must not be crossed.
-    if (!isStreet(e.cls) && cls !== 'local') continue;
+    // Bigger streets pass under the freeway; everything else must not be crossed, ramps included: they come down to the ground.
+    if (e.cls === 'highway' && cls !== 'local') continue;
     // Streets that meet the new one at its ends touch it there, but may not curve back across it.
     const own = ignore.has(k);
     for (let i = 1; i < e.pts.length; i++) {
@@ -664,32 +666,103 @@ function contractShortEdges(g: Builder): number {
       kn.y = (kn.y + dn.y) / 2;
     }
     g.removeEdge(id);
-    for (const k of [...dn.edges]) {
-      const o = g.edges[k];
-      dn.edges.delete(k);
-      if (o.a === drop) o.a = keep;
-      if (o.b === drop) o.b = keep;
-      kn.edges.add(k);
-    }
-    dn.alive = false;
-    for (const k of [...kn.edges]) {
-      const o = g.edges[k];
-      if (o.a === keep) o.pts[0] = { x: kn.x, y: kn.y };
-      if (o.b === keep) o.pts[o.pts.length - 1] = { x: kn.x, y: kn.y };
-      o.len = polyLength(o.pts);
-      if (o.a === o.b && o.len < 60) g.removeEdge(k);
-    }
+    moveOnto(g, drop, keep);
     count++;
   }
   return count;
 }
 
-/** Drops the shorter of two near-identical edges between the same pair of nodes. */
+/** Makes one junction of two: every street of drop ends at keep instead. */
+function moveOnto(g: Builder, drop: number, keep: number): void {
+  const kn = g.nodes[keep];
+  const dn = g.nodes[drop];
+  for (const k of [...dn.edges]) {
+    const o = g.edges[k];
+    dn.edges.delete(k);
+    if (o.a === drop) o.a = keep;
+    if (o.b === drop) o.b = keep;
+    kn.edges.add(k);
+  }
+  dn.alive = false;
+  for (const k of [...kn.edges]) {
+    const o = g.edges[k];
+    if (o.a === keep) o.pts[0] = { x: kn.x, y: kn.y };
+    if (o.b === keep) o.pts[o.pts.length - 1] = { x: kn.x, y: kn.y };
+    o.len = polyLength(o.pts);
+    if (o.a === o.b && o.len < 60) g.removeEdge(k);
+  }
+}
+
+/**
+ * A junction that lies almost on a street it is not part of becomes a junction of that street.
+ * Left alone, the two would be built on top of each other, each at its own height.
+ */
+function joinNearMisses(g: Builder, t: Terrain): number {
+  let count = 0;
+  const box = new Map<number, [number, number, number, number]>();
+  const boxOf = (id: number): [number, number, number, number] => {
+    let b = box.get(id);
+    if (!b) {
+      b = [Infinity, Infinity, -Infinity, -Infinity];
+      for (const p of g.edges[id].pts) b = [Math.min(b[0], p.x), Math.min(b[1], p.y), Math.max(b[2], p.x), Math.max(b[3], p.y)];
+      box.set(id, b);
+    }
+    return b;
+  };
+  for (let n = 0; n < g.nodes.length; n++) {
+    const node = g.nodes[n];
+    if (!node.alive || node.edges.size === 0 || nearEdge(t, node.x, node.y)) continue;
+    if ([...node.edges].some((k) => !isStreet(g.edges[k].cls))) continue;
+    let best = NEAR_MISS;
+    let hit: { id: number; seg: number; p: Vec2 } | null = null;
+    for (let id = 0; id < g.edges.length; id++) {
+      const e = g.edges[id];
+      if (!e.alive || !isStreet(e.cls) || e.a === n || e.b === n) continue;
+      const b = boxOf(id);
+      if (node.x < b[0] - best || node.y < b[1] - best || node.x > b[2] + best || node.y > b[3] + best) continue;
+      for (let k = 0; k + 1 < e.pts.length; k++) {
+        const [p, q] = [e.pts[k], e.pts[k + 1]];
+        const l2 = (q.x - p.x) ** 2 + (q.y - p.y) ** 2 || 1;
+        const u = clamp(((node.x - p.x) * (q.x - p.x) + (node.y - p.y) * (q.y - p.y)) / l2, 0, 1);
+        const at = { x: p.x + (q.x - p.x) * u, y: p.y + (q.y - p.y) * u };
+        const d = dist(at, node);
+        if (d < best) [best, hit] = [d, { id, seg: k, p: at }];
+      }
+    }
+    if (!hit) continue;
+    const onto = splitEdge(g, hit.id, hit.seg, hit.p);
+    if (onto === n || [...g.nodes[onto].edges].some((k) => !isStreet(g.edges[k].cls))) continue;
+    moveOnto(g, n, onto);
+    count++;
+  }
+  return count;
+}
+
+/** Two streets between the same junctions that are never further apart than this leave nothing to build on between them. */
+const SLIVER = 22;
+
+/** True if every part of edge a lies within reach of edge b. */
+function hugs(a: TmpEdge, b: TmpEdge, reach: number): boolean {
+  for (let s = 0; s <= a.len; s += 6) {
+    const p = pointAt(a.pts, s).p;
+    let d = Infinity;
+    for (let k = 0; k + 1 < b.pts.length && d >= reach; k++) {
+      const [u, v] = [b.pts[k], b.pts[k + 1]];
+      const l2 = (v.x - u.x) ** 2 + (v.y - u.y) ** 2 || 1;
+      const q = clamp(((p.x - u.x) * (v.x - u.x) + (p.y - u.y) * (v.y - u.y)) / l2, 0, 1);
+      d = Math.min(d, Math.hypot(u.x + (v.x - u.x) * q - p.x, u.y + (v.y - u.y) * q - p.y));
+    }
+    if (d >= reach) return false;
+  }
+  return true;
+}
+
+/** Drops the lesser of two edges between the same pair of nodes that are near-identical or enclose only a sliver. */
 function removeDuplicates(g: Builder): void {
   const seen = new Map<string, number>();
   for (let id = 0; id < g.edges.length; id++) {
     const e = g.edges[id];
-    if (!e.alive || e.a === e.b) continue;
+    if (!e.alive) continue;
     const key = e.a < e.b ? `${e.a}:${e.b}` : `${e.b}:${e.a}`;
     const prev = seen.get(key);
     if (prev === undefined) {
@@ -697,8 +770,9 @@ function removeDuplicates(g: Builder): void {
       continue;
     }
     const p = g.edges[prev];
-    if (Math.abs(p.len - e.len) > 0.35 * Math.max(p.len, e.len)) continue;
     const loser = CLASS_RANK[p.cls] < CLASS_RANK[e.cls] || (p.cls === e.cls && p.len > e.len) ? prev : id;
+    const alike = e.a !== e.b && Math.abs(p.len - e.len) <= 0.35 * Math.max(p.len, e.len);
+    if (!alike && !(isStreet(p.cls) && isStreet(e.cls) && hugs(g.edges[loser], g.edges[loser === prev ? id : prev], SLIVER))) continue;
     g.removeEdge(loser);
     if (loser === prev) seen.set(key, id);
   }
@@ -773,6 +847,7 @@ export function buildRoadGraph(lines: RoadLine[], t: Terrain, districts: Distric
     if (!rng.chance(districtAt(t, districts, m.x, m.y).style.breakProb)) continue;
     if (locallyConnected(g, e.a, e.b, id)) g.removeEdge(id);
   }
+  joinNearMisses(g, t);
   tidy();
   for (let i = 0; i < 3; i++) {
     const changed = contractShortEdges(g) + fixAcuteJunctions(g);

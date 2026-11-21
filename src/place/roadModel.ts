@@ -5,7 +5,7 @@ import { Section, layout, reversed, sweepSection } from '../assets/mesh/section'
 import { pointSeg, resample } from '../core/geom';
 import { Vec2, clamp, mix, smoothstep } from '../core/vec2';
 import { City } from '../gen/city';
-import { NodePlane, RoadLevels, roadLevels } from '../gen/roadHeights';
+import { NodePlane, RoadLevels, freewayRun, roadLevels } from '../gen/roadHeights';
 import { RoadClass } from '../gen/streamlines';
 import { heightAt } from '../gen/terrain';
 import { HIGHWAY_DECK, RAMP_DECK, sectionFor, surface } from './roadSections3d';
@@ -18,7 +18,14 @@ const MERGE_MAX = 60;
 /** Smallest angle between two neighbouring arms of a junction. */
 const MIN_GAP = (34 * Math.PI) / 180;
 /** How far a freeway that leaves the map sticks out past its edge before it is cut off. */
+/** Length of the curve that brings a road from its junction arm back onto its own line, per metre between the two; and its longest. */
+const SWING = 7;
+const SWING_MAX = 45;
+/** Least share of its centre line's step that a road's edge must still advance through a curve (see advance()). */
+const ROOM = 0.25;
 export const EDGE_STUB = 30;
+/** How far below a freeway's surface a ramp or branch lies while it is still within the freeway's width. */
+const UNDER = 0.1;
 const RANK: Record<RoadClass, number> = { highway: 4, arterial: 3, collector: 2, ramp: 2, local: 1, alley: 0, path: 0 };
 
 export interface JunctionArm {
@@ -47,7 +54,8 @@ export interface RoadModel {
   lines: (V3[] | null)[];
   /** Where a freeway is cut off outside the map. */
   cuts: { x: number; y: number; h: number; edge: number }[];
-  stats: { junctions: number; signals: number; swallowed: number; piers: number; triangles: number };
+  /** stats.folds: roads whose edges fold back over themselves somewhere along a curve too tight for their width. */
+  stats: { junctions: number; signals: number; swallowed: number; folds: number; piers: number; triangles: number };
 }
 
 interface Seg {
@@ -345,6 +353,9 @@ export function buildRoadModel(city: City): RoadModel {
       const d = a ? a.dir : norm2(q1.x - q0.x, q1.y - q0.y);
       const e = b ? b.dir : { x: -d.x, y: -d.y };
       if ((q1.x - q0.x) * d.x + (q1.y - q0.y) * d.y < 1 || (q0.x - q1.x) * e.x + (q0.y - q1.y) * e.y < 1) return null;
+      // ...and squarely enough that the road's edges do not cross over on the way from one to the other.
+      const [lx, ly] = [q1.x - q0.x, q1.y - q0.y];
+      if (a && b && Math.abs(lx * (-e.y - d.y) - ly * (-e.x - d.x)) * half[id] > (1 - ROOM) * (lx * lx + ly * ly)) return null;
     }
     return { i0, i1, p0, p1 };
   };
@@ -411,7 +422,7 @@ export function buildRoadModel(city: City): RoadModel {
     if (!changed) break;
   }
 
-  const stats = { junctions: clusters.length, signals: clusters.filter((c) => c.signal).length, swallowed: swallowed.reduce((s, v) => s + v, 0), piers: 0, triangles: 0 };
+  const stats = { junctions: clusters.length, signals: clusters.filter((c) => c.signal).length, swallowed: swallowed.reduce((s, v) => s + v, 0), folds: 0, piers: 0, triangles: 0 };
   for (const c of clusters) {
     const tb = new MeshBuilder();
     junction(tb, { arms: c.jarms, radius: c.radius, floor: c.floor });
@@ -505,7 +516,9 @@ export function buildRoadModel(city: City): RoadModel {
     // Ends that leave a freeway: skip the part still inside the freeway's own lanes.
     const child = ([e.a, e.b] as const).map((node) => {
       if (!isHw[node] || (e.cls !== 'ramp' && !(e.cls === 'highway' && isBranch(id, node)))) return null;
-      return hwAt(node).filter((o) => o !== id && !(e.cls === 'highway' && isBranch(o, node)));
+      // A ramp runs beside the freeway for longer than the edge it leaves; a branch is measured against the carriageways it leaves.
+      if (e.cls === 'ramp') return freewayRun(graph, node);
+      return hwAt(node).filter((o) => o !== id && !isBranch(o, node));
     });
     let { i0, i1 } = sp;
     const near = lv.pts.map((p) => child.map((ids) => (ids && ids.length ? nearest(ids, p) : null)));
@@ -543,10 +556,99 @@ export function buildRoadModel(city: City): RoadModel {
       const v = lv.pts[Math.min(n - 1, i + 1)];
       return norm2(v.x - u.x, v.y - u.y);
     };
-    if (sp.p0) push(sp.p0, lv.h[Math.min(i0, n - 1)], a!.dir, Math.min(i0, n - 1));
-    for (let i = i0; i <= i1; i++) push(lv.pts[i], lv.h[i], tangentAt(i), i);
-    if (sp.p1) push(sp.p1, lv.h[Math.max(i1, 0)], { x: -b!.dir.x, y: -b!.dir.y }, Math.max(i1, 0));
+    // A junction arm points straight out of the junction, which is rarely quite where the road's own line runs:
+    // the road swings from one onto the other in a curve, the longer the further apart they are.
+    let [j0, j1] = [i0, i1];
+    const swing = (p: Vec2, dir: Vec2, from: number, step: 1 | -1, stop: number): number => {
+      const q = lv.pts[from];
+      const side = Math.abs((q.x - p.x) * -dir.y + (q.y - p.y) * dir.x);
+      const run = clamp(SWING * side, 6, SWING_MAX);
+      let j = from;
+      while (j !== stop && Math.hypot(lv.pts[j].x - p.x, lv.pts[j].y - p.y) < run) j += step;
+      return j;
+    };
+    type Step = [Vec2, number, Vec2, number];
+    const flip = (v: Vec2): Vec2 => ({ x: -v.x, y: -v.y });
+    /** How far the road's edges get from one cross-section to the next, as a share of the centre line's step: below zero they fold back over themselves. */
+    const advance = (run: Step[]): number => {
+      let worst = 1;
+      for (let k = 0; k + 1 < run.length; k++) {
+        const [p, , tp] = run[k];
+        const [q, , tq] = run[k + 1];
+        const [dx, dy] = [q.x - p.x, q.y - p.y];
+        const l2 = dx * dx + dy * dy;
+        if (l2 > 1e-6) worst = Math.min(worst, 1 - (Math.abs(dx * (tp.y - tq.y) + dy * (tq.x - tp.x)) * hc) / l2);
+      }
+      return worst;
+    };
+    /**
+     * Curve from p (heading dir) to q (heading out), between the two ends, in the order the road runs.
+     * Fanned, its cross-sections turn evenly from one end to the other instead of following the curve: the most room a wide road can have.
+     */
+    const curve = (p: Vec2, dir: Vec2, q: Vec2, out: Vec2, from: number, to: number, back: boolean, pull: number, fan: boolean): Step[] => {
+      const len = Math.hypot(q.x - p.x, q.y - p.y);
+      const count = Math.max(3, Math.ceil(len / 2.5));
+      const m = len * pull;
+      const add: Step[] = [];
+      const turn = Math.atan2(dir.x * out.y - dir.y * out.x, dir.x * out.x + dir.y * out.y);
+      for (let k = 1; k < count; k++) {
+        const u = k / count;
+        const [h00, h10, h01, h11] = [2 * u ** 3 - 3 * u ** 2 + 1, u ** 3 - 2 * u ** 2 + u, -2 * u ** 3 + 3 * u ** 2, u ** 3 - u ** 2];
+        const [d00, d10, d01, d11] = [6 * u ** 2 - 6 * u, 3 * u ** 2 - 4 * u + 1, -6 * u ** 2 + 6 * u, 3 * u ** 2 - 2 * u];
+        const pt = { x: h00 * p.x + h10 * m * dir.x + h01 * q.x + h11 * m * out.x, y: h00 * p.y + h10 * m * dir.y + h01 * q.y + h11 * m * out.y };
+        const [cs, sn] = [Math.cos(turn * u), Math.sin(turn * u)];
+        const tg = fan
+          ? { x: dir.x * cs - dir.y * sn, y: dir.x * sn + dir.y * cs }
+          : norm2(d00 * p.x + d10 * m * dir.x + d01 * q.x + d11 * m * out.x, d00 * p.y + d10 * m * dir.y + d01 * q.y + d11 * m * out.y);
+        add.push([pt, mix(lv.h[from], lv.h[to], u), back ? flip(tg) : tg, Math.round(mix(from, to, u))]);
+      }
+      return back ? add.reverse() : add;
+    };
+    const SHAPES: [number, boolean][] = [[1, false], [0.6, false], [1, true], [0.6, true], [0.3, true]];
+    /** The curve between two ends whose edges fold least, the plainest that will do; with the two ends themselves, in the order the road runs. */
+    const fit = (p: Vec2, dir: Vec2, q: Vec2, out: Vec2, from: number, to: number, back: boolean): { run: Step[]; score: number } => {
+      const ends: Step[] = [[p, lv.h[from], back ? flip(dir) : dir, from], [q, lv.h[to], back ? flip(out) : out, to]];
+      if (back) ends.reverse();
+      let best: { run: Step[]; score: number } | null = null;
+      for (const [pull, fan] of SHAPES) {
+        const run = [ends[0], ...curve(p, dir, q, out, from, to, back, pull, fan), ends[1]];
+        const score = advance(run);
+        if (!best || score > best.score + 0.02) best = { run, score };
+        if (score >= ROOM) break;
+      }
+      return best!;
+    };
+    /** From a junction arm onto the road's own line: as far along it as the curve needs, up to stop. */
+    const onto = (p: Vec2, dir: Vec2, from: number, step: 1 | -1, stop: number): { j: number; run: Step[] } => {
+      const back = step < 0;
+      let best: { j: number; run: Step[]; score: number } | null = null;
+      for (let j = swing(p, dir, from, step, stop); ; j += step) {
+        const tq = tangentAt(j);
+        const got = fit(p, dir, lv.pts[j], back ? flip(tq) : tq, from, j, back);
+        if (!best || got.score > best.score + 0.02) best = { j, ...got };
+        if (got.score >= ROOM || j === stop) break;
+      }
+      return best!;
+    };
+    let lead: Step[] = [];
+    let tail: Step[] = [];
+    if (i0 <= i1) {
+      const mid = (i0 + i1) >> 1;
+      if (sp.p0) ({ j: j0, run: lead } = onto(sp.p0, a!.dir, i0, 1, mid));
+      if (sp.p1) ({ j: j1, run: tail } = onto(sp.p1, b!.dir, i1, -1, Math.max(mid, j0)));
+      // Each run ends on the point of the road's own line that it joins.
+      if (sp.p0) lead.pop();
+      if (sp.p1) tail.shift();
+    } else if (sp.p0 && sp.p1) {
+      // Two junctions with nothing in between: one curve from arm to arm.
+      lead = fit(sp.p0, a!.dir, sp.p1, flip(b!.dir), Math.min(i0, n - 1), Math.max(i1, 0), false).run;
+    } else if (sp.p0) lead = [[sp.p0, lv.h[Math.min(i0, n - 1)], a!.dir, Math.min(i0, n - 1)]];
+    else if (sp.p1) tail = [[sp.p1, lv.h[Math.max(i1, 0)], flip(b!.dir), Math.max(i1, 0)]];
+    for (const st of lead) push(...st);
+    for (let i = j0; i <= j1; i++) push(lv.pts[i], lv.h[i], tangentAt(i), i);
+    for (const st of tail) push(...st);
     if (pts.length < 2) return;
+    if (advance(pts.map((p, k): Step => [p, 0, tan[k], 0])) < 0) stats.folds++;
 
     // A freeway that reaches the edge of the map carries on a little way and is cut off there.
     if (e.cls === 'highway') {
@@ -587,13 +689,13 @@ export function buildRoadModel(city: City): RoadModel {
       let c = 0;
       const rx = -tan[k].y;
       const ry = tan[k].x;
-      // Still on the freeway's deck: ride just above it.
+      // Still within the freeway's deck: just under it, so that the freeway's own lanes carry on and this road widens out from its edge.
       if (zone[k] >= 0) {
         near[zone[k]].forEach((nr) => {
           if (!nr) return;
           // A ramp's own level already follows the deck; a branching freeway is eased onto it.
-          if (e.cls === 'ramp') h += 0.03 * (1 - smoothstep(hp + hc, hp + hc + 6, nr.d));
-          else h = mix(nr.h + 0.03, h, smoothstep(hp + hc, hp + hc + 26, nr.d));
+          if (e.cls === 'ramp') h -= UNDER * (1 - smoothstep(hp + hc, hp + hc + 6, nr.d));
+          else h = mix(nr.h - UNDER, h, smoothstep(hp + hc, hp + hc + 26, nr.d));
         });
       }
       for (const [arm, cl, along] of [[a, ca, arc[k] / ease[0]], [b, cb, (end - arc[k]) / ease[1]]] as const) {
@@ -609,7 +711,19 @@ export function buildRoadModel(city: City): RoadModel {
 
     const keep = thin(pts.map((p, k) => [p.x, hs[k], p.y, cross[k] * 8]), e.cls === 'highway' ? 0.06 : 0.1);
     const line: V3[] = keep.map((k) => [pts[k].x, hs[k], pts[k].y]);
-    const path = frames(line, keep.map((k) => cross[k]), sp.p0 ? a!.dir : undefined, sp.p1 ? { x: -b!.dir.x, y: -b!.dir.y } : undefined);
+    // The two carriageways that run through a freeway node meet on one line across it.
+    const through = (node: number, end: 0 | 1): Vec2 | undefined => {
+      if (e.cls !== 'highway' || isBranch(id, node)) return undefined;
+      const pair = hwAt(node).filter((o) => !isBranch(o, node));
+      if (pair.length !== 2 || zone[end === 0 ? 0 : zone.length - 1] !== (end === 0 ? 0 : n - 1)) return undefined;
+      const [u, v] = pair.map((o) => {
+        const q = out(o, graph.edges[o].a === node ? 0 : 1);
+        return norm2(q[Math.min(2, q.length - 1)].x - q[0].x, q[Math.min(2, q.length - 1)].y - q[0].y);
+      });
+      const sgn = (pair[0] === id ? 1 : -1) * (end === 0 ? 1 : -1);
+      return norm2((u.x - v.x) * sgn, (u.y - v.y) * sgn);
+    };
+    const path = frames(line, keep.map((k) => cross[k]), sp.p0 ? a!.dir : through(e.a, 0), sp.p1 ? { x: -b!.dir.x, y: -b!.dir.y } : through(e.b, 1));
     lines[id] = line;
     const L = pathLength(path);
     const b3 = tile(pts[pts.length >> 1].x, pts[pts.length >> 1].y);
@@ -680,6 +794,20 @@ export function buildRoadModel(city: City): RoadModel {
     const shift = path[Math.max(0, keep.findIndex((i) => i >= first))].s - lv.s[zone[first]];
     const gaps = { left: open[id].left.map((g) => [g.s0 + shift, g.s1 + shift]), right: open[id].right.map((g) => [g.s0 + shift, g.s1 + shift]) };
     for (const o of [gaps.left, gaps.right]) for (const [s0, s1] of o) cutsAt.add(clamp(s0, 0, L)).add(clamp(s1, 0, L));
+    // While this road is still coming out from under the freeway, its markings start lane by lane as they clear the freeway's edge.
+    const distAt = (s: number, end: number): number => {
+      let best = Infinity;
+      let at = Infinity;
+      keep.forEach((k, j) => {
+        const nr = zone[k] >= 0 ? near[zone[k]][end] : null;
+        if (nr && Math.abs(path[j].s - s) < at) [at, best] = [Math.abs(path[j].s - s), nr.d];
+      });
+      return best;
+    };
+    clear.forEach((c, end) => {
+      if (!c) return;
+      for (let s = end === 0 ? 0 : c.sc; s < (end === 0 ? c.sc : L); s += 8) cutsAt.add(s);
+    });
     const marks = [...cutsAt].sort((x, y) => x - y).filter((s, i, arr) => i === 0 || s - arr[i - 1] > 0.5);
     if (marks[marks.length - 1] < L - 0.5) marks.push(L);
     else marks[marks.length - 1] = L;
@@ -698,7 +826,13 @@ export function buildRoadModel(city: City): RoadModel {
       });
       const startCap = k === 0 && zone[0] === -1;
       const endCap = k + 2 === marks.length && zone[zone.length - 1] === -1;
-      sweepSection(b3, slicePath(path, marks[k], marks[k + 1]), variant(sec, noL, noR, noM), { body: 'deck', deckDepth: deck, caps: [startCap, endCap] });
+      let marksWhere: ((x0: number, x1: number) => boolean) | undefined;
+      clear.forEach((c, end) => {
+        if (!c || !c.side || !(end === 0 ? mid < c.sc : mid > c.sc)) return;
+        const d = Math.min(distAt(marks[k], end), distAt(marks[k + 1], end));
+        marksWhere = (x0, x1) => d - Math.max(x0 * c.side, x1 * c.side) > hp + 0.1;
+      });
+      sweepSection(b3, slicePath(path, marks[k], marks[k + 1]), variant(sec, noL, noR, noM), { body: 'deck', deckDepth: deck, caps: [startCap, endCap], marksWhere });
     }
 
     if (e.cls === 'highway') {
@@ -802,7 +936,9 @@ function gradeTerrain(city: City, segs: Seg[]): Float32Array {
   }
   for (let k = 0; k < n * n; k++) {
     if (best[k] > FADE || (out[k] < 0 && best[k] > 3)) continue;
-    out[k] = mix(out[k], level[k] - 0.1, 1 - smoothstep(FULL, FADE, Math.max(0, best[k])));
+    // Just under the road at its edges, and further under towards its middle, where a coarse grid would otherwise
+    // show through a road that bends or changes grade within a cell or two.
+    out[k] = mix(out[k], level[k] - 0.1 - 0.2 * smoothstep(0, 3, -best[k]), 1 - smoothstep(FULL, FADE, Math.max(0, best[k])));
   }
   return out;
 }
