@@ -308,8 +308,8 @@ function card(label: string, id: string, draw: (c: HTMLCanvasElement) => void, o
   observer.observe(el);
   return el;
 }
-/** Street furniture is looked at from the road, not from above. */
-const defaultDir = (spec: ModelSpec): [number, number, number] | undefined => (spec.category === 'signal' || spec.category === 'sign' ? [0.4, 0.14, 1] : spec.category === 'furniture' || spec.category === 'plant' ? [0.5, 0.28, 1] : undefined);
+/** Street furniture and buildings are looked at from the road, not from above. */
+const defaultDir = (spec: ModelSpec): [number, number, number] | undefined => (spec.category === 'signal' || spec.category === 'sign' ? [0.4, 0.14, 1] : spec.category === 'furniture' || spec.category === 'plant' ? [0.5, 0.28, 1] : ['house', 'apartment', 'shop', 'office', 'industrial', 'buildpart'].includes(spec.category) ? [0.75, 0.42, 1] : undefined);
 function modelThumb(spec: ModelSpec, c: HTMLCanvasElement): void {
   const data = spec.build();
   const group = modelGroup(data);
