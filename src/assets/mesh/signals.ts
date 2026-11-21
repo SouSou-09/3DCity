@@ -447,6 +447,8 @@ export interface RailOpts {
   cantilever?: number;
   tex?: string;
   crossbuck?: boolean;
+  /** Crossbuck only, without lights. */
+  plain?: boolean;
 }
 /** Railway crossing signal: crossbuck, flashers, bell and gate. */
 export function railSignal(b: MeshBuilder, f: Pose, o: RailOpts): void {
@@ -461,7 +463,7 @@ export function railSignal(b: MeshBuilder, f: Pose, o: RailOpts): void {
     if (o.tracks) plate(b, 'sign/rr-tracks', f, [0, 3.2, pr + 0.02]);
   }
   const lit = o.lit ?? [true, false];
-  flashers(b, move(f, 0, 2.5, pr), lit);
+  if (!o.plain) flashers(b, move(f, 0, 2.5, pr), lit);
   if (o.both) flashers(b, turn(move(f, 0, 2.5, -pr), 180), lit);
   if (o.bell) {
     lathe(b, 'signal/pole-grey', move(f, 0, h, 0), [[r, 0], [r * 0.6, 0.04], [0.17, 0.06], [0.16, 0.14], [0.1, 0.22], [0, 0.25]], 14);
@@ -739,7 +741,7 @@ export function addSignals(): void {
 
   // Railway crossings.
   const RAILS: [string, string, RailOpts][] = [
-    ['crossbuck', '踏切 警標のみ', { crossbuck: true, lit: [false, false], tracks: true }],
+    ['crossbuck', '踏切 警標のみ', { plain: true, tracks: true }],
     ['flashers', '踏切 警報灯', { lit: [true, false], bell: true, tracks: true }],
     ['flashers-both', '踏切 両面警報灯', { lit: [false, true], bell: true, both: true }],
     ['gate-down', '踏切 遮断機 降下', { gate: 'down', lit: [true, false], bell: true, tracks: true }],
