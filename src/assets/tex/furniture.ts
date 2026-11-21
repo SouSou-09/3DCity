@@ -769,36 +769,6 @@ add('terracotta', '素焼きの鉢', [0.5, 0.5], (tex, seed) => {
   });
   return L.finish();
 }, tiled);
-function foliage(tex: Tex, seed: number, a: RGB, b: RGB, flowers: RGB | null): TextureData {
-  const L = new Layers(tex, a, 0.8);
-  const leaf = tex.cells(0.035, seed);
-  const clump = tex.noise(0.18, 0.18, seed + 1, 3);
-  const bloom = tex.cells(0.06, seed + 2);
-  tex.map((x, y, k) => {
-    const c = leaf(x, y);
-    const id = c.id;
-    const rim = sstep(0, 0.25, c.f2 - c.f1);
-    const t = clamp01(0.5 + clump(x, y) * 0.9 + (id - 0.5) * 0.6);
-    const sh = 0.55 + rim * 0.45;
-    let [r, g, bl] = [(a[0] + (b[0] - a[0]) * t) * sh, (a[1] + (b[1] - a[1]) * t) * sh, (a[2] + (b[2] - a[2]) * t) * sh];
-    if (flowers) {
-      const f = bloom(x, y);
-      if (f.id > 0.55 && f.f1 < 0.32) [r, g, bl] = [flowers[0] * (0.8 + f.id * 0.3), flowers[1] * (0.8 + f.id * 0.3), flowers[2]];
-    }
-    L.r[k] = r;
-    L.g[k] = g;
-    L.b[k] = bl;
-    L.height[k] = id * 0.01 + rim * 0.004;
-    return 0;
-  });
-  return L.finish();
-}
-add('shrub', '低木の葉', [0.6, 0.6], (t, s) => foliage(t, s, hex(0x1f3a1c), hex(0x4a7030), null), tiled);
-add('shrub-dry', '低木の葉 乾燥', [0.6, 0.6], (t, s) => foliage(t, s, hex(0x4a4a24), hex(0x8a7a40), null), tiled);
-add('flowers-red', '花壇 赤', [0.6, 0.6], (t, s) => foliage(t, s, hex(0x24401c), hex(0x4a7030), hex(0xc8281e)), tiled);
-add('flowers-yellow', '花壇 黄', [0.6, 0.6], (t, s) => foliage(t, s, hex(0x24401c), hex(0x4a7030), hex(0xe8c020)), tiled);
-add('flowers-purple', '花壇 紫', [0.6, 0.6], (t, s) => foliage(t, s, hex(0x24401c), hex(0x4a7030), hex(0x8a3ab0)), tiled);
-
 function clock(tex: Tex, seed: number, hour: number, minute: number, age: number): TextureData {
   const a = new Art(tex, hex(0x2a2a2a), 0.4);
   const [c, r] = [a.w / 2, a.w / 2];

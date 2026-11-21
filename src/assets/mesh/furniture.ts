@@ -1,5 +1,6 @@
 import { MeshBuilder, V3 } from './builder';
 import { Pose, at, box, catenary, disc, face, footing, lathe, move, pipe, plate, roll, stand, tilt, turn } from './kit';
+import { flowerBed, hedge, shrub, tree } from './plants';
 import { addModel } from './registry';
 import { Lamp, PoleOpts, cabinet, fitting, luminaire, pole } from './signals';
 
@@ -107,7 +108,7 @@ function basket(b: MeshBuilder, f: Pose, y: number, side: number, tex: string, f
   const g = move(f, side * 0.6, y - 0.2, 0);
   for (let i = 0; i < 3; i++) b.tube(tex, at(g, 0, 0.45, 0), at(g, 0.2 * Math.cos(i * 2.1), 0, 0.2 * Math.sin(i * 2.1)), 0.004, 4);
   lathe(b, F('coat-brown'), g, [[0, -0.14], [0.12, -0.12], [0.2, -0.02], [0.21, 0]], 10);
-  ball(b, F(flowers), g, 0.04, 0.3, 10, 0.7, 0.35, 1);
+  plant(b, g, 0, 0.26, flowers, 0.7);
 }
 type Top = 'globe' | 'acorn' | 'lantern' | 'disc';
 /** Post-top lamp standing on the pose. */
@@ -886,9 +887,17 @@ function bicycle(b: MeshBuilder, f: Pose, tex: string, o: { noFront?: boolean; n
 // --- Planters and tree pits. ---
 
 /** Mound of foliage growing out of a container top of radius r at height y. */
-function plant(b: MeshBuilder, f: Pose, y: number, r: number, tex: string, flat = 0.7): void {
-  ball(b, F(tex), f, y, r, 12, flat, 0.45, 1);
+function plant(b: MeshBuilder, f: Pose, y: number, r: number, kind: string, flat = 0.7): void {
+  const g = move(f, 0, y, 0);
+  const seed = 1 + Math.floor(Math.abs(g.o[0] * 131 + g.o[1] * 71 + g.o[2] * 37 + r * 1009)) + kind.length;
+  if (kind.startsWith('shrub')) shrub(b, g, { seed, r: r * 0.95, h: r * (0.8 + flat * 0.7), leaf: kind === 'shrub-dry' ? 'leaf-small-dry' : 'leaf-small', card: Math.min(0.3, Math.max(0.2, r * 0.7)), dense: kind === 'shrub-dry' ? 0.7 : 1.2 });
+  else flowerBed(b, g, { seed, r: r * 0.95, heads: FLOWERS[kind], h: 0.16 + r * 0.25 });
 }
+const FLOWERS: Record<string, string[]> = {
+  'flowers-red': ['flower-five-red'],
+  'flowers-yellow': ['flower-marigold-yellow', 'flower-marigold-orange'],
+  'flowers-purple': ['flower-five-purple', 'flower-five-magenta', 'flower-five-white'],
+};
 type PlanterKind = 'bowl' | 'box' | 'pot' | 'trough' | 'wood' | 'tall' | 'barrel';
 interface PlanterOpts {
   kind: PlanterKind;
@@ -917,8 +926,8 @@ function planter(b: MeshBuilder, f: Pose, o: PlanterOpts): void {
   } else if (o.kind === 'trough') {
     box(b, o.tex ?? 'structure/wall-smooth', f, [0, 0.275, 0], [1.0, 0.275, 0.27], 'Y');
     face(b, SOIL, up, [0, 0, 0.552], 1.9, 0.44);
-    if (green.startsWith('shrub')) box(b, F(green), f, [0, 0.83, 0], [0.93, 0.28, 0.2], 'Y');
-    else for (let i = 0; i < 4; i++) plant(b, move(f, -0.69 + i * 0.46, 0, 0), 0.55, 0.24, green, 0.8);
+    if (green.startsWith('shrub')) hedge(b, move(f, 0, 0.55, 0), { seed: 31, len: 1.9, w: 0.46, h: 0.58, leaf: green === 'shrub-dry' ? 'leaf-small-dry' : 'leaf-small', card: 0.24 });
+    else flowerBed(b, move(f, 0, 0.55, 0), { seed: 32, r: 0.2, rx: 0.93, heads: FLOWERS[green], h: 0.24 });
   } else if (o.kind === 'wood') {
     box(b, o.tex ?? F('slats-new'), f, [0, 0.31, 0], [0.4, 0.29, 0.4], 'Yy');
     for (const [sx, sz] of CORNERS) box(b, P('black'), f, [sx * 0.405, 0.31, sz * 0.405], [0.02, 0.31, 0.02]);
@@ -949,11 +958,7 @@ function treePit(b: MeshBuilder, f: Pose, o: { grate?: 'round' | 'square'; guard
     face(b, 'ground/mulch', up, [0, 0, 0.03], 1.22, 1.22);
   }
   if (o.tree) {
-    lathe(b, P('wood-grey'), f, [[0.06, 0], [0.045, 1.2], [0.035, 2.6], [0, 3.2]], 8);
-    ball(b, F('shrub'), f, 3.2, 0.8, 12, 1.1);
-    ball(b, F('shrub'), move(f, 0.38, 0, 0.2), 3.55, 0.55, 10);
-    ball(b, F('shrub'), move(f, -0.32, 0, -0.26), 3.45, 0.6, 10, 0.9);
-    for (const a of [0.4, 2.3, 4.4]) pipe(b, P('wood-grey'), [at(f, 0, 2.5, 0), at(f, 0.5 * Math.cos(a), 3.1, 0.5 * Math.sin(a))], 0.018, 5);
+    tree(b, f, { seed: o.stakes ? 17 : 18, h: 4.4, r: 0.045, bark: 'plant/bark-young', leaf: 'leaf-ovate-light', clear: 0.48, levels: 2, card: 0.55, cards: 5 });
   }
   if (o.stakes) {
     for (const s of [-1, 1]) {
