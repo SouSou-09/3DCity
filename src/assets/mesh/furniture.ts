@@ -31,6 +31,26 @@ function hoop(b: MeshBuilder, material: string, f: Pose, y: number, R: number, r
   pipe(b, material, pts, r, 6, false);
 }
 const neg = (v: V3): V3 => [-v[0], -v[1], -v[2]];
+/** Triangles filling a simple counter-clockwise polygon (ear clipping, so concave outlines stay inside their edges). */
+function triangulate(o: [number, number][]): [number, number, number][] {
+  const idx = o.map((_, i) => i);
+  const out: [number, number, number][] = [];
+  const cross = (a: number, b: number, c: number): number => (o[b][0] - o[a][0]) * (o[c][1] - o[a][1]) - (o[b][1] - o[a][1]) * (o[c][0] - o[a][0]);
+  while (idx.length > 3) {
+    let ear = -1;
+    for (let i = 0; i < idx.length && ear < 0; i++) {
+      const [a, b, c] = [idx[(i + idx.length - 1) % idx.length], idx[i], idx[(i + 1) % idx.length]];
+      if (cross(a, b, c) <= 1e-12) continue;
+      if (!idx.some((p) => p !== a && p !== b && p !== c && cross(a, b, p) >= 0 && cross(b, c, p) >= 0 && cross(c, a, p) >= 0)) ear = i;
+    }
+    // Only collinear or reflex corners left: drop one so that the loop always ends.
+    if (ear < 0) ear = 1;
+    else out.push([idx[(ear + idx.length - 1) % idx.length], idx[ear], idx[(ear + 1) % idx.length]]);
+    idx.splice(ear, 1);
+  }
+  out.push([idx[0], idx[1], idx[2]]);
+  return out;
+}
 /** Prism: a closed outline of [z, y] points swept along x from x0 to x1. The end caps map the outline's bounding box in metres, so a face texture of that size fits. */
 export function prism(b: MeshBuilder, material: string, f: Pose, outline: [number, number][], x0: number, x1: number, caps = material, capsEnd = caps): void {
   let area = 0;
@@ -50,15 +70,13 @@ export function prism(b: MeshBuilder, material: string, f: Pose, outline: [numbe
   }
   const zs = o.map((p) => p[0]);
   const ys = o.map((p) => p[1]);
-  const [z0, y0] = [Math.min(...zs), Math.min(...ys)];
-  const z1 = Math.max(...zs);
-  const [cz, cy] = [zs.reduce((a, c) => a + c, 0) / n, ys.reduce((a, c) => a + c, 0) / n];
-  for (let i = 0; i < n; i++) {
-    const [p, q] = [o[i], o[(i + 1) % n]];
-    const uv = (z: number, y: number): [number, number] => [z - z0, y - y0];
-    b.tri(caps, at(f, x0, cy, cz), at(f, x0, p[1], p[0]), at(f, x0, q[1], q[0]), [uv(cz, cy), uv(p[0], p[1]), uv(q[0], q[1])]);
-    const vu = (z: number, y: number): [number, number] => [z1 - z, y - y0];
-    b.tri(capsEnd, at(f, x1, cy, cz), at(f, x1, q[1], q[0]), at(f, x1, p[1], p[0]), [vu(cz, cy), vu(q[0], q[1]), vu(p[0], p[1])]);
+  const [z0, y0, z1] = [Math.min(...zs), Math.min(...ys), Math.max(...zs)];
+  for (const tri of triangulate(o)) {
+    const [p, q, r] = tri.map((i) => o[i]);
+    const uv = (c: [number, number]): [number, number] => [c[0] - z0, c[1] - y0];
+    const vu = (c: [number, number]): [number, number] => [z1 - c[0], c[1] - y0];
+    b.tri(caps, at(f, x0, p[1], p[0]), at(f, x0, q[1], q[0]), at(f, x0, r[1], r[0]), [uv(p), uv(q), uv(r)]);
+    b.tri(capsEnd, at(f, x1, p[1], p[0]), at(f, x1, r[1], r[0]), at(f, x1, q[1], q[0]), [vu(p), vu(r), vu(q)]);
   }
 }
 /** Board lying along x. Its wide face looks up, or to the front when `upright`; the wood grain runs lengthwise. */
