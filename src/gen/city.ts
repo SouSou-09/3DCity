@@ -5,6 +5,7 @@ import { Highways } from './highways';
 import { LandUsePlan, planLandUse } from './landuse';
 import { Rail, RailCrossing, RailIndex, railCrossings } from './rail';
 import { RoadGraph, buildRoadGraph } from './roadGraph';
+import { RoadProfile, roadProfiles } from './roadSections';
 import { generateRoads } from './roads';
 import { Station, placeStations } from './stations';
 import { RoadClass, RoadLine } from './streamlines';
@@ -53,6 +54,8 @@ export interface City {
   stations: Station[];
   /** Land use and lots along every street. */
   land: LandUsePlan;
+  /** Cross-section per road edge, chosen after the land use. */
+  profiles: RoadProfile[];
   stats: CityStats;
 }
 
@@ -70,6 +73,8 @@ export function generateCity(config: CityConfig = DEFAULT_CONFIG): City {
   const crossings = railCrossings(railIndex, graph);
   const stations = placeStations(roads.rail, terrain, districts, rng.fork('stations'));
   const land = planLandUse(graph, terrain, districts, roads.rail, stations, rng.fork('land'));
+
+  const profiles = roadProfiles(graph, terrain, districts, land, rng.fork('profiles'));
 
   const degree = [0, 0, 0, 0, 0, 0, 0];
   for (const n of graph.nodes) degree[Math.min(6, n.degree)]++;
@@ -93,5 +98,5 @@ export function generateCity(config: CityConfig = DEFAULT_CONFIG): City {
     lots: land.lots.length,
     ms: performance.now() - t0,
   };
-  return { config, terrain, districts, field: roads.field, highways: roads.highways, rail: roads.rail, railCrossings: crossings, lines: roads.lines, graph, stations, land, stats };
+  return { config, terrain, districts, field: roads.field, highways: roads.highways, rail: roads.rail, railCrossings: crossings, lines: roads.lines, graph, stations, land, profiles, stats };
 }
