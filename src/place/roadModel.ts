@@ -484,10 +484,11 @@ export function buildRoadModel(city: City): RoadModel {
   /** Piers and walls stand on the graded ground, so they are built once that is known. */
   const standing: (() => void)[] = [];
   let graded: Float32Array | null = null;
-  const gAt = (f: Frame): number => {
-    if (!graded) return heightAt(t, f.p[0], f.p[2]);
-    const fx = clamp(f.p[0] / t.cell, 0, t.n - 1.001);
-    const fy = clamp(f.p[2] / t.cell, 0, t.n - 1.001);
+  const gAt = (f: Frame): number => groundAt(f.p[0], f.p[2]);
+  const groundAt = (x: number, z: number): number => {
+    if (!graded) return heightAt(t, x, z);
+    const fx = clamp(x / t.cell, 0, t.n - 1.001);
+    const fy = clamp(z / t.cell, 0, t.n - 1.001);
     const [i, j] = [Math.floor(fx), Math.floor(fy)];
     const [u, v] = [fx - i, fy - j];
     return mix(mix(graded[j * t.n + i], graded[j * t.n + i + 1], u), mix(graded[(j + 1) * t.n + i], graded[(j + 1) * t.n + i + 1], u), v);
@@ -732,8 +733,8 @@ export function buildRoadModel(city: City): RoadModel {
           const x = sd * (hc - 0.15);
           const p0 = offset(f0, x, -0.3);
           const p1 = offset(f1, x, -0.3);
-          const d0 = Math.max(0.1, p0[1] - gAt(f0) + 0.8);
-          const d1 = Math.max(0.1, p1[1] - gAt(f1) + 0.8);
+          const d0 = Math.max(0.1, p0[1] - groundAt(p0[0], p0[2]) + 1);
+          const d1 = Math.max(0.1, p1[1] - groundAt(p1[0], p1[2]) + 1);
           b3.quadFacing('structure/wall-smooth', p0, p1, [p1[0], p1[1] - d1, p1[2]], [p0[0], p0[1] - d0, p0[2]], [f0.r[0] * sd, 0, f0.r[2] * sd], [[f0.s, 0], [f1.s, 0], [f1.s, d1], [f0.s, d0]]);
         }
       });
