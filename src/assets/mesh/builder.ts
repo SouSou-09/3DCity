@@ -53,8 +53,15 @@ export class MeshBuilder {
 
   /** Quad a-b-c-d, counter-clockwise seen from the front. uv in metres, or null for a planar guess. */
   quad(material: string, a: V3, b: V3, c: V3, d: V3, uv?: [number, number][] | null, layer = 0, normal?: V3 | V3[]): void {
+    let n = normal;
+    if (!n) {
+      // Fall back to the opposite corner when a, b and d are collinear; drop quads without area.
+      let x = v3.cross(v3.sub(b, a), v3.sub(d, a));
+      if (v3.len(x) < 1e-9) x = v3.cross(v3.sub(d, c), v3.sub(b, c));
+      if (v3.len(x) < 1e-9) return;
+      n = v3.norm(x);
+    }
     const p = this.part(material, layer);
-    const n = normal ?? v3.norm(v3.cross(v3.sub(b, a), v3.sub(d, a)));
     const base = p.positions.length / 3;
     const pts = [a, b, c, d];
     let uvs = uv;
@@ -74,8 +81,10 @@ export class MeshBuilder {
   }
 
   tri(material: string, a: V3, b: V3, c: V3, uv: [number, number][], layer = 0): void {
+    const x = v3.cross(v3.sub(b, a), v3.sub(c, a));
+    if (v3.len(x) < 1e-9) return;
     const p = this.part(material, layer);
-    const n = v3.norm(v3.cross(v3.sub(b, a), v3.sub(c, a)));
+    const n = v3.norm(x);
     const base = p.positions.length / 3;
     [a, b, c].forEach((q, i) => {
       p.positions.push(q[0], q[1], q[2]);
@@ -373,13 +382,24 @@ export const helix = (radius: number, turns: number, rise: number, bank = 0.04, 
 /** Path through arbitrary points (Catmull-Rom). */
 export function through(pts: V3[], n = pts.length * 10): Path {
   const P = (i: number) => pts[Math.max(0, Math.min(pts.length - 1, i))];
+  // Tangents weighted by chord length, so that unevenly spaced points do not make the curve overshoot.
+  const tangent = (i: number): V3 => {
+    const d0 = v3.len(v3.sub(P(i), P(i - 1)));
+    const d1 = v3.len(v3.sub(P(i + 1), P(i)));
+    if (d0 < 1e-9) return v3.scale(v3.sub(P(i + 1), P(i)), 1 / (d1 || 1));
+    if (d1 < 1e-9) return v3.scale(v3.sub(P(i), P(i - 1)), 1 / d0);
+    return v3.add(v3.scale(v3.sub(P(i), P(i - 1)), d1 / (d0 * (d0 + d1))), v3.scale(v3.sub(P(i + 1), P(i)), d0 / (d1 * (d0 + d1))));
+  };
   return makePath((q) => {
     const x = q * (pts.length - 1);
     const i = Math.min(pts.length - 2, Math.floor(x));
     const t = x - i;
-    const [p0, p1, p2, p3] = [P(i - 1), P(i), P(i + 1), P(i + 2)];
+    const [p1, p2] = [P(i), P(i + 1)];
+    const d = v3.len(v3.sub(p2, p1));
+    const [m1, m2] = [tangent(i), tangent(i + 1)];
+    const [t2, t3] = [t * t, t * t * t];
     const out: V3 = [0, 0, 0];
-    for (let k = 0; k < 3; k++) out[k] = 0.5 * (2 * p1[k] + (-p0[k] + p2[k]) * t + (2 * p0[k] - 5 * p1[k] + 4 * p2[k] - p3[k]) * t * t + (-p0[k] + 3 * p1[k] - 3 * p2[k] + p3[k]) * t * t * t);
+    for (let k = 0; k < 3; k++) out[k] = (2 * t3 - 3 * t2 + 1) * p1[k] + (t3 - 2 * t2 + t) * d * m1[k] + (-2 * t3 + 3 * t2) * p2[k] + (t3 - t2) * d * m2[k];
     return out;
   }, n);
 }

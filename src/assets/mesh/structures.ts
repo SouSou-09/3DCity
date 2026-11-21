@@ -508,7 +508,7 @@ export function addStructures(): void {
     sweepSection(b, mid, upper, { body: 'deck', deckDepth: 1.3 });
     abutment(b, mid[0], w, 1.3, -1);
     abutment(b, mid[mid.length - 1], w, 1.3, 1);
-    const ext = slopes === 'slope' ? w / 2 + H * 1.6 + 4 : w / 2 + 8;
+    const ext = slopes === 'slope' ? w / 2 + H * 1.6 + 14 : w / 2 + 18;
     const lp = placePath(straight(ext * 2, 1), [-ext, 0, 0], -Math.PI / 2);
     sweepSection(b, lp, lower);
     litter(b, lp, lower, 44, 0.6);

@@ -14,3 +14,4 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: #9cc4e4; fon
 body.mode3d #scene { display: block; }
 body.mode3d #map, body.mode3d #layers { display: none; }
 #panel button.active { font-weight: bold; }
+.hint a { color: #2a6fdb; }

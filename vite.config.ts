@@ -2,5 +2,5 @@ import { resolve } from 'node:path';
 import { defineConfig } from 'vite';
 
 export default defineConfig({
-  build: { rollupOptions: { input: { main: resolve(__dirname, 'index.html'), catalog: resolve(__dirname, 'catalog.html') } } },
+  build: { rollupOptions: { input: { main: resolve(import.meta.dirname, 'index.html'), catalog: resolve(import.meta.dirname, 'catalog.html') } } },
 });
