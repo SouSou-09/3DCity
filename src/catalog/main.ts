@@ -8,6 +8,7 @@ import './catalog.css';
 const TEX_CATEGORIES: [string, string][] = [
   ['asphalt', 'アスファルト'], ['concrete', 'コンクリート'], ['paving', '舗装材'], ['curb', '縁石'], ['ground', '地面'],
   ['structure', '構造物'], ['line', '区画線'], ['crosswalk', '横断歩道・停止線'], ['symbol', '路面標示'], ['cover', '蓋・汚れ'],
+  ['sign', '標識面'], ['signal', '信号灯器・支柱'],
 ];
 const params = new URLSearchParams(location.search);
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -62,8 +63,9 @@ function material(id: string, layer: number): THREE.Material {
     return t;
   };
   const orm = make(d.orm, false);
+  const albedo = make(d.albedo, true);
   m = new THREE.MeshStandardMaterial({
-    map: make(d.albedo, true), normalMap: make(d.normal, false), roughnessMap: orm, metalnessMap: orm, roughness: 1, metalness: 1,
+    map: albedo, ...(spec.emissive ? { emissive: 0xffffff, emissiveMap: albedo, emissiveIntensity: spec.emissive } : {}), normalMap: make(d.normal, false), roughnessMap: orm, metalnessMap: orm, roughness: 1, metalness: 1,
     transparent: spec.decal, depthWrite: !spec.decal, polygonOffset: layer > 0, polygonOffsetFactor: -layer * 2, polygonOffsetUnits: -layer * 4,
     side: spec.decal ? THREE.FrontSide : THREE.DoubleSide, shadowSide: THREE.DoubleSide,
   });

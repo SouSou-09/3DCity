@@ -21,7 +21,7 @@ describe('texture registry', { timeout: 120_000 }, () => {
   });
 
   it('offers many patterns in every category', () => {
-    const min: Record<TextureCategory, number> = { asphalt: 40, concrete: 12, paving: 30, curb: 8, ground: 10, structure: 20, line: 30, crosswalk: 15, symbol: 60, cover: 25 };
+    const min: Record<TextureCategory, number> = { asphalt: 40, concrete: 12, paving: 30, curb: 8, ground: 10, structure: 20, line: 30, crosswalk: 15, symbol: 60, cover: 25, sign: 100, signal: 30 };
     const n = count(TEXTURES);
     for (const [cat, least] of Object.entries(min)) expect(n.get(cat as TextureCategory) ?? 0, cat).toBeGreaterThanOrEqual(least);
     expect(TEXTURES.length).toBeGreaterThanOrEqual(350);

@@ -449,7 +449,7 @@ export class Layers {
   }
 }
 
-export type TextureCategory = 'asphalt' | 'concrete' | 'paving' | 'curb' | 'ground' | 'structure' | 'line' | 'crosswalk' | 'symbol' | 'cover';
+export type TextureCategory = 'asphalt' | 'concrete' | 'paving' | 'curb' | 'ground' | 'structure' | 'line' | 'crosswalk' | 'symbol' | 'cover' | 'sign' | 'signal';
 
 export interface TextureSpec {
   id: string;
@@ -464,6 +464,8 @@ export interface TextureSpec {
   decal: boolean;
   /** Pixels per metre at detail level 1. */
   density: number;
+  /** The surface glows with its own colour (lit lamps); 1 = full brightness. */
+  emissive?: number;
   generate: (tex: Tex) => TextureData;
 }
 
