@@ -216,7 +216,7 @@ export function useWeights(site: Site, corner = false): Record<LandUse, number> 
   mul(['R1'], 1.35 - 0.7 * site.access);
   mul(['R3'], 0.8 + 0.5 * site.access);
   if (site.majorJunction < 120 && (site.type === 'suburb' || site.type === 'residential')) {
-    w.C3 += 0.04;
+    if (site.road !== 'local' && site.road !== 'alley') w.C3 += 0.04;
     mul(['C3'], 6);
     mul(['C1', 'C4'], 2);
   }
