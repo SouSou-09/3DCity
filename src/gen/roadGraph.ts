@@ -387,8 +387,8 @@ function buildable(g: Builder, ctx: Ctx, a: Vec2, b: Vec2, cls: RoadClass, ignor
   for (let k = 0; k < g.edges.length; k++) {
     const e = g.edges[k];
     if (!e.alive) continue;
-    // Bigger streets pass over or under the freeway; everything else must not be crossed.
-    if (!isStreet(e.cls) && cls !== 'local') continue;
+    // Bigger streets pass under the freeway; everything else must not be crossed, ramps included: they come down to the ground.
+    if (e.cls === 'highway' && cls !== 'local') continue;
     // Streets that meet the new one at its ends touch it there, but may not curve back across it.
     const own = ignore.has(k);
     for (let i = 1; i < e.pts.length; i++) {

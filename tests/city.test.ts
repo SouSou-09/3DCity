@@ -454,6 +454,45 @@ describe('roads in 3D', () => {
     expect(steep).toBeLessThan(0.004 * all);
   });
 
+  it.each(MODEL_SEEDS)('seed %i: ramps come down gently and roads do not kink where they leave a junction', (seed) => {
+    const c = city(seed);
+    const m = model(seed);
+    let steep = 0;
+    let ramps = 0;
+    for (const e of c.graph.edges) {
+      if (e.cls !== 'ramp' || !m.lines[e.id]) continue;
+      ramps += e.length;
+      const lv = m.levels.edges[e.id];
+      for (let i = 1; i < lv.h.length; i++) {
+        const run = lv.s[i] - lv.s[i - 1];
+        if (run > 0.5 && Math.abs(lv.h[i] - lv.h[i - 1]) / run > 0.08) steep += run;
+      }
+    }
+    expect(ramps).toBeGreaterThan(2500);
+    expect(steep).toBeLessThan(0.01 * ramps);
+
+    const turn = (a: number[], b: number[], d: number[]): number => {
+      const [ax, ay, bx, by] = [b[0] - a[0], b[1] - a[1], d[0] - b[0], d[1] - b[1]];
+      const [la, lb] = [Math.hypot(ax, ay), Math.hypot(bx, by)];
+      return la < 0.5 || lb < 0.5 ? 0 : Math.acos(clamp((ax * bx + ay * by) / (la * lb), -1, 1));
+    };
+    let bends = 0;
+    let sharp = 0;
+    for (const e of c.graph.edges) {
+      const line = m.lines[e.id];
+      if (!line || e.cls === 'highway' || e.cls === 'ramp') continue;
+      // Streets whose own line turns a corner keep it.
+      const own = e.points.map((p) => [p.x, p.y]);
+      if (own.some((_, i) => i > 0 && i + 1 < own.length && turn(own[i - 1], own[i], own[i + 1]) > 0.3)) continue;
+      const built = line.map((p) => [p[0], p[2]]);
+      for (let i = 1; i + 1 < built.length; i++) {
+        bends++;
+        if (turn(built[i - 1], built[i], built[i + 1]) > 0.45) sharp++;
+      }
+    }
+    expect(sharp).toBeLessThan(0.002 * bends);
+  });
+
   it.each(MODEL_SEEDS)('seed %i: the ground is graded to the streets', (seed) => {
     const c = city(seed);
     const m = model(seed);

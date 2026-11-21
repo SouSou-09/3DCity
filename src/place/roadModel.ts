@@ -564,7 +564,7 @@ export function buildRoadModel(city: City): RoadModel {
     /** Curve from p (heading dir) to q (heading out), between the two ends; pushed in the order the road runs. */
     const curve = (p: Vec2, dir: Vec2, q: Vec2, out: Vec2, from: number, to: number, back: boolean): void => {
       const len = Math.hypot(q.x - p.x, q.y - p.y);
-      const count = Math.max(2, Math.ceil(len / 3));
+      const count = Math.max(3, Math.ceil(len / 2.5));
       const add: [Vec2, number, Vec2, number][] = [];
       for (let k = 1; k < count; k++) {
         const u = k / count;
@@ -577,9 +577,9 @@ export function buildRoadModel(city: City): RoadModel {
       if (back) add.reverse();
       for (const [pt, h, tg, k] of add) push(pt, h, tg, k);
     };
-    const onto = (p: Vec2, dir: Vec2, from: number, to: number): void => {
+    const onto = (p: Vec2, dir: Vec2, from: number, to: number, back: boolean): void => {
       const tq = tangentAt(to);
-      curve(p, dir, lv.pts[to], to < from ? { x: -tq.x, y: -tq.y } : tq, from, to, to < from);
+      curve(p, dir, lv.pts[to], back ? { x: -tq.x, y: -tq.y } : tq, from, to, back);
     };
     if (i0 <= i1) {
       const mid = (i0 + i1) >> 1;
@@ -588,17 +588,13 @@ export function buildRoadModel(city: City): RoadModel {
     }
     if (sp.p0) {
       push(sp.p0, lv.h[Math.min(i0, n - 1)], a!.dir, Math.min(i0, n - 1));
-      if (i0 <= i1) onto(sp.p0, a!.dir, i0, j0);
+      if (i0 <= i1) onto(sp.p0, a!.dir, i0, j0, false);
       // Two junctions with nothing in between: one curve from arm to arm.
-      else if (sp.p1) {
-        // Only where the bend is wide enough for the road's own width.
-        const turn = Math.acos(clamp(-(a!.dir.x * b!.dir.x + a!.dir.y * b!.dir.y), -1, 1));
-        if (room / Math.max(turn, 0.01) > hc + 4) curve(sp.p0, a!.dir, sp.p1, { x: -b!.dir.x, y: -b!.dir.y }, Math.min(i0, n - 1), Math.max(i1, 0), false);
-      }
+      else if (sp.p1) curve(sp.p0, a!.dir, sp.p1, { x: -b!.dir.x, y: -b!.dir.y }, Math.min(i0, n - 1), Math.max(i1, 0), false);
     }
     for (let i = j0; i <= j1; i++) push(lv.pts[i], lv.h[i], tangentAt(i), i);
     if (sp.p1) {
-      if (i0 <= i1) onto(sp.p1, b!.dir, i1, j1);
+      if (i0 <= i1) onto(sp.p1, b!.dir, i1, j1, true);
       push(sp.p1, lv.h[Math.max(i1, 0)], { x: -b!.dir.x, y: -b!.dir.y }, Math.max(i1, 0));
     }
     if (pts.length < 2) return;
