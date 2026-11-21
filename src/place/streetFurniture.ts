@@ -3,6 +3,7 @@ import { Layout, layout, reversed } from '../assets/mesh/section';
 import { Vec2 } from '../core/vec2';
 import { City } from '../gen/city';
 import { DistrictType } from '../gen/districts';
+import { isWater } from '../gen/terrain';
 import { RoadClass } from '../gen/streamlines';
 import { Junction, JunctionArm, RoadModel } from './roadModel';
 
@@ -18,7 +19,7 @@ export interface Placed {
   h: number;
   /** The model's +x axis points along (cos yaw, sin yaw) on the map, its +z axis along (-sin yaw, cos yaw). */
   yaw: number;
-  /** Junction (index into the road model's junctions) or edge it belongs to. */
+  /** Junction (index into the road model's junctions) it belongs to, if any, and the edge it stands beside. */
   junction?: number;
   edge?: number;
   /** Junction arm it serves. */
@@ -106,8 +107,65 @@ export function placeStreetFurniture(city: City, roads: RoadModel): StreetFurnit
         for (const o of grid.get(key(x + dx * CELL, y + dy * CELL)) ?? []) if (Math.hypot(o.x - x, o.y - y) < r) return false;
     return true;
   };
-  const put = (it: Placed, clear = 1.2): boolean => {
-    if (!free(it.x, it.y, clear)) return false;
+  // Carriageways as built, so that nothing ends up in a lane of the road next door.
+  type Seg = { ax: number; ay: number; ah: number; bx: number; by: number; bh: number; l: number; r: number; edge: number };
+  const LANE = 40;
+  const lanes = new Map<number, Seg[]>();
+  const laneKey = (x: number, y: number): number => Math.floor(x / LANE) * 8192 + Math.floor(y / LANE);
+  const addSeg = (sg: Seg): void => {
+    const n = Math.max(1, Math.ceil(Math.hypot(sg.bx - sg.ax, sg.by - sg.ay) / (LANE / 2)));
+    let last = NaN;
+    for (let k = 0; k <= n; k++) {
+      const kk = laneKey(sg.ax + ((sg.bx - sg.ax) * k) / n, sg.ay + ((sg.by - sg.ay) * k) / n);
+      if (kk === last) continue;
+      last = kk;
+      const cell = lanes.get(kk);
+      if (cell) cell.push(sg);
+      else lanes.set(kk, [sg]);
+    }
+  };
+  graph.edges.forEach((e) => {
+    const line = roads.lines[e.id];
+    if (!line || e.cls === 'path') return;
+    const lay = layout(roads.sections[e.id]);
+    for (let i = 1; i < line.length; i++) {
+      const [a, b] = [line[i - 1], line[i]];
+      addSeg({ ax: a[0], ay: a[2], ah: a[1], bx: b[0], by: b[2], bh: b[1], l: lay.road[0], r: lay.road[1], edge: e.id });
+    }
+  });
+  for (const j of roads.junctions) {
+    for (const a of j.arms) {
+      if (!roads.lines[a.edge] || !Number.isFinite(a.reach) || graph.edges[a.edge].cls === 'path') continue;
+      // The arm's approach, between the corner and the start of the road itself.
+      const lay = layout(a.end === 0 ? roads.sections[a.edge] : reversed(roads.sections[a.edge]));
+      const d0 = Math.max(0, a.reach - a.approach - 1);
+      const at = (d: number): [number, number, number] => {
+        const [x, y] = [j.x + a.dir.x * d, j.y + a.dir.y * d];
+        return [x, y, j.plane.h + j.plane.gx * (x - j.x) + j.plane.gy * (y - j.y)];
+      };
+      const [p, q] = [at(d0), at(a.reach)];
+      addSeg({ ax: p[0], ay: p[1], ah: p[2], bx: q[0], by: q[1], bh: q[2], l: lay.road[0], r: lay.road[1], edge: a.edge });
+    }
+  }
+  /** Whether a point lies in the carriageway of a road at its own level (other than `own`). */
+  const inLane = (x: number, y: number, h: number, own?: number): boolean => {
+    for (let dx = -1; dx <= 1; dx++)
+      for (let dy = -1; dy <= 1; dy++)
+        for (const sg of lanes.get(laneKey(x + dx * LANE, y + dy * LANE)) ?? []) {
+          if (sg.edge === own) continue;
+          const [vx, vy] = [sg.bx - sg.ax, sg.by - sg.ay];
+          const l = Math.hypot(vx, vy) || 1;
+          const u = ((x - sg.ax) * vx + (y - sg.ay) * vy) / (l * l);
+          if (u < 0 || u > 1 || Math.abs(sg.ah + (sg.bh - sg.ah) * u - h) > 2.5) continue;
+          const off = ((x - sg.ax) * -vy + (y - sg.ay) * vx) / l;
+          if (off > sg.l - 0.3 && off < sg.r + 0.3) return true;
+        }
+    return false;
+  };
+
+  const put = (it: Placed, clear = 1.2, own?: number): boolean => {
+    if (!free(it.x, it.y, clear) || inLane(it.x, it.y, it.h, own)) return false;
+    if (isWater(city.terrain, it.x, it.y) && !(it.edge !== undefined && graph.edges[it.edge].bridge)) return false;
     items.push(it);
     stats[it.kind]++;
     const k = key(it.x, it.y);
@@ -213,11 +271,11 @@ export function placeStreetFurniture(city: City, roads: RoadModel): StreetFurnit
         const d = a.reach + 1.5;
         const back = rev(a.dir);
         if (info.exit) {
-          put({ model: 'sign/do-not-enter-wrong-way', kind: 'oneway', ...armPoint(j, a, lay, d, lay.outer[1] - 0.2), yaw: facing(back), junction: ji, arm: ai }, 0.8);
-          put({ model: 'sign/do-not-enter', kind: 'oneway', ...armPoint(j, a, lay, d, lay.outer[0] + 0.2), yaw: facing(back), junction: ji, arm: ai }, 0.8);
+          put({ model: 'sign/do-not-enter-wrong-way', kind: 'oneway', ...armPoint(j, a, lay, d, lay.outer[1] + 0.9), yaw: facing(back), junction: ji, arm: ai, edge: a.edge }, 0.8);
+          put({ model: 'sign/do-not-enter', kind: 'oneway', ...armPoint(j, a, lay, d, lay.outer[0] - 0.9), yaw: facing(back), junction: ji, arm: ai, edge: a.edge }, 0.8);
         } else {
           const model = hash(seed, ji, ai, 8) < 0.2 ? 'sign/route-freeway-entrance-old' : 'sign/route-freeway-entrance';
-          put({ model, kind: 'guide', ...armPoint(j, a, lay, d, lay.outer[1] - 0.2), yaw: facing(back), junction: ji, arm: ai }, 0.8);
+          put({ model, kind: 'guide', ...armPoint(j, a, lay, d, lay.outer[1] + 0.9), yaw: facing(back), junction: ji, arm: ai, edge: a.edge }, 0.8);
         }
       });
     }
@@ -249,12 +307,19 @@ export function placeStreetFurniture(city: City, roads: RoadModel): StreetFurnit
             const need = fl.road[1] + behind(fw) + 0.5;
             const mast = MASTS.find(([len]) => len >= need) ?? MASTS[MASTS.length - 1];
             const p = armPoint(j, far, fl, far.reach - far.approach + 0.2, fl.road[1] + behind(fw));
-            hung = put({ model: mast[1], kind: 'signal', ...p, yaw: along(right(far.dir)), junction: ji, arm: ai }, 0.8);
+            hung = put({ model: mast[1], kind: 'signal', ...p, yaw: along(right(far.dir)), junction: ji, arm: ai, edge: far.edge }, 0.8);
           }
           if (!hung) {
-            // Nothing straight ahead to hang a mast over: a post at the stop line instead.
-            const p = armPoint(j, a, lay, a.reach - 0.6, lay.road[0] - behind(wl));
-            put({ model: 'signal/post-top-ped', kind: 'signal', ...p, yaw: facing(a.dir), junction: ji, arm: ai }, 0.8);
+            // Nothing straight ahead to hang a mast over: a post at the stop line instead, wherever one fits.
+            const spots: [number, number][] = [
+              [a.reach - 0.6, lay.road[0] - behind(wl)],
+              [a.reach + 2.5, lay.road[0] - behind(wl)],
+              [a.reach - 0.6, lay.road[1] + behind(wr)],
+              [a.reach + 2.5, lay.road[1] + behind(wr)],
+              [a.reach + 6, lay.road[0] - behind(wl)],
+              [a.reach + 6, lay.road[1] + behind(wr)],
+            ];
+            spots.some(([d, x]) => put({ model: 'signal/post-top-ped', kind: 'signal', ...armPoint(j, a, lay, d, x), yaw: facing(a.dir), junction: ji, arm: ai, edge: a.edge }, 0.8));
           }
         }
         if (a.crosswalk) {
@@ -262,8 +327,8 @@ export function placeStreetFurniture(city: City, roads: RoadModel): StreetFurnit
           const r = right(a.dir);
           const pr = armPoint(j, a, lay, L + 2.2, lay.road[1] + behind(wr));
           const pl = armPoint(j, a, lay, L + 2.2, lay.road[0] - behind(wl));
-          put({ model: 'signal/ped-pole', kind: 'ped', ...pr, yaw: facing({ x: -r.x, y: -r.y }), junction: ji, arm: ai }, 0.8);
-          put({ model: 'signal/ped-pole', kind: 'ped', ...pl, yaw: facing(r), junction: ji, arm: ai }, 0.8);
+          put({ model: 'signal/ped-pole', kind: 'ped', ...pr, yaw: facing({ x: -r.x, y: -r.y }), junction: ji, arm: ai, edge: a.edge }, 0.8);
+          put({ model: 'signal/ped-pole', kind: 'ped', ...pl, yaw: facing(r), junction: ji, arm: ai, edge: a.edge }, 0.8);
         }
       });
       // The controller cabinet at the back of the widest pavement.
@@ -275,7 +340,7 @@ export function placeStreetFurniture(city: City, roads: RoadModel): StreetFurnit
       }
       if (best) {
         const p = armPoint(j, best.a, best.lay, best.a.reach + 2.5, best.lay.outer[0] + 0.45);
-        put({ model: CABINETS[Math.floor(hash(seed, ji, 11) * CABINETS.length)], kind: 'cabinet', ...p, yaw: facing(right(best.a.dir)), junction: ji }, 1);
+        put({ model: CABINETS[Math.floor(hash(seed, ji, 11) * CABINETS.length)], kind: 'cabinet', ...p, yaw: facing(right(best.a.dir)), junction: ji, edge: best.a.edge }, 1);
       }
       return;
     }
@@ -285,7 +350,7 @@ export function placeStreetFurniture(city: City, roads: RoadModel): StreetFurnit
       if (a.control !== 'stop' || !arrives(a)) return;
       const lay = armLay(a);
       const wl = lay.road[0] - lay.outer[0];
-      const p = armPoint(j, a, lay, a.reach - 0.5, lay.road[0] - behind(wl));
+      const wr = lay.outer[1] - lay.road[1];
       const roll = hash(seed, ji, ai, 3);
       let model = stops.length === arms.length ? 'sign/stop-all-way' : 'sign/stop';
       if (!named && roll < 0.5) {
@@ -293,8 +358,17 @@ export function placeStreetFurniture(city: City, roads: RoadModel): StreetFurnit
         named = true;
       } else if (roll > 0.97) model = 'sign/stop-old-leaning';
       else if (roll > 0.95) model = 'sign/stop-bent';
-      put({ model, kind: 'stop', ...p, yaw: facing(a.dir), junction: ji, arm: ai }, 0.8);
-      if (model.startsWith('sign/stop-street')) stats.street++;
+      // On the driver's right at the stop line; further back or across the road where that corner is taken.
+      const spots: [number, number][] = [
+        [a.reach - 0.5, lay.road[0] - behind(wl)],
+        [a.reach + 2, lay.road[0] - behind(wl)],
+        [a.reach + 5, lay.road[0] - behind(wl)],
+        [a.reach - 0.5, lay.road[1] + behind(wr)],
+        [a.reach + 3, lay.road[1] + behind(wr)],
+      ];
+      const stood = spots.some(([d, x]) => put({ model, kind: 'stop', ...armPoint(j, a, lay, d, x), yaw: facing(a.dir), junction: ji, arm: ai, edge: a.edge }, 0.8));
+      if (!stood) named = model.startsWith('sign/stop-street') ? false : named;
+      else if (model.startsWith('sign/stop-street')) stats.street++;
     });
     if (!named) {
       // Street names on their own post at a corner.
@@ -305,7 +379,7 @@ export function placeStreetFurniture(city: City, roads: RoadModel): StreetFurnit
         const p = armPoint(j, a, lay, a.reach - a.approach + 0.3, lay.road[1] + behind(wr));
         const roll = hash(seed, ji, 5);
         const model = roll < 0.06 ? 'sign/street-old-leaning' : roll < 0.2 ? 'sign/street-two-u' : 'sign/street-two';
-        put({ model, kind: 'street', ...p, yaw: along(a.dir), junction: ji }, 0.8);
+        put({ model, kind: 'street', ...p, yaw: along(a.dir), junction: ji, edge: a.edge }, 0.8);
       }
     }
     // One light at a corner, on the left of the busiest road's arm.
@@ -318,7 +392,7 @@ export function placeStreetFurniture(city: City, roads: RoadModel): StreetFurnit
       const set = LIGHTS[pr.type as DistrictType] ?? LIGHTS.residential;
       const model = set[graph.edges[lead.edge].cls === 'arterial' ? 0 : 1];
       const p = armPoint(j, lead, lay, lead.reach - lead.approach + 0.3, lay.road[0] - behind(lay.road[0] - lay.outer[0]));
-      put({ model, kind: 'light', ...p, yaw: along(rev(right(lead.dir))), junction: ji }, 1.5);
+      put({ model, kind: 'light', ...p, yaw: along(rev(right(lead.dir))), junction: ji, edge: lead.edge }, 1.5);
     }
   });
 
@@ -333,10 +407,10 @@ export function placeStreetFurniture(city: City, roads: RoadModel): StreetFurnit
       const [wl, wr] = [lay.road[0] - lay.outer[0], lay.outer[1] - lay.road[1]];
       if (a.end === 0) {
         const r = right(a.dir);
-        put({ model: 'sign/one-way-right', kind: 'oneway', ...armPoint(j, a, lay, L + 0.6, lay.road[1] + behind(wr)), yaw: facing(r), junction: ji, arm: ai }, 0.7);
-        put({ model: 'sign/one-way-left', kind: 'oneway', ...armPoint(j, a, lay, L + 0.6, lay.road[0] - behind(wl)), yaw: facing(rev(r)), junction: ji, arm: ai }, 0.7);
+        put({ model: 'sign/one-way-right', kind: 'oneway', ...armPoint(j, a, lay, L + 0.6, lay.road[1] + behind(wr)), yaw: facing(r), junction: ji, arm: ai, edge: a.edge }, 0.7);
+        put({ model: 'sign/one-way-left', kind: 'oneway', ...armPoint(j, a, lay, L + 0.6, lay.road[0] - behind(wl)), yaw: facing(rev(r)), junction: ji, arm: ai, edge: a.edge }, 0.7);
       } else {
-        put({ model: 'sign/do-not-enter', kind: 'oneway', ...armPoint(j, a, lay, a.reach + 1, lay.road[1] + behind(wr)), yaw: facing(rev(a.dir)), junction: ji, arm: ai }, 0.7);
+        put({ model: 'sign/do-not-enter', kind: 'oneway', ...armPoint(j, a, lay, a.reach + 1, lay.road[1] + behind(wr)), yaw: facing(rev(a.dir)), junction: ji, arm: ai, edge: a.edge }, 0.7);
       }
     });
   });
@@ -359,20 +433,20 @@ export function placeStreetFurniture(city: City, roads: RoadModel): StreetFurnit
       // Twin lights on the median barrier.
       for (let d = 30 + 60 * hash(seed, e.id, 1); d < len - 10; d += 60) {
         const q = at(d, 0);
-        put({ model: 'furniture/light-cobra-twin', kind: 'light', x: q.x, y: q.y, h: q.h, yaw: along(right(q.t)), edge: e.id }, 6);
+        put({ model: 'furniture/light-cobra-twin', kind: 'light', x: q.x, y: q.y, h: q.h, yaw: along(right(q.t)), edge: e.id }, 6, e.id);
       }
       if (len > 260 && hash(seed, e.id, 9) < 0.4) {
         const fwd = at(len * 0.3, lay.outer[1] - 0.15);
-        put({ model: 'sign/speed-65', kind: 'speed', x: fwd.x, y: fwd.y, h: fwd.h, yaw: facing(rev(fwd.t)), edge: e.id }, 1.5);
+        put({ model: 'sign/speed-65', kind: 'speed', x: fwd.x, y: fwd.y, h: fwd.h, yaw: facing(rev(fwd.t)), edge: e.id }, 1.5, e.id);
         const back = at(len * 0.7, lay.outer[0] + 0.15);
-        put({ model: 'sign/speed-65', kind: 'speed', x: back.x, y: back.y, h: back.h, yaw: facing(back.t), edge: e.id }, 1.5);
+        put({ model: 'sign/speed-65', kind: 'speed', x: back.x, y: back.y, h: back.h, yaw: facing(back.t), edge: e.id }, 1.5, e.id);
       }
       return;
     }
     if (cls === 'ramp') {
       for (let d = 25 + 30 * hash(seed, e.id, 1); d < len - 15; d += 55) {
         const q = at(d, lay.outer[1] - 0.15);
-        put({ model: 'furniture/light-cobra-12-long', kind: 'light', x: q.x, y: q.y, h: q.h, yaw: along(right(q.t)), edge: e.id }, 6);
+        put({ model: 'furniture/light-cobra-12-long', kind: 'light', x: q.x, y: q.y, h: q.h, yaw: along(right(q.t)), edge: e.id }, 6, e.id);
       }
       const info = rampInfo(e.id);
       if (info?.exit) {
@@ -381,7 +455,7 @@ export function placeStreetFurniture(city: City, roads: RoadModel): StreetFurnit
         const d = Math.min(len * 0.5, 70);
         const g = at(from ? d : len - d, from ? lay.outer[0] + 0.2 : lay.outer[1] - 0.2);
         const dir = from ? g.t : rev(g.t);
-        put({ model: hash(seed, e.id, 10) < 0.25 ? 'sign/guide-gore-old' : 'sign/guide-gore', kind: 'guide', x: g.x, y: g.y, h: g.h, yaw: facing(rev(dir)), edge: e.id }, 1.5);
+        put({ model: hash(seed, e.id, 10) < 0.25 ? 'sign/guide-gore-old' : 'sign/guide-gore', kind: 'guide', x: g.x, y: g.y, h: g.h, yaw: facing(rev(dir)), edge: e.id }, 1.5, e.id);
         const up = info.upstream === null ? null : track(info.upstream);
         if (up && info.upstream !== null) {
           const ends = graph.edges[info.upstream].b === info.node;
@@ -389,7 +463,7 @@ export function placeStreetFurniture(city: City, roads: RoadModel): StreetFurnit
           // Traffic towards the fork runs with the edge if the edge ends there; the board stands on its right-hand barrier.
           const q = up.at(ends ? up.len - back : back, ends ? up.lay.outer[1] - 0.3 : up.lay.outer[0] + 0.3);
           const t = ends ? q.t : rev(q.t);
-          put({ model: hash(seed, e.id, 12) < 0.5 ? 'sign/overhead-cantilever-exit' : 'sign/overhead-tube-arm', kind: 'guide', x: q.x, y: q.y, h: q.h, yaw: along(right(t)), edge: info.upstream }, 6);
+          put({ model: hash(seed, e.id, 12) < 0.5 ? 'sign/overhead-cantilever-exit' : 'sign/overhead-tube-arm', kind: 'guide', x: q.x, y: q.y, h: q.h, yaw: along(right(t)), edge: info.upstream }, 6, info.upstream);
         }
       }
       return;
