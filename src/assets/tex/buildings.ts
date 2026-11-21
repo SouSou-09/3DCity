@@ -671,4 +671,6 @@ add('roof', 'flat-gravel-light', '陸屋根 白っぽい砂利', [2, 2], (t, s) 
 add('roof', 'flat-concrete', '陸屋根 コンクリート', [3, 3], (t, s) => S.concrete(t, { seed: s, slab: [3, 3], finish: 'broom', dirt: 0.7, stains: 0.6, cracks: 0.4 }), { density: 170 });
 add('roof', 'deck-parking', '屋上駐車場の床', [3, 3], (t, s) => S.concrete(t, { seed: s, slab: [3, 3], finish: 'broom', color: [0.5, 0.5, 0.5], dirt: 0.8, stains: 1.2, cracks: 0.3 }), { density: 170 });
 
-export const BUILDING_TEXTURES: readonly TextureSpec[] = list;
+/** Bare and coated sheet metal needs something to reflect, or it renders almost black. */
+const SHEET = /\/(metal-|seam-|corrugated-)/;
+export const BUILDING_TEXTURES: readonly TextureSpec[] = list.map((t) => (SHEET.test(t.id) && t.reflect === undefined ? { ...t, reflect: 0.7 } : t));
