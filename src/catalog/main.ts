@@ -13,6 +13,9 @@ const params = new URLSearchParams(location.search);
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 let tab: 'textures' | 'models' = params.get('tab') === 'textures' ? 'textures' : 'models';
 let cat = params.get('cat') ?? 'all';
+/** Optional camera direction ("x,y,z") and zoom for the model viewer, for reproducible screenshots. */
+const viewDir = params.get('dir')?.split(',').map(Number) as [number, number, number] | undefined;
+const viewZoom = Number(params.get('zoom')) || 1;
 /** Texture detail used in the 3D views (1 = full). */
 const quality = Number(params.get('q')) || 0.5;
 
@@ -104,14 +107,14 @@ class Stage {
     this.sun.shadow.bias = -0.0005;
     this.sun.shadow.normalBias = 0.05;
   }
-  show(obj: THREE.Object3D, min: number[], max: number[], dir: [number, number, number] = [0.55, 0.5, 0.75]): THREE.Vector3 {
+  show(obj: THREE.Object3D, min: number[], max: number[], dir: [number, number, number] = [0.55, 0.5, 0.75], zoom = 1): THREE.Vector3 {
     if (this.current) this.scene.remove(this.current);
     this.current = obj;
     this.scene.add(obj);
     const c = new THREE.Vector3((min[0] + max[0]) / 2, (min[1] + max[1]) / 2, (min[2] + max[2]) / 2);
     const r = Math.hypot(max[0] - min[0], max[1] - min[1], max[2] - min[2]) / 2;
     const d = new THREE.Vector3(...dir).normalize();
-    this.camera.position.copy(c).addScaledVector(d, (r / Math.sin((this.camera.fov * Math.PI) / 360)) * 0.82);
+    this.camera.position.copy(c).addScaledVector(d, (r / Math.sin((this.camera.fov * Math.PI) / 360)) * (0.82 / zoom));
     this.camera.near = r / 100;
     this.camera.far = r * 20;
     this.camera.lookAt(c);
@@ -177,7 +180,7 @@ function open(kind: 'tex' | 'model', id: string): void {
     const size = data.max.map((v, i) => (v - data.min[i]).toFixed(1));
     $('title').textContent = spec.label;
     $('info').textContent = `${spec.id} ・ ${size[0]} × ${size[2]} m(高さ ${size[1]} m)・ ${data.triangles.toLocaleString()} 三角形 ・ ${data.parts.length} マテリアル`;
-    target = viewStage.show(modelGroup(data), data.min, data.max);
+    target = viewStage.show(modelGroup(data), data.min, data.max, viewDir ?? undefined, viewZoom);
   } else {
     const spec = textureSpec(id);
     const d = texData(id, 1);
