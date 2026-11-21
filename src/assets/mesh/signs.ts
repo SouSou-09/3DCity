@@ -476,7 +476,7 @@ function verticalPanel(b: MeshBuilder, f: Pose, left: boolean): void {
   face(b, `sign/stripes-orange-${left ? 'r' : 'l'}`, turn(f, 180), [0, 0.78, 0.0095], 0.2, 0.6, [0, 0, 0.2, 0.6]);
 }
 /** Trailer-mounted flashing arrow board. */
-function arrowBoard(b: MeshBuilder, f: Pose, mode: 'left' | 'right' | 'double' | 'caution' | 'off', raised = true): void {
+function arrowBoard(b: MeshBuilder, f: Pose, mode: 'left' | 'right' | 'double' | 'caution' | 'off', cy = 2.9): void {
   const Y = 'signal/housing-yellow';
   // Trailer.
   box(b, Y, f, [0, 0.5, 0], [0.9, 0.05, 0.45]);
@@ -491,7 +491,6 @@ function arrowBoard(b: MeshBuilder, f: Pose, mode: 'left' | 'right' | 'double' |
     for (const sx of [-1, 1]) b.tube(ZINC, at(f, sx * 0.8, 0.02, sz * 0.4), at(f, sx * 0.8, 0.46, sz * 0.4), 0.022, 6, 0.022, true);
   }
   box(b, 'signal/cabinet-side', f, [0.35, 0.8, 0], [0.4, 0.25, 0.35]);
-  const cy = raised ? 2.9 : 1.75;
   box(b, Y, f, [-0.45, (0.55 + cy) / 2, -0.1], [0.05, (cy - 0.55) / 2, 0.05]);
   // Board.
   const g = move(turn(f, 90), 0, cy, 0.45);
@@ -851,10 +850,10 @@ export function addSigns(): void {
     for (let i = 0; i < 4; i++) verticalPanel(b, stand([i * 2 - 3, 0, i * 0.5 - 0.75]), false);
   });
   add('work-arrow-board-right', '矢印板トレーラー 右', (b) => arrowBoard(b, O, 'right'));
-  add('work-arrow-board-left', '矢印板トレーラー 左', (b) => arrowBoard(b, O, 'left'));
+  add('work-arrow-board-left', '矢印板トレーラー 左', (b) => arrowBoard(b, O, 'left', 2.6));
   add('work-arrow-board-double', '矢印板トレーラー 両矢印', (b) => arrowBoard(b, O, 'double'));
   add('work-arrow-board-caution', '矢印板トレーラー 四隅点滅', (b) => arrowBoard(b, O, 'caution'));
-  add('work-arrow-board-stowed', '矢印板トレーラー 格納', (b) => arrowBoard(b, O, 'off', false));
+  add('work-arrow-board-stowed', '矢印板トレーラー 格納', (b) => arrowBoard(b, O, 'off', 1.75));
   add('work-lane-closure', '車線規制セット 標識+矢印板+コーン', (b) => {
     workStand(b, stand([4.5, 0, 9]), { id: 'work-right-lane-closed', flags: true });
     arrowBoard(b, stand([2.2, 0, 0], -90), 'left');
