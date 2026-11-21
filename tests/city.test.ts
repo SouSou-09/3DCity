@@ -527,7 +527,7 @@ describe('roads in 3D', () => {
     }
     // The ground does not cover the road, and the road does not float. (Two roads that run side by side
     // at different heights on a hillside share ground that can only match one of them.)
-    expect(buried).toBeLessThan(0.003 * samples);
+    expect(buried).toBeLessThan(0.002 * samples);
     expect(above).toBeLessThan(0.005 * samples);
     expect(below).toBeLessThan(0.005 * samples);
   });
