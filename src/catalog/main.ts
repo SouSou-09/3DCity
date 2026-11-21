@@ -108,7 +108,10 @@ class Stage {
     this.sun.shadow.normalBias = 0.05;
   }
   show(obj: THREE.Object3D, min: number[], max: number[], dir: [number, number, number] = [0.55, 0.5, 0.75], zoom = 1, points = true): THREE.Vector3 {
-    if (this.current) this.scene.remove(this.current);
+    if (this.current) {
+      this.scene.remove(this.current);
+      this.current.traverse((o) => (o as THREE.Mesh).geometry?.dispose());
+    }
     this.current = obj;
     this.scene.add(obj);
     const c = new THREE.Vector3((min[0] + max[0]) / 2, (min[1] + max[1]) / 2, (min[2] + max[2]) / 2);
