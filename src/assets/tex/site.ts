@@ -46,7 +46,7 @@ function boards(tex: Tex, seed: number, color: RGB, o: BoardOpts): TextureData {
     const g0 = (color[0] + color[1] + color[2]) / 3;
     let c: RGB = [lerp(color[0], g0 * 1.02, grey), lerp(color[1], g0 * 1.02, grey), lerp(color[2], g0 * 1.06, grey)];
     let rough = 0.88;
-    if (o.paint && peel(x + id * 3, y) > o.age * 1.6 - 0.75) {
+    if (o.paint && peel(x + id * 3, y) * 0.5 + 0.5 > o.age * o.age * (0.75 + sstep(0.5, 0, y) * 0.5 + (1 - sstep(0.0015, 0.02, Math.max(0, d))) * 0.4)) {
       c = o.paint;
       rough = 0.6;
     }
@@ -166,7 +166,7 @@ function fabric(tex: Tex, seed: number, c: RGB, o: { fade?: number; weave?: numb
   const dirt = tex.noise(0.2, 0.2, seed + 2, 3);
   const wv = o.weave ?? 0.004;
   tex.map((x, y, k) => {
-    const weave = ((Math.floor(x / wv) + Math.floor(y / wv)) % 2) * 0.08;
+    const weave = hash2(Math.floor(x / wv), Math.floor(y / wv), seed) * 0.07;
     let col = c;
     if (o.stripes && Math.floor(x / 0.25) % 2) col = o.stripes;
     const f = clamp01((o.fade ?? 0.2) * (0.6 + fade(x, y)));
@@ -215,7 +215,7 @@ add('chainlink-slats-white', '金網 目隠し板 白', [0.5, 0.5], (t, s) => sl
 add('chainlink-slats-grey', '金網 目隠し板 灰', [0.5, 0.5], (t, s) => slats(t, s, hex(0x70747a)), { ...tiled, density: 384 });
 
 // --- Stone: boulders, rubble, gabions. Each stone is one cell lit on its own facet. ---
-interface StoneOpts { size: number; colors: readonly RGB[]; gap?: RGB; flat?: number; moss?: number; wet?: number; mesh?: boolean; stretch?: number }
+interface StoneOpts { size: number; colors: readonly RGB[]; gap?: RGB; flat?: number; moss?: number; wet?: number; mesh?: boolean; stretch?: number; crack?: number; vary?: number }
 function stones(tex: Tex, seed: number, o: StoneOpts): Layers {
   const gap = o.gap ?? [0.07, 0.065, 0.06];
   const L = new Layers(tex, gap, 0.92);
@@ -225,10 +225,11 @@ function stones(tex: Tex, seed: number, o: StoneOpts): Layers {
   const st = o.stretch ?? 1;
   tex.map((x, y, k) => {
     const c = cell(x, y * st);
-    const top = sstep(0.02, 0.22, c.f2 - c.f1);
+    const top = sstep(0.02 * (o.crack ?? 1), 0.22 * (o.crack ?? 1), c.f2 - c.f1);
     const col = o.colors[Math.floor(c.id * 997) % o.colors.length];
     const gr = grainN(x, y);
-    const m = (0.72 + ((c.id * 37) % 1) * 0.5) * (1 + gr * 0.22) * (0.5 + 0.5 * top) * (1 + (hash2(k, 3, seed) - 0.5) * 0.06);
+    const vary = o.vary ?? 0.5;
+    const m = (1 - vary * 0.56 + ((c.id * 37) % 1) * vary) * (1 + gr * (0.22 + (0.5 - vary) * 0.5)) * (0.5 + 0.5 * top) * (0.78 + 0.3 * (1 - c.f1)) * (1 + (hash2(k, 3, seed) - 0.5) * 0.06);
     let r = lerp(gap[0], col[0] * m, top);
     let g = lerp(gap[1], col[1] * m, top);
     let b = lerp(gap[2], col[2] * m, top);
@@ -264,11 +265,11 @@ add('riprap-dark', '捨石 玄武岩', [3, 3], (t, s) => stones(t, s, { size: 0.
 add('riprap-wet', '捨石 濡れて海藻つき', [3, 3], (t, s) => stones(t, s, { size: 0.55, colors: GRANITE, wet: 0.8, moss: 0.35 }).finish(1.4), tiled);
 add('riprap-mossy', '捨石 苔むした', [3, 3], (t, s) => stones(t, s, { size: 0.5, colors: LIMESTONE, moss: 0.6 }).finish(1.4), tiled);
 add('riprap-sandstone', '捨石 砂岩', [3, 3], (t, s) => stones(t, s, { size: 0.5, colors: SANDSTONE }).finish(1.4), tiled);
-add('rock-granite', '岩肌 花崗岩', [2, 2], (t, s) => stones(t, s, { size: 1.1, colors: GRANITE, flat: 0.8, gap: [0.3, 0.29, 0.28] }).finish(1.6), tiled);
-add('rock-sandstone', '岩肌 砂岩', [2, 2], (t, s) => stones(t, s, { size: 1.0, colors: SANDSTONE, flat: 0.8, gap: [0.4, 0.33, 0.24], stretch: 2.2 }).finish(1.6), tiled);
-add('rock-basalt', '岩肌 玄武岩', [2, 2], (t, s) => stones(t, s, { size: 0.9, colors: BASALT, flat: 0.7, gap: [0.1, 0.1, 0.1] }).finish(1.6), tiled);
-add('rock-mossy', '岩肌 苔むした', [2, 2], (t, s) => stones(t, s, { size: 1.0, colors: GRANITE, flat: 0.8, gap: [0.2, 0.22, 0.16], moss: 0.5 }).finish(1.6), tiled);
-add('rock-wet', '岩肌 波打ち際', [2, 2], (t, s) => stones(t, s, { size: 0.9, colors: BASALT, flat: 0.7, wet: 0.9, moss: 0.3 }).finish(1.6), tiled);
+add('rock-granite', '岩肌 花崗岩', [2, 2], (t, s) => stones(t, s, { size: 1.1, colors: GRANITE, crack: 0.12, vary: 0.12, flat: 0.8, gap: [0.3, 0.29, 0.28] }).finish(1.6), tiled);
+add('rock-sandstone', '岩肌 砂岩', [2, 2], (t, s) => stones(t, s, { size: 1.0, colors: SANDSTONE, crack: 0.12, vary: 0.12, flat: 0.8, gap: [0.4, 0.33, 0.24], stretch: 2.2 }).finish(1.6), tiled);
+add('rock-basalt', '岩肌 玄武岩', [2, 2], (t, s) => stones(t, s, { size: 0.9, colors: BASALT, crack: 0.12, vary: 0.12, flat: 0.7, gap: [0.1, 0.1, 0.1] }).finish(1.6), tiled);
+add('rock-mossy', '岩肌 苔むした', [2, 2], (t, s) => stones(t, s, { size: 1.0, colors: GRANITE, crack: 0.12, vary: 0.12, flat: 0.8, gap: [0.2, 0.22, 0.16], moss: 0.5 }).finish(1.6), tiled);
+add('rock-wet', '岩肌 波打ち際', [2, 2], (t, s) => stones(t, s, { size: 0.9, colors: BASALT, crack: 0.12, vary: 0.12, flat: 0.7, wet: 0.9, moss: 0.3 }).finish(1.6), tiled);
 add('wall-rubble', '野面積みの石垣', [2, 2], (t, s) => stones(t, s, { size: 0.28, colors: COBBLE, flat: 0.75, gap: [0.2, 0.19, 0.17] }).finish(1.2), tiled);
 add('wall-rubble-mossy', '野面積みの石垣 苔', [2, 2], (t, s) => stones(t, s, { size: 0.3, colors: GRANITE, flat: 0.75, gap: [0.14, 0.15, 0.11], moss: 0.5 }).finish(1.2), tiled);
 add('wall-cobble', '玉石積み モルタル目地', [2, 2], (t, s) => stones(t, s, { size: 0.2, colors: COBBLE, flat: 0.4, gap: [0.5, 0.48, 0.44] }).finish(1.2), tiled);
@@ -335,7 +336,7 @@ add('seawall-stone', '護岸 石積み 潮位帯', [3.6, 4], (t, s) => { const L
 add('seawall-sheetpile', '護岸 鋼矢板 さび', [2.4, 4], (t, s) => { const L = paintLayers(t, s, hex(0x5a3a28), { rust: 0.9, ribs: 0.6, streaks: 0.6 }); tidal(L, s, 0.8, 1.9); return L.finish(); }, { tile: 'x', density: 96 });
 add('retaining-concrete', '擁壁 コンクリート', [4, 3], (t, s) => { const L = S.concreteLayers(t, { seed: s, color: CONC, slab: [2, 0], finish: 'formwork', streaks: 0.7, dirt: 0.4 }); weeps(L, s, 0.5, 2); return L.finish(); }, { tile: 'x', density: 96 });
 add('retaining-concrete-stained', '擁壁 コンクリート 黒ずみ', [4, 3], (t, s) => { const L = S.concreteLayers(t, { seed: s, color: hex(0x86827a), slab: [2, 0], finish: 'boards', streaks: 1, dirt: 0.9, cracks: 0.5, stains: 0.6 }); weeps(L, s, 0.5, 2); return L.finish(); }, { tile: 'x', density: 96 });
-add('retaining-shotcrete', '擁壁 吹付けコンクリート', [3, 3], (t, s) => stones(t, s, { size: 0.5, colors: [hex(0x8e8a82), hex(0x86827a), hex(0x96928a)], flat: 0.5, gap: [0.5, 0.49, 0.46] }).finish(0.9), tiled);
+add('retaining-shotcrete', '擁壁 吹付けコンクリート', [3, 3], (t, s) => stones(t, s, { size: 0.5, colors: [hex(0x8e8a82), hex(0x86827a), hex(0x96928a)], crack: 0.05, vary: 0.1, flat: 0.5, gap: [0.5, 0.49, 0.46] }).finish(0.9), tiled);
 add('noise-fluted', '遮音壁 縦リブ', [2, 3], (t, s) => { const L = S.concreteLayers(t, { seed: s, color: hex(0xa8a296), finish: 'smooth', streaks: 0.8, dirt: 0.4 }); ribbed(L, 0.1, 0.012); return L.finish(); }, { tile: 'x', density: 128 });
 add('noise-fluted-tan', '遮音壁 縦リブ 砂色', [2, 3], (t, s) => { const L = S.concreteLayers(t, { seed: s, color: hex(0xb8a688), finish: 'smooth', streaks: 0.7, dirt: 0.5 }); ribbed(L, 0.14, 0.014); return L.finish(); }, { tile: 'x', density: 128 });
 add('noise-absorptive', '遮音壁 吸音パネル 茶', [2, 3], (t, s) => { const L = paintLayers(t, s, hex(0x6a5444), { rust: 0.05, streaks: 0.5, rough: 0.9 }); ribbed(L, 0.05, 0.006, true); return L.finish(); }, { tile: 'x', density: 128 });
@@ -363,7 +364,7 @@ interface PaintOpts { rust?: number; streaks?: number; rough?: number; ribs?: nu
 function paintLayers(tex: Tex, seed: number, c: RGB, o: PaintOpts = {}): Layers {
   const L = new Layers(tex, c, o.rough ?? 0.5);
   const mottle = tex.noise(0.5, 0.5, seed, 3);
-  const chip = tex.noise(0.05, 0.05, seed + 1, 4);
+  const chip = tex.noise(0.09, 0.09, seed + 1, 2);
   const patch = tex.noise(0.35, 0.5, seed + 2, 3);
   const streak = tex.noise(0.035, 0.9, seed + 3, 3);
   const [rust, chips] = [o.rust ?? 0.2, o.chips ?? o.rust ?? 0.2];
@@ -373,12 +374,12 @@ function paintLayers(tex: Tex, seed: number, c: RGB, o: PaintOpts = {}): Layers 
     let r = lerp(c[0], g + 0.1, f) * (1 + mottle(x, y) * 0.1);
     let gg = lerp(c[1], g + 0.1, f) * (1 + mottle(x, y) * 0.1);
     let b = lerp(c[2], g + 0.1, f) * (1 + mottle(x, y) * 0.1);
-    const ru = clamp01(sstep(0.55 - rust * 0.55, 0.75 - rust * 0.45, patch(x, y) * 0.5 + 0.5 + chip(x, y) * 0.25) + sstep(0.62 - chips * 0.2, 0.7 - chips * 0.2, chip(x, y) * 0.5 + 0.5));
+    const ru = clamp01(sstep(1.0 - rust * 0.6, 1.12 - rust * 0.6, patch(x, y) * 0.5 + 0.5 + chip(x, y) * 0.2) + sstep(0.97 - chips * 0.3, 1.02 - chips * 0.3, chip(x, y) * 0.5 + 0.5));
     const st = clamp01((o.streaks ?? 0.3) * sstep(0.05, 0.6, streak(x, y)) * 0.5);
     const rc = 0.6 + chip(x, y) * 0.5;
-    r = lerp(r, RUST[0] * rc, Math.max(ru, st * 0.6));
-    gg = lerp(gg, RUST[1] * rc, Math.max(ru, st * 0.6));
-    b = lerp(b, RUST[2] * rc, Math.max(ru, st * 0.6));
+    r = lerp(r, RUST[0] * rc, Math.max(ru, st * 0.4));
+    gg = lerp(gg, RUST[1] * rc, Math.max(ru, st * 0.4));
+    b = lerp(b, RUST[2] * rc, Math.max(ru, st * 0.4));
     L.r[k] = r;
     L.g[k] = gg;
     L.b[k] = b;
@@ -591,7 +592,7 @@ const hoops = (a: Art, c: RGB): void => {
   ln(a, c, 10.06, 0, 10.06, 5.8);
   ln(a, c, 5.18, 5.8, 10.06, 5.8);
   a.line(c, arcPts(7.62, 5.8, 1.83, 0, Math.PI), 0.025);
-  a.line(c, [[0.9, 0], [0.9, 4.2], ...arcPts(7.62, 1.6, 7.24, Math.PI - 0.38, 0.38, 40).reverse(), [14.34, 0]], 0.025);
+  a.line(c, [[0.9, 0], [0.9, 4.2], ...arcPts(7.62, 1.6, 7.24, Math.PI - 0.38, 0.38, 40), [14.34, 0]], 0.025);
   a.line(c, arcPts(7.62, 14.33, 1.83, Math.PI, Math.PI * 2), 0.025);
 };
 add('court-basketball', 'バスケットコート 半面 アスファルト', [15.24, 14.33], (t, s) => court(t, s, hex(0x4a4a4c), hoops), { density: 40 });
@@ -609,9 +610,9 @@ const tennis = (a: Art, c: RGB): void => {
 };
 add('court-tennis', 'テニスコート 半面 青/緑', [18.29, 18.29], (t, s) => court(t, s, hex(0x2c6c44), tennis), { density: 32 });
 add('court-tennis-clay', 'テニスコート 半面 クレー', [18.29, 18.29], (t, s) => court(t, s, hex(0xa8583c), (a, c) => { tennis(a, c); a.rect(hex(0xa8583c), 3.66 + 0.03, 6.4 + 0.06, 3.66 + 1.37 - 0.03, 18.29, {}); }), { density: 32 });
-add('safety-rubber-red', '遊び場のゴム舗装 赤', [1, 1], (t, s) => S.gravel(t, { seed: s, size: 0.006, colors: [hex(0x9c3c30), hex(0x8c3428), hex(0xa84438)], soil: [0.3, 0.12, 0.1] }), tiled);
-add('safety-rubber-green', '遊び場のゴム舗装 緑', [1, 1], (t, s) => S.gravel(t, { seed: s, size: 0.006, colors: [hex(0x3c7c4c), hex(0x346c40), hex(0x448c54)], soil: [0.12, 0.26, 0.15] }), tiled);
-add('safety-rubber-blue', '遊び場のゴム舗装 青', [1, 1], (t, s) => S.gravel(t, { seed: s, size: 0.006, colors: [hex(0x2c5c9c), hex(0x285088), hex(0x3468a8)], soil: [0.1, 0.2, 0.34] }), tiled);
+add('safety-rubber-red', '遊び場のゴム舗装 赤', [1, 1], (t, s) => S.gravel(t, { seed: s, size: 0.014, colors: [hex(0x9c3c30), hex(0x8c3428), hex(0xa84438)], soil: [0.3, 0.12, 0.1] }), { ...tiled, density: 256 });
+add('safety-rubber-green', '遊び場のゴム舗装 緑', [1, 1], (t, s) => S.gravel(t, { seed: s, size: 0.014, colors: [hex(0x3c7c4c), hex(0x346c40), hex(0x448c54)], soil: [0.12, 0.26, 0.15] }), { ...tiled, density: 256 });
+add('safety-rubber-blue', '遊び場のゴム舗装 青', [1, 1], (t, s) => S.gravel(t, { seed: s, size: 0.014, colors: [hex(0x2c5c9c), hex(0x285088), hex(0x3468a8)], soil: [0.1, 0.2, 0.34] }), { ...tiled, density: 256 });
 add('woodchips', '遊び場のウッドチップ', [1, 1], (t, s) => S.gravel(t, { seed: s, size: 0.03, colors: [hex(0x9c7448), hex(0x7c5834), hex(0xb48c5c), hex(0x64442c)], soil: [0.22, 0.15, 0.09] }), tiled);
 add('track-red', '陸上トラック 赤', [2.44, 2], (t, s) => { const a = new Art(t, hex(0xa8483c), 0.85); for (const x of [0, 1.22, 2.44]) a.rect(WHITE, x - 0.025, 0, x + 0.025, 2); return a.done(s, 0.2); }, { tile: 'xy', density: 96 });
 add('turf-lines', '人工芝 白線', [4, 4], (t, s) => { const a = new Art(t, hex(0x3c7c3c), 0.9); a.rect(hex(0x347034), 0, 0, 4, 2); a.rect(WHITE, 0, 1.94, 4, 2.06); return a.done(s, 0.1); }, { tile: 'xy', density: 64 });
@@ -638,12 +639,12 @@ sign('no-fishing', '看板 釣り禁止', [0.45, 0.6], 0xf0eee6, (a) => { a.ring
 sign('pier-closed', '看板 桟橋 夜間閉鎖', [0.6, 0.45], 0xf0eee6, (a) => { a.rect(NAVY, 0, 0.3, 0.6, 0.45); a.text(WHITE, 'PIER HOURS', 0.3, 0.33, 0.08, { fit: 0.52 }); a.lines(BLACK, ['5 AM - 10 PM', 'NO BICYCLES OR SKATES'], 0.3, 0.27, 0.055, { fit: 0.52 }); });
 sign('marina', '看板 マリーナ', [2.4, 0.6], 0x1c2c5c, (a) => { a.text(WHITE, 'DEL MAR MARINA', 1.2, 0.2, 0.26, { fit: 2.2, weight: 0.12 }); a.rect(hex(0xd8b040), 0.1, 0.08, 2.3, 0.11); }, 0.25);
 sign('bait', '看板 釣具・えさ', [1.8, 0.5], 0xf0e6c8, (a) => { a.text(RED, 'BAIT & TACKLE', 0.9, 0.22, 0.2, { fit: 1.7, weight: 0.13 }); a.text(NAVY, 'ICE - SODA - RENTALS', 0.9, 0.06, 0.09, { fit: 1.6 }); }, 0.45);
-sign('boat-ramp', '看板 ボートランプ', [0.6, 0.45], 0x1c5c3c, (a) => { a.lines(WHITE, ['BOAT RAMP', 'LAUNCH FEE $10'], 0.3, 0.38, 0.075, { fit: 0.52 }); });
+sign('boat-ramp', '看板 ボートランプ', [0.6, 0.45], 0x1c5c3c, (a) => { a.lines(WHITE, ['BOAT RAMP', 'PERMIT REQUIRED'], 0.3, 0.38, 0.075, { fit: 0.52 }); });
 sign('slip-numbers', '係留番号 A1〜A8', [2.4, 0.3], 0xf0eee6, (a) => { for (let i = 0; i < 8; i++) a.text(NAVY, `A${i + 1}`, 0.15 + i * 0.3, 0.07, 0.15, { weight: 0.13 }); });
 sign('park-name', '看板 公園名', [2.4, 0.8], 0x3c2c20, (a) => { a.text(hex(0xe8dcb8), 'OCEANVIEW PARK', 1.2, 0.36, 0.26, { fit: 2.2, weight: 0.12 }); a.text(hex(0xe8dcb8), 'CITY PARKS & RECREATION', 1.2, 0.12, 0.1, { fit: 2 }); }, 0.35);
 sign('park-rules', '看板 公園の注意', [0.6, 0.9], 0x1c5c3c, (a) => { a.text(WHITE, 'PARK RULES', 0.3, 0.76, 0.075, { fit: 0.52 }); a.lines(WHITE, ['OPEN DAWN TO DUSK', 'DOGS ON LEASH', 'NO LITTERING', 'NO AMPLIFIED MUSIC', 'NO OVERNIGHT CAMPING'], 0.3, 0.68, 0.05, { fit: 0.52 }); }, 0.35);
 sign('playground-age', '看板 遊び場 対象年齢', [0.45, 0.6], 0xe8c01c, (a) => { a.lines(BLACK, ['PLAY AREA', 'AGES 5-12', 'ADULT', 'SUPERVISION', 'REQUIRED'], 0.225, 0.55, 0.055, { fit: 0.4 }); });
-sign('parking-rates', '看板 駐車料金', [0.9, 1.2], 0x1c2c5c, (a) => { a.text(WHITE, 'PARKING', 0.45, 0.98, 0.14, { fit: 0.8, weight: 0.13 }); a.rect(WHITE, 0.06, 0.06, 0.84, 0.9); a.lines(NAVY, ['FIRST HOUR  $3', 'EACH ADDL  $2', 'DAILY MAX  $18', 'EVENING  $8', 'LOST TICKET  $25'], 0.45, 0.84, 0.065, { fit: 0.72 }); }, 0.25);
+sign('parking-rates', '看板 駐車料金', [0.9, 1.2], 0x1c2c5c, (a) => { a.text(WHITE, 'PARKING', 0.45, 0.98, 0.14, { fit: 0.8, weight: 0.13 }); a.rect(WHITE, 0.06, 0.06, 0.84, 0.9); a.lines(NAVY, ['FIRST HOUR - 3', 'EACH ADDL - 2', 'DAILY MAX - 18', 'EVENING - 8', 'LOST TICKET - 25'], 0.45, 0.84, 0.065, { fit: 0.72 }); }, 0.25);
 sign('parking-full', '看板 満車/空車', [0.9, 0.3], 0x141414, (a) => a.text(hex(0x40e060), 'OPEN', 0.45, 0.07, 0.16, { weight: 0.13 }), 0.05);
 sign('ticket-machine', '駐車券発行機の正面', [0.4, 1.2], 0xd8a81c, (a) => { a.rect(BLACK, 0.06, 0.82, 0.34, 1.02); a.text(hex(0x40e060), 'PRESS', 0.2, 0.89, 0.06, { fit: 0.24 }); a.disc(hex(0x30c050), 0.2, 0.66, 0.05, {}); a.rect(BLACK, 0.1, 0.48, 0.3, 0.51); a.text(BLACK, 'TICKET', 0.2, 0.38, 0.05, { fit: 0.3 }); });
 sign('clearance', '看板 高さ制限', [2.4, 0.3], 0xe8c01c, (a) => a.text(BLACK, "CLEARANCE 8'-2\"", 1.2, 0.07, 0.16, { fit: 2.2, weight: 0.13 }));
