@@ -1,6 +1,6 @@
 import { Rng } from '../core/rng';
 import { SegmentIndex, pointAt, pointSeg, polyLength, resample, segSeg, simplify, subPath } from '../core/geom';
-import { Vec2, angleDiff, dist } from '../core/vec2';
+import { Vec2, angleDiff, clamp, dist } from '../core/vec2';
 import { Districts, districtAt } from './districts';
 import { RailIndex } from './rail';
 import { BRIDGE_APPROACH, BRIDGE_SPACING, CLASS_RANK, RoadClass, RoadLine, isStreet, waterCrossings } from './streamlines';
@@ -134,6 +134,26 @@ class Builder {
   }
 }
 
+/**
+ * segSeg that also counts a crossing which rounding puts a hair outside a segment: a traced street has a vertex
+ * exactly where it crosses another, and would otherwise miss it on both sides.
+ */
+function segSegNear(a: Vec2, b: Vec2, c: Vec2, d: Vec2): { t: number; u: number; x: number; y: number } | null {
+  const rx = b.x - a.x;
+  const ry = b.y - a.y;
+  const sx = d.x - c.x;
+  const sy = d.y - c.y;
+  const den = rx * sy - ry * sx;
+  if (Math.abs(den) < 1e-9) return null;
+  const t = ((c.x - a.x) * sy - (c.y - a.y) * sx) / den;
+  const u = ((c.x - a.x) * ry - (c.y - a.y) * rx) / den;
+  const et = 0.02 / Math.hypot(rx, ry);
+  const eu = 0.02 / Math.hypot(sx, sy);
+  if (t < -et || t > 1 + et || u < -eu || u > 1 + eu) return null;
+  const tc = clamp(t, 0, 1);
+  return { t: tc, u: clamp(u, 0, 1), x: a.x + rx * tc, y: a.y + ry * tc };
+}
+
 function splitLines(lines: RoadLine[], g: Builder): void {
   const polys = lines.map((l) => ({ pts: simplify(l.points, 0.35), cls: l.cls }));
   const index = new SegmentIndex(50);
@@ -156,7 +176,7 @@ function splitLines(lines: RoadLine[], g: Builder): void {
       index.query(Math.min(a.x, b.x), Math.min(a.y, b.y), Math.max(a.x, b.x), Math.max(a.y, b.y), (r) => {
         if (r.line < li || (r.line === li && r.seg <= si + 1)) return;
         if (!isStreet(polys[r.line].cls)) return;
-        const h = segSeg(a, b, r.a, r.b);
+        const h = segSegNear(a, b, r.a, r.b);
         if (!h) return;
         const j = { node: -1 };
         splits[li].push({ seg: si, t: h.t, x: h.x, y: h.y, j });
@@ -364,10 +384,15 @@ function buildable(g: Builder, ctx: Ctx, a: Vec2, b: Vec2, cls: RoadClass, ignor
   if (water && cls === 'local') return { ok: false, water };
   for (let k = 0; k < g.edges.length; k++) {
     const e = g.edges[k];
-    if (!e.alive || ignore.has(k)) continue;
+    if (!e.alive) continue;
     // Bigger streets pass over or under the freeway; everything else must not be crossed.
     if (!isStreet(e.cls) && cls !== 'local') continue;
-    for (let i = 1; i < e.pts.length; i++) if (segSeg(a, b, e.pts[i - 1], e.pts[i])) return { ok: false, water };
+    // Streets that meet the new one at its ends touch it there, but may not curve back across it.
+    const own = ignore.has(k);
+    for (let i = 1; i < e.pts.length; i++) {
+      const h = segSeg(a, b, e.pts[i - 1], e.pts[i]);
+      if (h && !(own && (Math.hypot(h.x - a.x, h.y - a.y) < 3 || Math.hypot(h.x - b.x, h.y - b.y) < 3))) return { ok: false, water };
+    }
   }
   return { ok: true, water };
 }

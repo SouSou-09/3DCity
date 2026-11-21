@@ -254,17 +254,20 @@ function finish(t: Terrain, districts: Districts, kind: 'main' | 'freight', poin
     i = b;
   }
   if (startLevel !== undefined) target[0] = startLevel;
-  let level = target.slice();
-  const tooSteep = () => {
-    for (let i = 1; i < n; i++) if (Math.abs(level[i] - level[i - 1]) / RAIL_STEP > RAIL_MAX_GRADE * 0.95) return true;
-    return false;
-  };
-  for (let round = 0; round < 600 && (round < 3 || tooSteep()); round++) {
-    for (let k = 0; k < 25; k++) {
-      const next = level.slice();
-      for (let i = 1; i + 1 < n; i++) next[i] = 0.25 * level[i - 1] + 0.5 * level[i] + 0.25 * level[i + 1];
-      level = next;
-    }
+  // Limit the grade from both ends, then round the profile off; neither step can steepen it again.
+  const limit = RAIL_MAX_GRADE * 0.95 * RAIL_STEP;
+  const fwd = target.slice();
+  for (let i = 1; i < n; i++) fwd[i] = clamp(fwd[i], fwd[i - 1] - limit, fwd[i - 1] + limit);
+  let level = fwd;
+  if (startLevel === undefined) {
+    const back = target.slice();
+    for (let i = n - 2; i >= 0; i--) back[i] = clamp(back[i], back[i + 1] - limit, back[i + 1] + limit);
+    level = fwd.map((v, i) => 0.5 * (v + back[i]));
+  }
+  for (let k = 0; k < 150; k++) {
+    const next = level.slice();
+    for (let i = 1; i + 1 < n; i++) next[i] = 0.25 * level[i - 1] + 0.5 * level[i] + 0.25 * level[i + 1];
+    level = next;
   }
   const structure: RailStructure[] = points.map((_, i) => {
     if (wet[i]) return 'bridge';
@@ -279,8 +282,10 @@ function finish(t: Terrain, districts: Districts, kind: 'main' | 'freight', poin
   for (let i = 0; i < n; ) {
     let j = i;
     while (j < n && structure[j] === structure[i]) j++;
-    if (structure[i] !== 'bridge' && j - i < 8 && i > 0 && j < n) {
-      const fill = structure[i - 1] === 'bridge' ? (structure[j] === 'bridge' ? 'elevated' : structure[j]) : structure[i - 1];
+    if (structure[i] !== 'bridge' && j - i < 8 && (i > 0 || j < n)) {
+      const before = i > 0 ? structure[i - 1] : structure[j];
+      const after = j < n ? structure[j] : before;
+      const fill = before === 'bridge' ? (after === 'bridge' ? 'elevated' : after) : before;
       for (let k = i; k < j; k++) structure[k] = fill;
     }
     i = j;

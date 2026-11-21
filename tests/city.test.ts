@@ -1,9 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
-import { segSeg } from '../src/core/geom';
+import { pointSeg, segSeg } from '../src/core/geom';
 import { angleDiff } from '../src/core/vec2';
 import { City, DEFAULT_CONFIG, generateCity } from '../src/gen/city';
+import { RAIL_MAX_GRADE, RAIL_MIN_RADIUS, RAIL_STEP, RailIndex, sharpestRailTurn } from '../src/gen/rail';
 import { isStreet } from '../src/gen/streamlines';
-import { REF_SIZE, isWater } from '../src/gen/terrain';
+import { REF_SIZE, isWater, seaDistAt } from '../src/gen/terrain';
 
 const SEEDS = [1, 2, 3, 4, 5, 6, 7, 8, 16, 21];
 // Generating a full-size city takes several seconds.
@@ -35,6 +36,8 @@ describe('city generation', () => {
     const b = city(3);
     expect(a.graph.nodes).toEqual(b.graph.nodes);
     expect(a.graph.edges).toEqual(b.graph.edges);
+    expect(a.rail).toEqual(b.rail);
+    expect(a.railCrossings).toEqual(b.railCrossings);
   });
 
   it('adds districts, parks, a tributary and a second freeway on a bigger map instead of stretching the small one', () => {
@@ -171,6 +174,65 @@ describe('city generation', () => {
         }
       }
       expect(crossings).toBe(0);
+    });
+    it('has a main railway line across the map, with gentle curves and grades', () => {
+      const { rail } = city(seed);
+      const main = rail.lines[0];
+      expect(main?.kind).toBe('main');
+      const edge = (p: { x: number; y: number }) => Math.min(p.x, p.y, SIZE - p.x, SIZE - p.y);
+      expect(edge(main.points[0])).toBeLessThan(1);
+      expect(edge(main.points[main.points.length - 1])).toBeLessThan(1);
+      expect(main.length).toBeGreaterThan(SIZE * 0.8);
+      for (const line of rail.lines) {
+        expect(line.structure.length).toBe(line.points.length);
+        expect(line.level.length).toBe(line.points.length);
+        expect(RAIL_STEP / sharpestRailTurn(line.points), `${line.kind} radius`).toBeGreaterThanOrEqual(RAIL_MIN_RADIUS[line.kind] * 0.95);
+        for (let i = 1; i < line.points.length; i++) {
+          expect(Math.abs(line.level[i] - line.level[i - 1]) / RAIL_STEP, `${line.kind} grade at ${i}`).toBeLessThanOrEqual(RAIL_MAX_GRADE * 1.02);
+        }
+      }
+    });
+
+    it('keeps the railway out of the sea and on bridges over rivers', () => {
+      const { rail, terrain } = city(seed);
+      for (const line of rail.lines) {
+        line.points.forEach((p, i) => {
+          expect(seaDistAt(terrain, p.x, p.y), `${line.kind} at ${i}`).toBeGreaterThanOrEqual(15);
+          if (isWater(terrain, p.x, p.y)) expect(line.structure[i]).toBe('bridge');
+        });
+      }
+    });
+
+    it('lets local streets cross the tracks only at the places left open, and no street runs along them', () => {
+      const c = city(seed);
+      for (const x of c.railCrossings) {
+        const e = c.graph.edges[x.edge];
+        const line = c.rail.lines[x.line];
+        if (e.cls !== 'local') continue;
+        let seg = 0;
+        for (let i = 1; i < line.points.length; i++) {
+          if (pointSeg(x.x, x.y, line.points[i - 1], line.points[i]).d < pointSeg(x.x, x.y, line.points[seg], line.points[seg + 1]).d) seg = i - 1;
+        }
+        expect(line.crossable[seg], `local edge ${e.id} at ${x.x},${x.y}`).toBe(true);
+      }
+      const index = new RailIndex(c.rail);
+      let along = 0;
+      for (const e of c.graph.edges) {
+        if (!isStreet(e.cls)) continue;
+        let run = 0;
+        for (let i = 1; i < e.points.length; i++) {
+          const a = e.points[i - 1];
+          const b = e.points[i];
+          const l = Math.hypot(b.x - a.x, b.y - a.y);
+          for (let d = 0; d < l; d += 5) {
+            const hit = index.nearest(a.x + ((b.x - a.x) * d) / l, a.y + ((b.y - a.y) * d) / l, 8);
+            const on = hit && c.rail.lines[hit.line].structure[hit.seg] !== 'tunnel' && Math.abs(((b.x - a.x) * hit.tan.x + (b.y - a.y) * hit.tan.y) / l) > 0.8;
+            run = on ? run + 5 : 0;
+            if (run === 40) along++;
+          }
+        }
+      }
+      expect(along).toBe(0);
     });
   });
 });

@@ -368,6 +368,7 @@ export class RoadBuilder {
     const t = this.terrain;
     const q = { x: p.x + dir.x * maxExt, y: p.y + dir.y * maxExt };
     let bestT = 2;
+    let grazeT = 2;
     let best: Vec2 | null = null;
     this.segs.query(Math.min(p.x, q.x), Math.min(p.y, q.y), Math.max(p.x, q.x), Math.max(p.y, q.y), (r) => {
       if (!isStreet(this.lines[r.line].cls)) return;
@@ -377,11 +378,15 @@ export class RoadBuilder {
       const sx = r.b.x - r.a.x;
       const sy = r.b.y - r.a.y;
       const sin = Math.abs(dir.x * sy - dir.y * sx) / Math.hypot(sx, sy);
-      if (sin < 0.5) return;
+      if (sin < 0.5) {
+        // Meeting a street at a shallow angle makes a sliver, and passing through it is not an option either.
+        grazeT = Math.min(grazeT, h.t);
+        return;
+      }
       bestT = h.t;
       best = { x: h.x, y: h.y };
     });
-    if (!best) return null;
+    if (!best || grazeT < bestT) return null;
     const hit: Vec2 = best;
     const d = bestT * maxExt;
     for (let s = 4; s < d; s += 4) {

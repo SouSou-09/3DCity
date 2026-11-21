@@ -237,7 +237,7 @@ export class MapView {
 
     // Railway: black-and-white ticked line; viaducts and bridges get a casing, tunnels are faint and dashed.
     for (const line of city.rail.lines) {
-      const w = Math.max((line.kind === 'main' ? 2.4 : 1.6) / z, line.tracks * 3.2);
+      const w = Math.max((line.kind === 'main' ? 3.6 : 2.4) / z, line.tracks * 3.2);
       const run = (match: (s: string) => boolean, draw: () => void) => {
         ctx.beginPath();
         let open = false;
