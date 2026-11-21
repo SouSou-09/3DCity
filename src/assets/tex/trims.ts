@@ -576,4 +576,187 @@ for (const kind of ['light', 'mid', 'heavy', 'pale'] as Soil[]) {
 }
 for (let i = 1; i <= 3; i++) add('trim', `pond-${i}`, `陸屋根の水たまり跡 ${i}`, [8, 8], (t, s) => pond(t, s), { decal: true, tile: 'xy', density: 48 });
 
+// --- Public buildings: lettering, apparatus bay doors, church glass, clocks, stadium seats. Every name is made up. ---
+const CIVIC_SIGNS: (Sign & { ja: string })[] = [
+  { text: 'FIRE STATION', ja: '消防署', bg: 0xa82018, fg: 0xf4f0e0, sub: 'ENGINE CO 7  LADDER 3' }, { text: 'POLICE', ja: '警察署', bg: 0x1c2c54, fg: 0xf0f0ec, sub: 'TO PROTECT AND SERVE' }, { text: 'HOSPITAL', ja: '病院', bg: 0xf0f0ec, fg: 0x1c4c9c, sub: 'ST ELMO MEDICAL CENTER' },
+  { text: 'EMERGENCY', ja: '救急入口', bg: 0xb01c18, fg: 0xf4f4f0 }, { text: 'AMBULANCE ONLY', ja: '救急車専用', bg: 0xf0f0ec, fg: 0xb01c18 }, { text: 'MEDICAL CLINIC', ja: '診療所', bg: 0x2c7c8c, fg: 0xf4f4f0, sub: 'URGENT CARE  WALK IN' },
+  { text: 'CITY HALL', ja: '市役所', bg: 0xc8c0aa, fg: 0x3c3428 }, { text: 'COURTHOUSE', ja: '裁判所', bg: 0xc4bca8, fg: 0x34302a, sub: 'COUNTY SUPERIOR COURT' }, { text: 'PUBLIC LIBRARY', ja: '図書館', bg: 0xbcb4a0, fg: 0x2c3c34 },
+  { text: 'POST OFFICE', ja: '郵便局', bg: 0x1c3c7c, fg: 0xf4f4f0, sub: 'CITY MAIL SERVICE' }, { text: 'MUSEUM OF ART', ja: '美術館', bg: 0x2a2a2e, fg: 0xe8dcb8 }, { text: 'COMMUNITY CENTER', ja: '公民館', bg: 0x3c6c54, fg: 0xf0ecd8, sub: 'PARKS AND RECREATION' },
+  { text: 'ELEMENTARY SCHOOL', ja: '小学校', bg: 0xd8d0b8, fg: 0x7c2c24 }, { text: 'MIDDLE SCHOOL', ja: '中学校', bg: 0xd4d4cc, fg: 0x1c3c6c }, { text: 'HIGH SCHOOL', ja: '高校', bg: 0x6c1c24, fg: 0xf0d870, sub: 'HOME OF THE HAWKS' },
+  { text: 'GYMNASIUM', ja: '体育館', bg: 0x30343c, fg: 0xf0d870 }, { text: 'UNIVERSITY HALL', ja: '大学本館', bg: 0xc0b8a4, fg: 0x2c2c44 }, { text: 'STADIUM', ja: '競技場', bg: 0x1c4c34, fg: 0xf4f4f0, sub: 'GATE A  TICKETS' },
+  { text: 'ARENA', ja: 'アリーナ', bg: 0x202028, fg: 0x58c8e8, sub: 'BOX OFFICE' }, { text: 'CHAPEL', ja: '礼拝堂', bg: 0xe8e4d8, fg: 0x3c3428 }, { text: 'SHERIFF', ja: '保安官事務所', bg: 0x4c3c1c, fg: 0xe8c860, sub: 'COUNTY SUBSTATION' },
+];
+CIVIC_SIGNS.forEach((s, i) => add('trim', `sign-${s.text.toLowerCase().replace(/ /g, '-')}`, `公共施設の銘板 ${s.ja}`, [4.8, 0.9], (t, sd) => fascia(t, sd, s, 0.15 + (i % 3) * 0.12), { density: 128 }));
+// Apparatus bay doors: tall sectional doors with one or two glazed rows.
+const BAYS: [string, string, number, number][] = [['red', '赤', 0xa8241c, 3], ['white', '白', 0xdcdcd4, 2], ['grey', '灰', 0x70747a, 3], ['green', '深緑', 0x2c4c3a, 2]];
+for (const [id, label, c, lights] of BAYS) add('door', `bay-${id}`, `消防車庫の扉 ${label}`, [4.2, 4.2], (t, s) => sectional(t, s, hex(c), { rows: 6, cols: 5, lights, age: 0.2 }), { density: 128 });
+/** Double doors under a fanlight or with strap hinges, for churches and halls. */
+function grandDoor(tex: Tex, seed: number, c: RGB, kind: 'strap' | 'panel' | 'glass'): TextureData {
+  const a = new Art(tex, shadeC(c, 0.55), 0.55);
+  const [w, h] = [a.w, a.h];
+  for (const s of [0, 1]) {
+    const [x0, x1] = [s * (w / 2) + 0.03, (s + 1) * (w / 2) - 0.03];
+    a.rect(c, x0, 0.02, x1, h - 0.04, { height: 0.004 });
+    if (kind === 'strap') {
+      for (let x = x0 + 0.16; x < x1 - 0.05; x += 0.16) a.rect(shadeC(c, 0.7), x - 0.004, 0.02, x + 0.004, h - 0.04, { height: -0.003 });
+      for (const y of [0.35, h * 0.5, h - 0.45]) a.rect([0.08, 0.08, 0.09], s ? x0 + 0.1 : x0, y - 0.035, s ? x1 : x1 - 0.1, y + 0.035, { height: 0.006, rough: 0.5, metal: 0.6 });
+    } else if (kind === 'panel') {
+      for (const [y0, y1] of [[0.12, h * 0.3], [h * 0.34, h * 0.62], [h * 0.66, h - 0.14]]) a.panel(c, x0 + 0.1, y0, x1 - 0.1, y1, 0.006);
+    } else {
+      a.panel(c, x0 + 0.1, 0.12, x1 - 0.1, h * 0.3, 0.006);
+      a.glass(x0 + 0.14, h * 0.36, x1 - 0.14, h - 0.18, shadeC(c, 0.8));
+    }
+    a.disc([0.7, 0.58, 0.3], s ? x0 + 0.1 : x1 - 0.1, h * 0.42, 0.035, { height: 0.01, rough: 0.3, metal: 0.8 });
+  }
+  return a.done(seed, 0.3);
+}
+const GRAND: [string, string, number, 'strap' | 'panel' | 'glass'][] = [['church-oak', '教会の扉 オーク・帯金物', 0x5c3c24, 'strap'], ['church-red', '教会の扉 赤', 0x8c241c, 'strap'], ['church-dark', '教会の扉 濃茶・鏡板', 0x3a2a1e, 'panel'], ['civic-bronze', '庁舎の扉 ブロンズ', 0x5c4a34, 'glass'], ['civic-oak', '庁舎の扉 オーク', 0x6c4a2c, 'panel'], ['civic-green', '庁舎の扉 緑', 0x2c4638, 'glass']];
+for (const [id, label, c, kind] of GRAND) add('door', id, label, [2.2, 3], (t, s) => grandDoor(t, s, hex(c), kind), { density: 200 });
+
+/** Leaded glass in a pointed arch, set in a stone surround. */
+function stained(tex: Tex, seed: number, stone: RGB, colors: RGB[]): TextureData {
+  const a = new Art(tex, stone, 0.8);
+  const [w, h] = [a.w, a.h];
+  const [x0, x1] = [0.09, w - 0.09];
+  const R = x1 - x0;
+  const ys = h - 0.09 - R * 0.866;
+  a.rect([0.05, 0.05, 0.06], x0, 0.1, x1, h - 0.05, { height: -0.01, rough: 0.5 });
+  const [cols, ph] = [4, 0.3];
+  for (let j = 0; j * ph < h; j++) for (let i = 0; i < cols; i++) {
+    const c = colors[Math.floor(hash2(i + (j % 2) * 7, j, seed) * colors.length)];
+    const [px, py] = [x0 + (i * R) / cols, 0.1 + j * ph];
+    a.rect(shadeC(c, 0.75 + 0.5 * hash2(i, j, seed + 3)), px + 0.012, py + 0.012, px + R / cols - 0.012, py + ph - 0.012, { rough: 0.12, height: -0.012 });
+  }
+  // A medallion in the head and a border down each side.
+  a.disc([0.05, 0.05, 0.06], w / 2, ys + R * 0.2, R * 0.3, { height: -0.01 });
+  a.disc(colors[0], w / 2, ys + R * 0.2, R * 0.26, { rough: 0.12, height: -0.012 });
+  a.disc(colors[colors.length - 1], w / 2, ys + R * 0.2, R * 0.12, { rough: 0.12, height: -0.012 });
+  for (const x of [x0 + 0.05, x1 - 0.05]) a.rect(colors[1], x - 0.025, 0.12, x + 0.025, ys, { rough: 0.12, opacity: 0.85, height: -0.012 });
+  // Stone outside the two arcs of the arch.
+  for (const s of [0, 1]) {
+    const pts: [number, number][] = [[s ? w : 0, ys - 0.02]];
+    for (let k = 0; k <= 12; k++) {
+      const ang = (k / 12) * (Math.PI / 3);
+      pts.push(s ? [x0 + R * Math.cos(ang), ys + R * Math.sin(ang)] : [x1 - R * Math.cos(ang), ys + R * Math.sin(ang)]);
+    }
+    pts.push([w / 2, h], [s ? w : 0, h]);
+    a.put(stone, (m) => tex.poly(m, [pts]), { rough: 0.8, height: 0.004 });
+  }
+  a.rect(stone, 0, 0, x0, h, { rough: 0.8, height: 0.004 });
+  a.rect(stone, x1, 0, w, h, { rough: 0.8, height: 0.004 });
+  a.rect(shadeC(stone, 0.85), 0, 0, w, 0.1, { rough: 0.8, height: 0.008 });
+  return a.done(seed, 0.35);
+}
+const JEWEL: RGB[][] = [[hex(0x2c4cb0), hex(0xb0241c), hex(0xd8a828), hex(0x2c8c54), hex(0x6c2c8c)], [hex(0xb0241c), hex(0xd8a828), hex(0xe8d8a0), hex(0x8c3c1c)], [hex(0x2c7c9c), hex(0x3ca078), hex(0xd8d0a0), hex(0x2c4c8c)], [hex(0xd8c890), hex(0xc8b070), hex(0xe8e0c0), hex(0xa89058)]];
+const STONES: [string, string, number][] = [['limestone', '石灰岩', 0xb4aa94], ['brick', 'レンガ', 0x7c4434], ['white', '白しっくい', 0xdcd8cc]];
+JEWEL.forEach((colors, i) => STONES.forEach(([sid, sl, sc], j) => {
+  if ((i + j) % 3 === 2) return;
+  add('window', `stained-${['jewel', 'ruby', 'sea', 'amber'][i]}-${sid}`, `ステンドグラスの尖頭窓 ${['多色', '赤金', '青緑', '琥珀'][i]}・${sl}`, [1.2, 3.6], (t, s) => stained(t, s, hex(sc), colors), { density: 200, reflect: 0.3 });
+}));
+/** Rose window: petals of coloured glass around a hub. */
+function rose(tex: Tex, seed: number, stone: RGB, colors: RGB[]): TextureData {
+  const a = new Art(tex, stone, 0.8);
+  const c = a.w / 2;
+  a.disc(shadeC(stone, 0.8), c, c, c - 0.04, { height: 0.006 });
+  a.disc([0.05, 0.05, 0.06], c, c, c - 0.16, { height: -0.01 });
+  for (let k = 0; k < 12; k++) {
+    const ang = (k / 12) * Math.PI * 2;
+    a.disc(colors[k % colors.length], c + Math.cos(ang) * (c - 0.42), c + Math.sin(ang) * (c - 0.42), 0.2, { rough: 0.12, height: -0.012 });
+    a.disc(colors[(k + 2) % colors.length], c + Math.cos(ang + 0.26) * (c - 0.78), c + Math.sin(ang + 0.26) * (c - 0.78), 0.13, { rough: 0.12, height: -0.012 });
+    a.line(shadeC(stone, 0.8), [[c + Math.cos(ang + 0.26) * 0.22, c + Math.sin(ang + 0.26) * 0.22], [c + Math.cos(ang + 0.26) * (c - 0.18), c + Math.sin(ang + 0.26) * (c - 0.18)]], 0.018, { height: 0.004 });
+  }
+  a.disc(colors[0], c, c, 0.2, { rough: 0.12, height: -0.012 });
+  return a.done(seed, 0.3);
+}
+STONES.forEach(([sid, sl, sc], j) => add('window', `rose-${sid}`, `バラ窓 ${sl}`, [2.6, 2.6], (t, s) => rose(t, s, hex(sc), JEWEL[j]), { density: 160, reflect: 0.3 }));
+
+/** Tower clock dial. */
+function clockFace(tex: Tex, seed: number, dial: RGB, ink: RGB, hour: number): TextureData {
+  const a = new Art(tex, shadeC(ink, 0.8), 0.5);
+  const c = a.w / 2;
+  a.disc(dial, c, c, c - 0.07, { rough: 0.4 });
+  for (let k = 0; k < 60; k++) {
+    const ang = (k / 60) * Math.PI * 2;
+    const [r0, half] = k % 5 ? [c - 0.16, 0.006] : [c - 0.26, 0.02];
+    a.line(ink, [[c + Math.sin(ang) * r0, c + Math.cos(ang) * r0], [c + Math.sin(ang) * (c - 0.11), c + Math.cos(ang) * (c - 0.11)]], half);
+  }
+  const hand = (turns: number, len: number, half: number): void => a.line(ink, [[c - Math.sin(turns * Math.PI * 2) * 0.08, c - Math.cos(turns * Math.PI * 2) * 0.08], [c + Math.sin(turns * Math.PI * 2) * len, c + Math.cos(turns * Math.PI * 2) * len]], half, { height: 0.004 });
+  hand(hour / 12, c * 0.48, 0.03);
+  hand((hour * 12) % 1, c * 0.74, 0.02);
+  a.disc(ink, c, c, 0.05, { height: 0.006 });
+  return a.done(seed, 0.25);
+}
+add('trim', 'clock-cream', '時計塔の文字盤 クリーム', [1.8, 1.8], (t, s) => clockFace(t, s, hex(0xe8e0c8), hex(0x1c1c1e), 10.15), { density: 160 });
+add('trim', 'clock-white', '時計塔の文字盤 白', [1.8, 1.8], (t, s) => clockFace(t, s, hex(0xf0f0ec), hex(0x1c2c4c), 3.4), { density: 160, emissive: 0.2 });
+add('trim', 'clock-black', '時計塔の文字盤 黒と金', [1.8, 1.8], (t, s) => clockFace(t, s, hex(0x1c1c1e), hex(0xd8b860), 7.55), { density: 160 });
+
+/** Rows of tip-up seats on concrete steps; tiles both ways. */
+function seats(tex: Tex, seed: number, c: RGB, age: number): TextureData {
+  const a = new Art(tex, hex(0x8c8a84), 0.8);
+  for (let y = 0; y < a.h; y += 0.8) {
+    a.rect(hex(0x6c6a66), 0, y, a.w, y + 0.05, {});
+    for (let x = 0; x < a.w; x += 0.5) {
+      const k = shadeC(c, 0.8 + 0.35 * hash2(Math.round(x * 2), Math.round(y * 5), seed));
+      a.rect(shadeC(k, 0.6), x + 0.04, y + 0.12, x + 0.46, y + 0.42, { height: 0.01 });
+      a.rect(k, x + 0.05, y + 0.38, x + 0.45, y + 0.74, { height: 0.02, rough: 0.5 });
+    }
+  }
+  return a.done(seed, age);
+}
+const SEATS: [string, string, number, number][] = [['blue', '青', 0x2c4c9c, 0.1], ['red', '赤', 0xa82c24, 0.1], ['green', '緑', 0x2c6c44, 0.15], ['orange', 'オレンジ', 0xd87428, 0.1], ['grey-old', '色あせた灰', 0x8c9094, 0.35]];
+for (const [id, label, c, age] of SEATS) add('trim', `seats-${id}`, `観客席の椅子 ${label}`, [2, 1.6], (t, s) => seats(t, s, hex(c), age), { tile: 'xy', density: 128 });
+add('trim', 'scoreboard', '得点板', [8, 4], (t, s) => {
+  const a = new Art(t, hex(0x141416), 0.4);
+  a.rect(hex(0x1c3c2c), 0, a.h - 0.9, a.w, a.h, {});
+  a.text(hex(0xf0f0e8), 'HAWKS FIELD', a.w / 2, a.h - 0.72, 0.5, { fit: a.w * 0.8, weight: 0.1 });
+  a.text(hex(0xf0b030), 'HOME', 1.9, 2.2, 0.45, {});
+  a.text(hex(0xf0b030), 'GUEST', 6.1, 2.2, 0.45, {});
+  a.text(hex(0xf04030), '21', 1.9, 0.9, 1.05, { weight: 0.12 });
+  a.text(hex(0xf04030), '14', 6.1, 0.9, 1.05, { weight: 0.12 });
+  a.text(hex(0xf0b030), '08:42', a.w / 2, 1.5, 0.7, { weight: 0.1 });
+  a.text(hex(0xf0f0e8), 'QTR 3', a.w / 2, 0.6, 0.4, {});
+  return a.done(s, 0.15);
+}, { density: 96, emissive: 0.45 });
+add('trim', 'sign-h', '病院の H マーク', [1.6, 1.6], (t, s) => {
+  const a = new Art(t, hex(0x1c4c9c), 0.45);
+  a.rect(hex(0xf0f0ec), 0.06, 0.06, a.w - 0.06, a.h - 0.06, {});
+  a.rect(hex(0x1c4c9c), 0.12, 0.12, a.w - 0.12, a.h - 0.12, {});
+  a.text(hex(0xf4f4f0), 'H', a.w / 2, 0.3, 1.0, { weight: 0.14 });
+  return a.done(s, 0.15);
+}, { density: 160, emissive: 0.3 });
+add('trim', 'sign-cross-red', '救急の赤十字マーク', [1.2, 1.2], (t, s) => {
+  const a = new Art(t, hex(0xf0f0ec), 0.45);
+  a.rect(hex(0xb01c18), 0.45, 0.15, 0.75, 1.05, {});
+  a.rect(hex(0xb01c18), 0.15, 0.45, 1.05, 0.75, {});
+  return a.done(s, 0.15);
+}, { density: 160, emissive: 0.3 });
+add('trim', 'helipad', '屋上ヘリポートの標示', [12, 12], (t, s) => {
+  const a = new Art(t, hex(0x5c5e60), 0.85);
+  a.put(hex(0xd8d8d0), (m) => t.ring(m, 6, 6, 5.2, 0.2), {});
+  a.rect(hex(0xb01c18), 3.2, 3.2, 8.8, 8.8, {});
+  a.rect(hex(0xf0f0ec), 4.5, 3.6, 7.5, 8.4, {});
+  a.rect(hex(0xb01c18), 5.3, 3.6, 6.7, 5.4, {});
+  a.rect(hex(0xb01c18), 5.3, 6.6, 6.7, 8.4, {});
+  return a.done(s, 0.3);
+}, { density: 48 });
+add('trim', 'marquee-school', '学校の掲示板', [3, 1.2], (t, s) => {
+  const a = new Art(t, hex(0xe8e6de), 0.5);
+  for (let y = 0.18; y < 1.1; y += 0.3) a.rect(hex(0xc4c2ba), 0.05, y - 0.006, 2.95, y + 0.006, {});
+  a.text(hex(0x141414), 'WELCOME BACK', 1.5, 0.84, 0.2, {});
+  a.text(hex(0x141414), 'PARENT NIGHT THU 6PM', 1.5, 0.54, 0.2, { fit: 2.7 });
+  a.text(hex(0xb01c18), 'GO HAWKS', 1.5, 0.24, 0.2, {});
+  return a.done(s, 0.2);
+}, { density: 200 });
+const EPITAPHS = ['IN LOVING MEMORY', 'BELOVED FATHER', 'AT REST', 'FOREVER IN OUR HEARTS'];
+EPITAPHS.forEach((line, i) => add('trim', `epitaph-${i + 1}`, `墓石の碑文 ${i + 1}`, [0.7, 0.9], (t, s) => {
+  const stone = hex([0x8c8c8c, 0x4c4c50, 0xb4aa98, 0x6c5c54][i]);
+  const a = new Art(t, stone, 0.75);
+  const ink = shadeC(stone, i === 1 ? 2.2 : 0.4);
+  a.text(ink, line, 0.35, 0.62, 0.07, { fit: 0.58 }, { height: -0.004 });
+  a.rect(ink, 0.2, 0.55, 0.5, 0.56, { height: -0.004 });
+  a.text(ink, ['J HOLLIS', 'R MAREN', 'E QUILL', 'A DOVER'][i], 0.35, 0.42, 0.08, { fit: 0.58, weight: 0.11 }, { height: -0.004 });
+  a.text(ink, ['1921 1987', '1934 2002', '1899 1961', '1948 2019'][i], 0.35, 0.3, 0.06, {}, { height: -0.004 });
+  return a.done(s, 0.3 + i * 0.15);
+}, { density: 256 }));
+
 export const TRIM_TEXTURES: readonly TextureSpec[] = list;
