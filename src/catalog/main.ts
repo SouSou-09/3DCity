@@ -107,17 +107,38 @@ class Stage {
     this.sun.shadow.bias = -0.0005;
     this.sun.shadow.normalBias = 0.05;
   }
-  show(obj: THREE.Object3D, min: number[], max: number[], dir: [number, number, number] = [0.55, 0.5, 0.75], zoom = 1): THREE.Vector3 {
+  show(obj: THREE.Object3D, min: number[], max: number[], dir: [number, number, number] = [0.55, 0.5, 0.75], zoom = 1, points = true): THREE.Vector3 {
     if (this.current) this.scene.remove(this.current);
     this.current = obj;
     this.scene.add(obj);
     const c = new THREE.Vector3((min[0] + max[0]) / 2, (min[1] + max[1]) / 2, (min[2] + max[2]) / 2);
     const r = Math.hypot(max[0] - min[0], max[1] - min[1], max[2] - min[2]) / 2;
     const d = new THREE.Vector3(...dir).normalize();
-    this.camera.position.copy(c).addScaledVector(d, (r / Math.sin((this.camera.fov * Math.PI) / 360)) * (0.82 / zoom));
+    // Closest distance at which all eight corners of the bounding box stay in view.
+    const right = new THREE.Vector3().crossVectors(new THREE.Vector3(0, 1, 0), d).normalize();
+    const up = new THREE.Vector3().crossVectors(d, right);
+    const tv = Math.tan((this.camera.fov * Math.PI) / 360);
+    const th = tv * this.camera.aspect;
+    let dist = 0;
+    const q = new THREE.Vector3();
+    const fit = (x: number, y: number, z: number): void => {
+      q.set(x, y, z).sub(c);
+      dist = Math.max(dist, q.dot(d) + Math.max(Math.abs(q.dot(right)) / th, Math.abs(q.dot(up)) / tv));
+    };
+    let meshes = 0;
+    obj.traverse((o) => {
+      const pos = (o as THREE.Mesh).geometry?.attributes.position;
+      if (!pos || !points) return;
+      meshes++;
+      const step = Math.max(1, Math.floor(pos.count / 400));
+      for (let k = 0; k < pos.count; k += step) fit(pos.getX(k), pos.getY(k), pos.getZ(k));
+    });
+    if (!meshes) for (let k = 0; k < 8; k++) fit(k & 1 ? max[0] : min[0], k & 2 ? max[1] : min[1], k & 4 ? max[2] : min[2]);
+    this.camera.position.copy(c).addScaledVector(d, (dist * 1.06) / zoom);
     this.camera.near = r / 100;
     this.camera.far = r * 20;
     this.camera.lookAt(c);
+    this.camera.updateProjectionMatrix();
     this.sun.position.copy(c).add(new THREE.Vector3(-0.5, 0.8, 0.35).multiplyScalar(r * 2));
     this.sun.target.position.copy(c);
     const s = this.sun.shadow.camera;
@@ -131,8 +152,10 @@ class Stage {
   render(w: number, h: number, ratio = 1): void {
     this.renderer.setPixelRatio(ratio);
     this.renderer.setSize(w, h, false);
-    this.camera.aspect = w / h;
-    this.camera.updateProjectionMatrix();
+    if (Math.abs(this.camera.aspect - w / h) > 1e-3) {
+      this.camera.aspect = w / h;
+      this.camera.updateProjectionMatrix();
+    }
     this.renderer.render(this.scene, this.camera);
   }
 }
@@ -173,6 +196,7 @@ function open(kind: 'tex' | 'model', id: string): void {
   viewStage ??= new Stage(canvas);
   controls ??= new OrbitControls(viewStage.camera, canvas);
   $('maps').innerHTML = '';
+  viewStage.camera.aspect = canvas.clientWidth / Math.max(1, canvas.clientHeight);
   let target: THREE.Vector3;
   if (kind === 'model') {
     const spec = MODELS.find((m) => m.id === id)!;
@@ -187,7 +211,7 @@ function open(kind: 'tex' | 'model', id: string): void {
     $('title').textContent = spec.label;
     $('info').textContent = `${spec.id} ・ ${spec.meters[0]} × ${spec.meters[1]} m ・ ${d.w} × ${d.h} px ・ ${spec.decal ? 'デカール(透過)' : 'タイル: ' + spec.tile}`;
     const p = texturePreview(spec);
-    target = viewStage.show(p.obj, p.min, p.max, [0.25, 0.75, 0.6]);
+    target = viewStage.show(p.obj, p.min, p.max, [0.25, 0.75, 0.6], 1, false);
     for (const [name, px] of [['アルベド', d.albedo], ['法線', d.normal], ['AO / 粗さ / 金属', d.orm]] as const) {
       const fig = document.createElement('figure');
       const c = document.createElement('canvas');
@@ -257,6 +281,7 @@ function card(label: string, id: string, draw: (c: HTMLCanvasElement) => void, o
 function modelThumb(spec: ModelSpec, c: HTMLCanvasElement): void {
   const data = spec.build();
   const group = modelGroup(data);
+  thumbStage.camera.aspect = 480 / 300;
   thumbStage.show(group, data.min, data.max);
   thumbStage.render(480, 300);
   c.width = 480;

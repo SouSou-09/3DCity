@@ -269,6 +269,8 @@ export interface RoundaboutOpts {
   apron?: number;
   apronTex?: string;
   floor: string;
+  /** Radius of the kerb where an arm meets the circle. */
+  entryRadius?: number;
   paint?: Section['paint'];
   walk?: { w: number; tex: string; curb: string };
 }
@@ -282,13 +284,15 @@ export function roundabout(b: MeshBuilder, o: RoundaboutOpts): void {
   const on = (phi: number, r = R): P2 => [-Math.sin(phi) * r, -Math.cos(phi) * r];
   const rin = R - o.ring;
   const seg = 48;
+  const joins: { a: ArmGeo; c: ArmGeo; curb: P2[]; back: P2[] }[] = [];
   // Circulating road.
   for (let i = 0; i < seg; i++) {
     const a0 = (i / seg) * Math.PI * 2;
     const a1 = ((i + 1) / seg) * Math.PI * 2;
     const [p0, p1] = [on(a0, Math.max(0, rin)), on(a1, Math.max(0, rin))];
     const [q0, q1] = [on(a0), on(a1)];
-    b.quadUp(o.floor, [p0[0], 0, p0[1]], [p1[0], 0, p1[1]], [q1[0], 0, q1[1]], [q0[0], 0, q0[1]]);
+    if (rin > 0.01) b.quadUp(o.floor, [p0[0], 0, p0[1]], [p1[0], 0, p1[1]], [q1[0], 0, q1[1]], [q0[0], 0, q0[1]]);
+    else b.triUp(o.floor, [0, 0, 0], [q0[0], 0, q0[1]], [q1[0], 0, q1[1]]);
     if (rin > 0.5) {
       const ap = o.apron ?? 0;
       const rc = rin - ap;
@@ -306,30 +310,84 @@ export function roundabout(b: MeshBuilder, o: RoundaboutOpts): void {
       b.triUp(o.island ?? 'ground/grass-lush', [0, base + 0.15 + Math.min(0.6, rc * 0.08), 0], [i0[0], base + 0.15, i0[1]], [i1[0], base + 0.15, i1[1]]);
     }
   }
-  const phiL = (g: ArmGeo) => g.yaw + Math.asin(Math.min(0.95, g.hl / R));
-  const phiR = (g: ArmGeo) => g.yaw - Math.asin(Math.min(0.95, g.hr / R));
-  for (const g of arms) g.L = R + 1.5;
+  // Each arm edge joins the circle through a fillet: tangent to the edge line and to the circle.
+  const rf = o.entryRadius ?? Math.min(4, R * 0.35);
+  interface Fillet { pts: P2[]; t: number; phi: number }
+  const fillet = (g: ArmGeo, left: boolean): Fillet => {
+    const h = left ? g.hl : g.hr;
+    const sgn = left ? -1 : 1;
+    const t = Math.sqrt(Math.max(0.01, (R + rf) ** 2 - (h + rf) ** 2));
+    const centre = add(add([0, 0], g.d, t), g.r, sgn * (h + rf));
+    const onLine = add(add([0, 0], g.d, t), g.r, sgn * h);
+    const cl = Math.hypot(centre[0], centre[1]);
+    const onCircle: P2 = [(centre[0] / cl) * R, (centre[1] / cl) * R];
+    let a0 = Math.atan2(onLine[1] - centre[1], onLine[0] - centre[0]);
+    let a1 = Math.atan2(onCircle[1] - centre[1], onCircle[0] - centre[0]);
+    if (a1 - a0 > Math.PI) a1 -= Math.PI * 2;
+    if (a0 - a1 > Math.PI) a1 += Math.PI * 2;
+    const pts: P2[] = [];
+    for (let k = 0; k <= 6; k++) {
+      const q = a0 + ((a1 - a0) * k) / 6;
+      pts.push([centre[0] + Math.cos(q) * rf, centre[1] + Math.sin(q) * rf]);
+    }
+    // Heading angle (same convention as arm angles) of the point where the fillet meets the circle.
+    return { pts, t, phi: Math.atan2(-onCircle[0], -onCircle[1]) };
+  };
+  const fl = arms.map((g) => fillet(g, true));
+  const fr = arms.map((g) => fillet(g, false));
+  arms.forEach((g, i) => (g.L = Math.max(fl[i].t, fr[i].t) + 0.5));
   for (let i = 0; i < n; i++) {
     const a = arms[i];
     const c = arms[(i + 1) % n];
-    // Floor between the circle and the approach.
-    const mouth: P2[] = [rightEdge(a, a.L), leftEdge(a, a.L)];
-    const p0 = phiL(a);
-    const p1 = phiR(a);
-    for (let s = 0; s <= 8; s++) mouth.push(on(p0 + ((p1 - p0) * s) / 8));
-    b.fan(o.floor, add([0, 0], a.d, R + 1), mouth, 0);
-    // Outer kerb from this arm to the next.
-    let e0 = phiL(a);
-    let e1 = phiR(c);
-    while (e1 <= e0) e1 += Math.PI * 2;
-    const curb: P2[] = [leftEdge(a, a.L)];
-    const steps = Math.max(4, Math.ceil((e1 - e0) / 0.12));
-    for (let s = 0; s <= steps; s++) curb.push(on(e0 + ((e1 - e0) * s) / steps));
-    curb.push(rightEdge(c, c.L));
+    // Floor of the mouth: between the approach, both fillets and the circle.
+    let m0 = fl[i].phi;
+    let m1 = fr[i].phi;
+    while (m0 < m1) m0 += Math.PI * 2;
+    while (m0 - m1 > Math.PI * 2) m0 -= Math.PI * 2;
+    const mouth: P2[] = [rightEdge(a, a.L), leftEdge(a, a.L), ...fl[i].pts];
+    for (let k = 1; k < 8; k++) mouth.push(on(m0 + ((m1 - m0) * k) / 8));
+    mouth.push(...[...fr[i].pts].reverse());
+    b.fan(o.floor, add([0, 0], a.d, R + 0.4 * (a.L - R)), mouth, 0);
+    b.fan('ground/dirt', add([0, 0], a.d, R + 0.4 * (a.L - R)), [...mouth].reverse(), -0.4);
+    // Outer kerb and pavement from this arm round to the next.
     const w = o.walk?.w ?? Math.max(a.wl, c.wr);
-    const back = offsetLine(curb, (k) => (k === 0 ? a.wl : k === curb.length - 1 ? c.wr : w), -1);
-    back[0] = leftEdge(a, a.L, a.wl);
-    back[back.length - 1] = rightEdge(c, c.L, c.wr);
+    const e0 = fl[i].phi;
+    let e1 = fr[(i + 1) % n].phi;
+    while (e1 <= e0) e1 += Math.PI * 2;
+    while (e1 - e0 > Math.PI * 2) e1 -= Math.PI * 2;
+    // The back of the pavement follows a larger circle and meets the arms' outer edges at a corner.
+    const Rb = R + w;
+    const ta = Math.sqrt(Math.max(0.01, Rb * Rb - (a.hl + a.wl) ** 2));
+    const tc = Math.sqrt(Math.max(0.01, Rb * Rb - (c.hr + c.wr) ** 2));
+    a.L = Math.max(a.L, ta + 0.3);
+    c.L = Math.max(c.L, tc + 0.3);
+    const cornerA = leftEdge(a, ta, a.wl);
+    const cornerC = rightEdge(c, tc, c.wr);
+    const b0 = Math.atan2(-cornerA[0], -cornerA[1]);
+    let b1 = Math.atan2(-cornerC[0], -cornerC[1]);
+    while (b1 <= b0) b1 += Math.PI * 2;
+    while (b1 - b0 > Math.PI * 2) b1 -= Math.PI * 2;
+    const curb: P2[] = [];
+    const back: P2[] = [];
+    for (const p of fl[i].pts) {
+      curb.push(p);
+      back.push(cornerA);
+    }
+    const steps = Math.max(4, Math.ceil((e1 - e0) / 0.12));
+    for (let k = 1; k < steps; k++) {
+      curb.push(on(e0 + ((e1 - e0) * k) / steps));
+      back.push(on(b0 + ((b1 - b0) * k) / steps, Rb));
+    }
+    for (const p of [...fr[(i + 1) % n].pts].reverse()) {
+      curb.push(p);
+      back.push(cornerC);
+    }
+    joins.push({ a, c, curb, back });
+  }
+  for (const j of joins) {
+    const { a, c } = j;
+    const curb = [leftEdge(a, a.L), ...j.curb, rightEdge(c, c.L)];
+    const back = [leftEdge(a, a.L, a.wl), ...j.back, rightEdge(c, c.L, c.wr)];
     const side = a.arm.section.left;
     band(b, curb, back, Math.max(a.yl, c.yr), o.walk?.curb ?? side.curb, o.walk?.tex ?? sideTex(side), (k) => {
       const mid: P2 = [(curb[k][0] + curb[k + 1][0]) / 2, (curb[k][1] + curb[k + 1][1]) / 2];
