@@ -109,7 +109,7 @@ export class RoadBuilder {
   private readonly segs = new SegmentIndex(60);
   private readonly barriers = new SegmentIndex(60);
 
-  private rail: RailIndex | null = null;
+  rail: RailIndex | null = null;
   /** Track samples per street family, so that streets parallel to the railway keep a row of lots away from it. */
   private readonly railSide = [new SampleHash(40), new SampleHash(40)];
 

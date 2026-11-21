@@ -269,6 +269,15 @@ export function roadLevels(graph: RoadGraph, t: Terrain, rail: Rail): RoadLevels
         if (k <= sep) lv.h[i] = deck(lv.pts[i]).d < RAMP_CLEAR + 30 ? deck(lv.pts[i]).h : hs;
         else lv.h[i] = Math.max(mix(hs, nodes[other].h, clamp((sk - s0) / Math.max(1, L - tail - s0), 0, 1)), Math.min(lv.ground[i] + 0.3, hs));
       }
+      // Round off the crest where the descent begins and the sag where it ends.
+      for (let pass = 0; pass < 12; pass++) {
+        let prev = lv.h[at(sep)];
+        for (let k = sep + 1; k < n - 1; k++) {
+          const v = 0.25 * prev + 0.5 * lv.h[at(k)] + 0.25 * lv.h[at(k + 1)];
+          prev = lv.h[at(k)];
+          lv.h[at(k)] = v;
+        }
+      }
     }
   }
   return { nodes, edges };
