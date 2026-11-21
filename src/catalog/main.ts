@@ -48,7 +48,7 @@ function material(id: string, layer: number): THREE.Material {
   const spec = textureSpec(id);
   const d = texData(id, quality);
   const make = (pixels: Uint8ClampedArray, srgb: boolean): THREE.DataTexture => {
-    const t = new THREE.DataTexture(new Uint8Array(pixels.buffer), d.w, d.h, THREE.RGBAFormat);
+    const t = new THREE.DataTexture(new Uint8Array(pixels.buffer as ArrayBuffer), d.w, d.h, THREE.RGBAFormat);
     t.wrapS = t.wrapT = THREE.RepeatWrapping;
     t.colorSpace = srgb ? THREE.SRGBColorSpace : THREE.NoColorSpace;
     t.generateMipmaps = true;
