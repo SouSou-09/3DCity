@@ -663,7 +663,7 @@ export function planLandUse(graph: RoadGraph, t: Terrain, districts: Districts, 
           const final = siteAt(e, s + width / 2, { x: fc.p.x + fc.nx * (row + depth / 2), y: fc.p.y + fc.ny * (row + depth / 2) }, [poly[0], poly[front - 1], a, b]);
           // The whole lot may be steeper than the first look said.
           const check = useWeights(final, corner);
-          if (check[use] <= 0 && w[use] > 0 && (final.relief > 6 || final.slope >= 0.08)) {
+          if (check[use] <= 0 && w[use] > 0 && (final.relief > 3 || final.slope >= 0.08)) {
             for (const c of cells) {
               if (grid[c] === id + 1) {
                 grid[c] = 0;
