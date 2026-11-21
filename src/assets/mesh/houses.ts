@@ -1,6 +1,6 @@
 import { Rand, WINDOW_SIZES, textureSpec } from '../tex';
 import { MeshBuilder } from './builder';
-import { Opening, chimney, dormer, flatRoof, mansard, pitched, porch, shed, sides, stoop, wall } from './buildkit';
+import { chimney, dormer, flatRoof, mansard, Opening, pitched, porch, shed, sides, stoop, wall, weatherBySeed } from './buildkit';
 import { box, face, stand } from './kit';
 import { addModel } from './registry';
 
@@ -81,6 +81,7 @@ export interface HouseOpts {
 
 export function house(b: MeshBuilder, o: HouseOpts): void {
   const rnd = new Rand(o.seed);
+  weatherBySeed(b, o.seed, o.wall, o.upper);
   const { w, d, floors } = o;
   const fh = o.fh ?? 2.75;
   const integral = o.garage?.integral ?? false;

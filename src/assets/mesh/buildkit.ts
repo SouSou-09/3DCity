@@ -58,6 +58,12 @@ const WEATHER = new WeakMap<MeshBuilder, Weather>();
 export function weathering(b: MeshBuilder, age: number, seed = 1): void {
   WEATHER.set(b, { age, seed, n: 0 });
 }
+/** Weathering that differs from one building to the next: `seed` decides how long since it was last cleaned, and worn materials add to it. */
+export function weatherBySeed(b: MeshBuilder, seed: number, ...materials: (string | undefined)[]): void {
+  const r = Math.abs(Math.sin(seed * 91.7 + 3.1) * 43758.5453) % 1;
+  const worn = materials.some((m) => m && /old|sooty|peeling|dirty|rust|worn|weathered|stained|faded/.test(m));
+  weathering(b, Math.min(1, 0.22 + r * 0.6 + (worn ? 0.25 : 0)), seed);
+}
 const weatherOf = (b: MeshBuilder): Weather => {
   let w = WEATHER.get(b);
   if (!w) WEATHER.set(b, (w = { age: 0.55, seed: 1, n: 0 }));
@@ -222,7 +228,7 @@ export function flatRoof(b: MeshBuilder, cx: number, cz: number, w: number, d: n
   if (p <= 0) return;
   if (wt.age > 0.3) {
     // Rain carries the dirt on the coping down the face of the parapet.
-    const [drop, kind] = [Math.min(2, p + 0.45), soilFor(wt, o.outer ?? '')];
+    const [drop, kind] = [Math.min(2, p + 0.45), soilFor(wt, o.outer ?? o.inner ?? '')];
     for (const s of sides(cx, cz, w, d, y + p - drop)) {
       const u = pick(wt, 50) * 0.7;
       pq(b, `trim/runoff-${kind}-${pick(wt, 2)}`, s.f, [[0, 0, 0], [s.w, 0, 0], [s.w, drop, 0], [0, drop, 0]], [[u, 2 - drop], [u + s.w, 2 - drop], [u + s.w, 2], [u, 2]], 3);

@@ -1,6 +1,6 @@
 import { Rand, textureSpec } from '../tex';
 import { MeshBuilder } from './builder';
-import { Opening, Side, acUnit, antenna, balcony, blade, bulkhead, flatRoof, polySides, sides, wall } from './buildkit';
+import { acUnit, antenna, balcony, blade, bulkhead, flatRoof, Opening, polySides, Side, sides, wall, weatherBySeed } from './buildkit';
 import { roofPlant } from './blocks';
 import { Pose, box, lathe, move, pipe, stand } from './kit';
 import { addModel } from './registry';
@@ -59,6 +59,7 @@ function footprint(cx: number, cz: number, w: number, d: number, cut: number, n:
 
 export function tower(b: MeshBuilder, o: TowerOpts): void {
   const rnd = new Rand(o.seed);
+  weatherBySeed(b, o.seed, o.base);
   const lobbyH = o.lobbyH ?? 5.4;
   const cap = o.cap ?? 1.1;
   let y = 0;
@@ -174,6 +175,7 @@ export function tower(b: MeshBuilder, o: TowerOpts): void {
 /** Open-deck car park: slabs, columns and upstand panels, with a stair tower. */
 export function carPark(b: MeshBuilder, o: { seed: number; w: number; d: number; levels: number; panel: string; column: string; stair: string; sign?: boolean }): void {
   const rnd = new Rand(o.seed);
+  weatherBySeed(b, o.seed, o.panel);
   const { w, d, levels } = o;
   const fh = 3.2;
   const f0 = stand();

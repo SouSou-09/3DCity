@@ -507,7 +507,7 @@ const DIRT: RGB = [0.13, 0.12, 0.1];
 const DUST: RGB = [0.74, 0.7, 0.63];
 const ALGAE: RGB = [0.16, 0.2, 0.11];
 type Soil = 'light' | 'mid' | 'heavy' | 'pale';
-const SOIL: Record<Soil, [number, string]> = { light: [0.26, '薄い'], mid: [0.42, '中'], heavy: [0.6, '濃い'], pale: [0.3, '白っぽい'] };
+const SOIL: Record<Soil, [number, string]> = { light: [0.22, '薄い'], mid: [0.36, '中'], heavy: [0.52, '濃い'], pale: [0.26, '白っぽい'] };
 /** An overlay whose opacity is `fn`, tinted with patches of green where water lingers. */
 function soil(tex: Tex, seed: number, kind: Soil, fn: (x: number, y: number) => number, green = 0.5): TextureData {
   const base = kind === 'pale' ? DUST : DIRT;
@@ -530,7 +530,7 @@ function stain(tex: Tex, seed: number, kind: Soil): TextureData {
   const streak = tex.noise(0.16, 3, seed + 1, 3);
   const fine = tex.noise(0.25, 0.25, seed + 2, 2);
   const band = tex.noise(4, 0.5, seed + 3, 2);
-  return soil(tex, seed, kind, (x, y) => 0.12 + sstep(-0.15, 0.55, blotch(x, y)) * 0.55 + sstep(0.1, 0.6, streak(x, y)) * 0.45 * (0.5 + 0.5 * sstep(-0.3, 0.3, blotch(x, y))) + fine(x, y) * 0.12 + sstep(0.35, 0.7, band(x, y)) * 0.2);
+  return soil(tex, seed, kind, (x, y) => 0.12 + sstep(-0.15, 0.55, blotch(x, y)) * 0.55 + sstep(0.15, 0.65, streak(x, y)) * 0.34 * (0.5 + 0.5 * sstep(-0.3, 0.3, blotch(x, y))) + fine(x, y) * 0.12 + sstep(0.35, 0.7, band(x, y)) * 0.2);
 }
 /** Dirt thrown up from the pavement: densest at the foot of the wall, with a ragged upper edge. */
 function splash(tex: Tex, seed: number, kind: Soil): TextureData {

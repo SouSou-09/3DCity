@@ -1,6 +1,6 @@
 import { Rand, SHOP_BAYS, WINDOW_SIZES, textureSpec } from '../tex';
 import { MeshBuilder } from './builder';
-import { Opening, acUnit, antenna, awning, balcony, billboard, blade, bulkhead, dish, duct, fireEscape, flatRoof, sides, sign, skylight, stoop, vent, wall, waterTank } from './buildkit';
+import { acUnit, antenna, awning, balcony, billboard, blade, bulkhead, dish, duct, fireEscape, flatRoof, Opening, sides, sign, skylight, stoop, vent, wall, waterTank, weatherBySeed } from './buildkit';
 import { sillFor, spread } from './houses';
 import { box, stand } from './kit';
 import { addModel } from './registry';
@@ -71,6 +71,7 @@ export interface BlockOpts {
 
 export function block(b: MeshBuilder, o: BlockOpts): void {
   const rnd = new Rand(o.seed);
+  weatherBySeed(b, o.seed, o.wall);
   const { w, d, floors } = o;
   const fh = o.fh ?? 3.1;
   const lift = o.stoop ?? 0;
