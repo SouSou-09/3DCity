@@ -30,6 +30,6 @@ export function addWaterfront(): void {
   A('dock-float-concrete', '浮き桟橋 コンクリート 幅広', (b, f) => floatDock(b, f, 18, { deck: 'concrete/walk-plain', pile: S('pile-concrete'), w: 3.6 }));
   A('dock-gangway', '浮き桟橋 渡り橋つき', (b, f) => {
     gangway(b, f, 9, 2.2);
-    floatDock(b, stand([8, 0, -4], -90), 14, { pileSide: -1 });
+    floatDock(b, stand([10.2, 0, -5], -90), 14, { pileSide: -1 });
   });
 }
