@@ -1,7 +1,7 @@
 import { MeshBuilder, ModelData, Path, arc, grade, hump, sCurve, straight, through } from './builder';
 import { Arm, Control, junction, roundabout } from './junction';
 import { Age, StreetOpts, highway, plainTex, street } from './presets';
-import { Section, edgeElement, layout, stamp, sweepSection } from './section';
+import { Section, edgeElement, layout, reversed, stamp, sweepSection } from './section';
 import { addSidewalks } from './sidewalks';
 import { addStructures } from './structures';
 
@@ -219,6 +219,8 @@ const art = (age: Age = 'used'): Section => street({ lanes: 2, walkW: 3, age, we
 const artT = (): Section => street({ lanes: 2, median: 'turn', walkW: 3, age: 'used', wear: 'sealed' });
 const art6 = (): Section => street({ lanes: 3, median: 'turn', walkW: 3.6, walk: 'concrete/walk-long', age: 'used' });
 const oneway = (n: number): Section => street({ lanes: n, oneWay: true, parking: 1, walkW: 2.6, age: 'used', wear: 'sealed' });
+/** One-way street running towards the junction (arms are described looking away from it). */
+const onewayIn = (n: number): Section => reversed(oneway(n));
 const old = (): Section => {
   const s = street({ lanes: 1, laneW: 3, centre: null, walk: 'paving/slabs-sandstone', walkW: 1.8, curb: 'curb/granite', age: 'worn' });
   return s;
@@ -233,8 +235,8 @@ J('cross-collector-bike', '十字路 自転車レーン付き', [A(0, collBike()
 J('cross-arterial-collector', '十字路 幹線×補助幹線', [A(0, art()), A(90, coll()), A(180, art()), A(270, coll())], { radius: 6 });
 J('cross-arterial', '十字路 幹線×幹線', [A(0, artT(), 'signal', 'crosswalk/zebra-wide'), A(90, art(), 'signal', 'crosswalk/zebra-wide'), A(180, artT(), 'signal', 'crosswalk/zebra-wide'), A(270, art(), 'signal', 'crosswalk/zebra-wide')], { radius: 7 });
 J('cross-boulevard', '十字路 6車線大通り×幹線(停止禁止枠)', [A(0, art6(), 'signal', 'crosswalk/piano'), A(90, artT(), 'signal', 'crosswalk/piano'), A(180, art6(), 'signal', 'crosswalk/piano'), A(270, artT(), 'signal', 'crosswalk/piano')], { radius: 8, box: true });
-J('cross-oneway', '十字路 一方通行×一方通行', [A(0, oneway(2), 'none'), A(90, oneway(2), 'signal'), A(180, oneway(2), 'signal'), A(270, oneway(2), 'none')], { radius: 5 });
-J('cross-oneway-arterial', '十字路 一方通行3車線×幹線', [A(0, oneway(3), 'none'), A(90, art()), A(180, oneway(3)), A(270, art())], { radius: 6 });
+J('cross-oneway', '十字路 一方通行×一方通行', [A(0, oneway(2), 'none'), A(90, onewayIn(2), 'signal'), A(180, onewayIn(2), 'signal'), A(270, oneway(2), 'none')], { radius: 5 });
+J('cross-oneway-arterial', '十字路 一方通行3車線×幹線', [A(0, oneway(3), 'none'), A(90, art()), A(180, onewayIn(3)), A(270, art())], { radius: 6 });
 J('cross-skew-70', '斜め十字路 70°', [A(0, coll()), A(70, coll()), A(180, coll()), A(250, coll())], { radius: 5 });
 J('cross-skew-55', '斜め十字路 55°(幹線×斜めの大通り)', [A(0, art()), A(55, art(), 'signal', 'crosswalk/diagonal'), A(180, art()), A(235, art(), 'signal', 'crosswalk/diagonal')], { radius: 6 });
 J('cross-offset-angles', '変形十字路(4方向ばらばら)', [A(5, coll()), A(98, local(), 'stop'), A(172, coll()), A(260, local(), 'stop')], { radius: 4 });

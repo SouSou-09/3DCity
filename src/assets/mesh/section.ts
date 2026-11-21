@@ -137,6 +137,12 @@ function sideStrips(side: Side, x: number, dir: 1 | -1, strips: Strip[], top: [n
   return { x, y };
 }
 
+/** The same road seen from its other end: traffic directions flip and the sides swap. */
+export function reversed(sec: Section): Section {
+  const flip = (d: Lane['dir']): Lane['dir'] => (d === 1 ? -1 : d === -1 ? 1 : 0);
+  return { ...sec, lanes: [...sec.lanes].reverse().map((l) => ({ ...l, dir: flip(l.dir) })), lines: [...sec.lines].reverse(), left: sec.right, right: sec.left };
+}
+
 /** Posts or other repeated items along a path at sideways offset x. */
 export function along(path: Path, spacing: number, fn: (f: Frame, i: number) => void, inset = spacing / 2): void {
   const s0 = path[0].s;
