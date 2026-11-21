@@ -1,7 +1,7 @@
 import { MeshBuilder, V3 } from './builder';
 import { S, pedRail, spaced, tubeRail } from './boundaries';
 import { bench, postTop } from './furniture';
-import { Pose, at, box, face, lathe, move, pipe, plate, turn } from './kit';
+import { Pose, at, box, face, lathe, layZ, move, pipe, plate, turn } from './kit';
 
 // Waterfront models stand with the water surface at y = 0 and the sea bed at y = -2.
 const BLACK = 'structure/steel-black';
@@ -311,7 +311,7 @@ export function gangway(b: MeshBuilder, f: Pose, len: number, drop: number, w = 
       if (i > 1) b.tube(mat, P(xs[i - 1], 0, z), P(xs[i], 1.05, z), 0.014, 5);
     }
   }
-  for (const sz of [-1, 1]) lathe(b, 'furniture/tire', turn({ ...move(f, len - 0.1, 0.56, (sz * (w + 0.1)) / 2), y: f.z, z: f.y }, 0), [[0, -0.03], [0.1, -0.03], [0.1, 0.03], [0, 0.03]], 10);
+  for (const sz of [-1, 1]) lathe(b, 'furniture/tire', turn(layZ(move(f, len - 0.1, 0.56, (sz * (w + 0.1)) / 2)), 0), [[0, -0.03], [0.1, -0.03], [0.1, 0.03], [0, 0.03]], 10);
 }
 
 export interface LightOpts {

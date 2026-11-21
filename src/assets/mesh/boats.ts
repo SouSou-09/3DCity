@@ -1,7 +1,7 @@
 import { MeshBuilder, V3 } from './builder';
 import { S, spaced } from './boundaries';
 import { sheet } from './buildkit';
-import { Pose, at, box, face, lathe, move, pipe, plate, roll, tilt, turn } from './kit';
+import { Pose, at, box, face, lathe, layX, layZ, move, pipe, plate, roll, tilt, turn } from './kit';
 import { ball, cyl, hash, ladder, torus } from './marine';
 
 const ALU = 'trim/paint-aluminium';
@@ -204,7 +204,7 @@ export function boat(b: MeshBuilder, f: Pose, o: BoatOpts): void {
       });
     }
     pipe(b, ALU, [at(f, h.x(0.85), h.sheer(0.85) + 0.6, h.hb(0.85) * 0.96), at(f, h.x(1) - 0.1, h.sheer(1) + 0.65, 0), at(f, h.x(0.85), h.sheer(0.85) + 0.6, -h.hb(0.85) * 0.96)], 0.014, 5);
-    lathe(b, ALU, { ...move(f, h.x(0.12), h.sheer(0.1) + 0.85, 0), y: f.x, x: f.y }, [[0, -0.02], [0.4, -0.02], [0.4, 0.02], [0, 0.02]], 12);
+    lathe(b, ALU, layX(move(f, h.x(0.12), h.sheer(0.1) + 0.85, 0)), [[0, -0.02], [0.4, -0.02], [0.4, 0.02], [0, 0.02]], 12);
     return;
   }
   if (o.kind === 'cruiser') {
@@ -232,7 +232,7 @@ export function boat(b: MeshBuilder, f: Pose, o: BoatOpts): void {
   for (const sz of [-1, 1]) {
     const pts = [0, 0.15, 0.3, 0.45, 0.6, 0.75, 0.9].map((q) => [at(f, h.x(q), h.sheer(q), sz * h.hb(q) * 0.99), at(f, h.x(q), h.sheer(q) + 0.55, sz * h.hb(q) * 0.99)] as [V3, V3]);
     for (let i = 1; i < pts.length; i++) sheet(b, side, pts[i - 1][0], pts[i][0], pts[i][1], pts[i - 1][1], [[0, 0], [2, 0], [2, 0.55], [0, 0.55]]);
-    for (const q of [0.25, 0.42]) torus(b, 'furniture/tire', { ...move(f, h.x(q), 0.7, sz * (h.hb(q) + 0.12)), y: f.z, z: f.y }, [0, 0, 0], 0.26, 0.11, 10, 6);
+    for (const q of [0.25, 0.42]) torus(b, 'furniture/tire', layZ(move(f, h.x(q), 0.7, sz * (h.hb(q) + 0.12))), [0, 0, 0], 0.26, 0.11, 10, 6);
   }
   const wx = h.x(0.68);
   box(b, WHITE, f, [wx, h.sheer(0.68) + 1.15, 0], [1.6 * s, 1.15, 1.35 * s], 'Y');
@@ -247,7 +247,7 @@ export function boat(b: MeshBuilder, f: Pose, o: BoatOpts): void {
   lathe(b, 'trim/paint-white-old', move(f, wx + 0.5, my, 0.5), [[0.25, 0], [0.25, 0.12], [0, 0.4]], 10);
   const dx = h.x(0.16);
   for (const sz of [-1, 1]) box(b, 'structure/steel-grey-rusty', f, [dx, h.sheer(0.16) + 0.5, sz * 1.05 * s], [0.08, 0.5, 0.06]);
-  lathe(b, S('net-fishing'), { ...move(f, dx, h.sheer(0.16) + 0.75, 0), y: f.z, z: f.y, x: f.x }, [[0, -s], [0.55, -s], [0.55, s], [0, s]], 10);
+  lathe(b, S('net-fishing'), layZ(move(f, dx, h.sheer(0.16) + 0.75, 0)), [[0, -s], [0.55, -s], [0.55, s], [0, s]], 10);
   for (let i = 0; i < 4; i++) box(b, S(i % 2 ? 'plastic-blue' : 'plastic-orange'), f, [h.x(0.36) + (i % 2) * 0.75, h.sheer(0.36) + 0.16 + Math.floor(i / 2) * 0.32, 0.6 * s], [0.33, 0.15, 0.23]);
   for (let i = 0; i < 3; i++) ball(b, S(i % 2 ? 'buoy-red' : 'buoy-orange'), f, [h.x(0.3) + i * 0.4, h.sheer(0.3) + 0.25, -0.9 * s], 0.22, 8);
 }
@@ -259,7 +259,7 @@ export function trailer(b: MeshBuilder, f: Pose, len: number, w = 1.9): void {
     b.beam(st, at(f, -len / 2, 0.42, (sz * w) / 2 * 0.75), at(f, len * 0.25, 0.42, (sz * w) / 2 * 0.75), 0.07, 0.1);
     b.beam(st, at(f, len * 0.25, 0.42, (sz * w) / 2 * 0.75), at(f, len / 2 + 0.6, 0.42, 0), 0.07, 0.1);
     b.beam('trim/paint-charcoal', at(f, -len * 0.4, 0.62, sz * 0.35), at(f, len * 0.2, 0.56, sz * 0.35), 0.12, 0.08);
-    lathe(b, 'furniture/tire', { ...move(f, -len * 0.12, 0.31, (sz * w) / 2), y: f.z, z: f.y }, [[0, -0.1], [0.24, -0.1], [0.31, -0.07], [0.31, 0.07], [0.24, 0.1], [0, 0.1]], 12);
+    lathe(b, 'furniture/tire', layZ(move(f, -len * 0.12, 0.31, (sz * w) / 2)), [[0, -0.1], [0.24, -0.1], [0.31, -0.07], [0.31, 0.07], [0.24, 0.1], [0, 0.1]], 12);
     box(b, st, f, [-len * 0.12, 0.66, (sz * w) / 2], [0.38, 0.015, 0.14]);
   }
   for (const x of [-len / 2, -len * 0.12, len * 0.25]) b.beam(st, at(f, x, 0.42, -w / 2 * 0.8), at(f, x, 0.42, (w / 2) * 0.8), 0.07, 0.1);
@@ -318,7 +318,7 @@ export function seawall(b: MeshBuilder, f: Pose, len: number, tex: string, o: Se
   b.quadUp(o.walk ?? 'concrete/walk-square', at(f, 0, top, -0.5), at(f, len, top, -0.5), at(f, len, top, -depth), at(f, 0, top, -depth));
   for (const x of [0, len]) b.quadFacing('structure/wall-old', at(f, x, -2, 0), at(f, x, -2, -depth), at(f, x, top, -depth), at(f, x, top, 0), x ? f.x : [-f.x[0], -f.x[1], -f.x[2]], [[0, 0], [depth, 0], [depth, top + 2], [0, top + 2]]);
   if (o.fenders === 'tyre') for (const s of spaced(len - 2, 2.4)) {
-    torus(b, 'furniture/tire', { ...move(f, 1 + s, 0.9 + hash(Math.round(s), 3) * 0.3, 0.13), y: f.z, z: f.y }, [0, 0, 0], 0.3, 0.12, 10, 6);
+    torus(b, 'furniture/tire', layZ(move(f, 1 + s, 0.9 + hash(Math.round(s), 3) * 0.3, 0.13)), [0, 0, 0], 0.3, 0.12, 10, 6);
     b.tube('site/rope', at(f, 1 + s, 1.3, 0.1), at(f, 1 + s, top + 0.2, 0.02), 0.012, 4);
   }
   if (o.fenders === 'rubber') for (const s of spaced(len - 2, 3)) box(b, 'furniture/tire', f, [1 + s, 0.9, 0.1], [0.18, 0.9, 0.1], 'Z');
@@ -339,7 +339,7 @@ export function buoy(b: MeshBuilder, f: Pose, kind: BuoyKind, tex: string, o: { 
   if (kind === 'ball') {
     ball(b, tex, g, [0, 0.12, 0], 0.4, 12);
     if (o.band) lathe(b, o.band, move(g, 0, 0.07, 0), [[0.405, 0], [0.405, 0.1]], 12);
-    torus(b, 'trim/paint-galvanized', { ...move(g, 0, 0.56, 0), y: f.z, z: f.y }, [0, 0, 0], 0.06, 0.012, 8, 4);
+    torus(b, 'trim/paint-galvanized', layZ(move(g, 0, 0.56, 0)), [0, 0, 0], 0.06, 0.012, 8, 4);
   }
   if (kind === 'pillar') {
     lathe(b, tex, g, [[0, -0.6], [1, -0.5], [1.1, 0.25], [0.9, 0.45], [0, 0.5]], 14);

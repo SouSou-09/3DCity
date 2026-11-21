@@ -3,7 +3,7 @@ import { S, chainlink, panel } from './boundaries';
 import { canopy, flagPole, hut } from './boats';
 import { sheet } from './buildkit';
 import { bench } from './furniture';
-import { Pose, at, box, lathe, move, pipe, plate, stand, tilt, turn } from './kit';
+import { Pose, at, box, lathe, layX, move, pipe, plate, stand, tilt, turn } from './kit';
 import { ball, boulder, cyl, hash, ringRail, torus } from './marine';
 import { addModel } from './registry';
 
@@ -582,7 +582,7 @@ export function addParks(): void {
   A('dog-agility', 'ドッグラン 障害物セット', (b, f) => {
     for (const sx of [-1, 1]) b.tube(P('blue'), at(f, sx * 0.6, 0, 0), at(f, sx * 0.6, 0.9, 0), 0.03, 6, 0.03, true);
     for (const y of [0.3, 0.6]) b.tube(P('yellow'), at(f, -0.6, y, 0), at(f, 0.6, y, 0), 0.02, 6);
-    torus(b, P('red'), { ...move(f, 2.5, 0.9, 0), y: f.x, x: f.y }, [0, 0, 0], 0.4, 0.04, 14, 5);
+    torus(b, P('red'), layX(move(f, 2.5, 0.9, 0)), [0, 0, 0], 0.4, 0.04, 14, 5);
     for (const sz of [-1, 1]) b.tube(P('blue'), at(f, 2.5, 0, sz * 0.48), at(f, 2.5, 1.3, sz * 0.48), 0.03, 6, 0.03, true);
     b.tube(P('blue'), at(f, 2.5, 1.3, -0.48), at(f, 2.5, 1.3, 0.48), 0.03, 6);
     sheet(b, P('yellow'), at(f, -2.6, 0, 0.3), at(f, -2.6, 0, -0.3), at(f, -1.9, 0.7, -0.3), at(f, -1.9, 0.7, 0.3), [[0, 0], [0.6, 0], [0.6, 1], [0, 1]]);

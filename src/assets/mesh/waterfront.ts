@@ -2,7 +2,7 @@ import { MeshBuilder, V3 } from './builder';
 import { S } from './boundaries';
 import { BoatKind, BuoyKind, CONTAINER_COLORS, SeawallOpts, boat, buoy, canopy, container, flagPole, hut, reeferUnit, seawall, trailer } from './boats';
 import { LightOpts, PierOpts, ball, beacon, bollard, boulder, cleat, cyl, floatDock, gangway, guard, hash, ladder, lighthouse, mound, pier, rocks, skeletonLight, tetrapod, torus } from './marine';
-import { Pose, at, box, lathe, move, pipe, plate, stand, turn } from './kit';
+import { Pose, at, box, lathe, layZ, move, pipe, plate, stand, turn } from './kit';
 import { TowerOpts, boardwalk, dune, jibCrane, lifeguardChair, lifeguardTower, lounger, rtgCrane, shower, stsCrane, surfboard, umbrella, volleyball } from './port';
 import { addModel } from './registry';
 
@@ -189,7 +189,7 @@ export function addWaterfront(): void {
       plate(b, S('lifering'), f, [0, 1.25, 0.16]);
     } else {
       box(b, 'trim/paint-white', f, [0, 1.25, 0.05], [0.42, 0.42, 0.012]);
-      torus(b, 'trim/paint-orange', { ...move(f, 0, 1.25, 0.11), y: f.z, z: f.y }, [0, 0, 0], 0.3, 0.07, 14, 6);
+      torus(b, 'trim/paint-orange', layZ(move(f, 0, 1.25, 0.11)), [0, 0, 0], 0.3, 0.07, 14, 6);
       for (let i = 0; i < 4; i++) {
         const a = (i / 4) * Math.PI * 2 + 0.78;
         box(b, 'trim/paint-white', move(f, Math.cos(a) * 0.3, 1.25 + Math.sin(a) * 0.3, 0.11), [0, 0, 0], [0.075, 0.075, 0.075]);

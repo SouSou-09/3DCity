@@ -2,7 +2,7 @@ import { MeshBuilder, V3 } from './builder';
 import { S, panel } from './boundaries';
 import { container, canopy, flagPole, hut } from './boats';
 import { sheet } from './buildkit';
-import { Pose, at, box, lathe, move, plate, tilt, turn } from './kit';
+import { Pose, at, box, lathe, layZ, move, plate, tilt, turn } from './kit';
 import { cyl, guard, hash, ladder, timberRail } from './marine';
 
 const DARK = 'trim/paint-charcoal';
@@ -38,7 +38,7 @@ function bogie(b: MeshBuilder, f: Pose, c: V3, len: number, tyres: boolean): voi
   for (let i = 0; i < n; i++) {
     const x = c[0] - len / 2 + (len * (i + 0.5)) / n;
     const r = tyres ? 0.8 : 0.32;
-    for (const sz of tyres ? [-0.5, 0.5] : [0]) lathe(b, tyres ? 'furniture/tire' : 'structure/steel-grey-rusty', { ...move(f, x, c[1] + r, c[2] + sz), y: f.z, z: f.y }, [[0, -0.22], [r * 0.8, -0.22], [r, -0.15], [r, 0.15], [r * 0.8, 0.22], [0, 0.22]], 12);
+    for (const sz of tyres ? [-0.5, 0.5] : [0]) lathe(b, tyres ? 'furniture/tire' : 'structure/steel-grey-rusty', layZ(move(f, x, c[1] + r, c[2] + sz)), [[0, -0.22], [r * 0.8, -0.22], [r, -0.15], [r, 0.15], [r * 0.8, 0.22], [0, 0.22]], 12);
   }
 }
 /** Spreader hanging from four cables, optionally holding a container. */
@@ -266,7 +266,7 @@ export function shower(b: MeshBuilder, f: Pose, heads: number, mat = 'furniture/
     const g = turn(f, (360 / heads) * i);
     b.tube(mat, at(g, 0, 2.15, 0), at(g, 0, 2.2, 0.35), 0.018, 5);
     lathe(b, mat, { ...move(g, 0, 2.2, 0.35), y: [-f.y[0], -f.y[1], -f.y[2]] }, [[0.02, 0], [0.07, 0.06], [0, 0.06]], 8);
-    cyl(b, DARK, { ...move(g, 0, 1.1, 0.06), y: g.z, z: g.y }, [0, 0, 0], 0.03, 0.03, 6);
+    cyl(b, DARK, layZ(move(g, 0, 1.1, 0.06)), [0, 0, 0], 0.03, 0.03, 6);
   }
 }
 /** Boardwalk on short posts over sand, running along +x. */

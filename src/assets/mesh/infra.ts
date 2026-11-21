@@ -2,7 +2,7 @@ import { MeshBuilder, V3 } from './builder';
 import { S, chainlink, masonry } from './boundaries';
 import { hut } from './boats';
 import { sheet } from './buildkit';
-import { Pose, at, box, lathe, move, pipe, plate, stand, tilt, turn } from './kit';
+import { Pose, at, box, lathe, layX, layZ, move, pipe, plate, stand, tilt, turn } from './kit';
 import { ball, cyl, hash, ladder, ringRail, torus } from './marine';
 import { pad } from './parks';
 import { lattice } from './port';
@@ -191,7 +191,8 @@ export function transformer(b: MeshBuilder, f: Pose, s = 1, body = P('grey')): v
   box(b, CONC, f, [0, 0.15, 0], [2.4 * s, 0.15, 1.6 * s], 'y');
   box(b, body, f, [0, 0.3 + 1.2 * s, 0], [1.5 * s, 1.2 * s, 0.9 * s], 'y');
   for (const sz of [-1, 1]) for (let x = -1.3; x <= 1.31; x += 0.2) box(b, body, f, [x * s, 0.3 + 1.1 * s, sz * 1.2 * s], [0.03, 0.9 * s, 0.28 * s]);
-  cyl(b, body, { ...move(f, 1.5 * s, 0.3 + 2.9 * s, 0), y: f.x, x: f.y, z: f.z }, [0, 0, 0], 0.35 * s, -3 * s + 6 * s, 10);
+  cyl(b, body, layX(move(f, -1.2 * s, 0.3 + 3.1 * s, -0.55 * s)), [0, 0, 0], 0.3 * s, 2.4 * s, 10);
+  for (const sx of [-1, 1]) box(b, body, f, [sx * 0.8 * s, 0.3 + 2.6 * s, -0.55 * s], [0.05, 0.25 * s, 0.05]);
   for (let i = -1; i <= 1; i++) {
     lathe(b, 'furniture/ceramic-brown', move(f, i * 0.8 * s, 0.3 + 2.4 * s, 0.3 * s), [[0.1, 0], [0.16, 0.2], [0.08, 0.3], [0.16, 0.5], [0.08, 0.6], [0.16, 0.8], [0.06, 0.95], [0.03, 1.2]], 8);
     lathe(b, 'furniture/ceramic-grey', move(f, i * 0.5 * s, 0.3 + 2.4 * s, -0.45 * s), [[0.07, 0], [0.11, 0.15], [0.05, 0.25], [0.11, 0.4], [0.03, 0.55]], 8);
@@ -236,7 +237,7 @@ export function cellTower(b: MeshBuilder, f: Pose, h: number, kind: 'monopole' |
   }
   for (let i = 0; i < 2; i++) {
     const g = turn(move(f, 0, h * (0.55 + i * 0.1), 0), 40 + i * 150);
-    lathe(b, P('white'), { ...move(g, 0, 0, kind === 'lattice' ? 0.8 : 0.35), y: g.z, z: g.y }, [[0, 0], [0.35, 0.08], [0.45, 0.3]], 10);
+    lathe(b, P('white'), layZ(move(g, 0, 0, kind === 'lattice' ? 0.8 : 0.35)), [[0, 0], [0.35, 0.08], [0.45, 0.3]], 10);
   }
   if (kind === 'palm') for (let i = 0; i < 14; i++) {
     const g = tilt(turn(move(f, 0, h - 0.3 - (i % 3) * 0.25, 0), i * 137.5), -25 + (i % 3) * 22);
@@ -296,7 +297,7 @@ export function waterTower(b: MeshBuilder, f: Pose, kind: 'spheroid' | 'legged' 
 /** Horizontal or vertical storage tank. */
 export function tank(b: MeshBuilder, f: Pose, kind: 'h' | 'v', r: number, len: number, mat: string, o: { stair?: boolean; bund?: boolean } = {}): void {
   if (kind === 'h') {
-    const g: Pose = { ...move(f, -len / 2, r + 0.5, 0), y: f.x, x: f.y, z: f.z };
+    const g = layX(move(f, -len / 2, r + 0.5, 0));
     lathe(b, mat, g, [[0, -r * 0.35], [r * 0.6, -r * 0.27], [r, 0], [r, len], [r * 0.6, len + r * 0.27], [0, len + r * 0.35]], 14);
     for (const sx of [-1, 1]) box(b, CONC, f, [sx * len * 0.3, (r * 0.7 + 0.5) / 2, 0], [0.2, (r * 0.7 + 0.5) / 2, r * 0.85], 'y');
     cyl(b, mat, f, [0, 2 * r + 0.45, 0], 0.25, 0.3, 8);
@@ -324,7 +325,7 @@ export function turbine(b: MeshBuilder, f: Pose, h: number, R: number, phase = 2
   cyl(b, CONC, f, [0, 0, 0], h * 0.05 + 1, 0.3, 12);
   box(b, P('white'), f, [0, h + 0.6, -1], [0.9, 0.9, 2.6]);
   const hub = move(f, 0, h + 0.6, 2);
-  lathe(b, P('white'), { ...hub, y: hub.z, z: hub.y }, [[0.9, -0.4], [0.8, 0.5], [0.4, 1.1], [0, 1.3]], 10);
+  lathe(b, P('white'), layZ(hub), [[0.9, -0.4], [0.8, 0.5], [0.4, 1.1], [0, 1.3]], 10);
   for (let i = 0; i < 3; i++) {
     const a = ((phase + i * 120) * Math.PI) / 180;
     const dir = (r: number, w: number): V3 => at(hub, Math.cos(a) * r - Math.sin(a) * w, Math.sin(a) * r + Math.cos(a) * w, 0.4);
@@ -570,7 +571,7 @@ export function addInfra(): void {
   A('pump-station', 'ポンプ場の建屋', (b, f) => {
     hut(b, f, 5, 4, 3, { wall: 'structure/brick-red', roof: 'roof/seam-grey', rise: 0.9, door: 'door/steel-grey' });
     pipe(b, P('blue'), [at(f, 2.5, 0.6, 0), at(f, 3.6, 0.6, 0), at(f, 3.6, 0, 0)], 0.2, 8);
-    torus(b, P('red'), { ...move(f, 3.2, 0.95, 0), z: f.y, y: f.z }, [0, 0, 0], 0.2, 0.025, 10, 4);
+    torus(b, P('red'), layZ(move(f, 3.2, 0.95, 0)), [0, 0, 0], 0.2, 0.025, 10, 4);
   });
 
   // Construction sites.
@@ -588,13 +589,13 @@ export function addInfra(): void {
   }));
   A('pipe-stack', 'コンクリート管の山', (b, f) => {
     [[-1.3, 0.6], [0, 0.6], [1.3, 0.6], [-0.65, 1.7], [0.65, 1.7]].forEach(([z, y]) => {
-      const g: Pose = { ...move(f, -1.5, y, z), y: f.x, x: f.y, z: f.z };
+      const g = layX(move(f, -1.5, y, z));
       lathe(b, CONC, g, [[0.48, 0], [0.6, 0], [0.6, 3], [0.48, 3], [0.48, 0]], 14);
     });
     for (const sx of [-1, 1]) box(b, 'signal/pole-wood', f, [sx, 0.04, 0], [0.06, 0.04, 2]);
   });
   A('cable-reel', 'ケーブルドラム 木製', (b, f) => {
-    const g: Pose = { ...move(f, 0, 0.9, -0.5), y: f.z, z: f.y };
+    const g = layZ(move(f, 0, 0.9, -0.5));
     for (const y of [0, 0.94]) cyl(b, 'signal/pole-wood', g, [0, y, 0], 0.9, 0.06, 16);
     cyl(b, P('black'), g, [0, 0.06, 0], 0.5, 0.88, 14);
   });

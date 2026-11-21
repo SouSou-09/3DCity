@@ -215,3 +215,9 @@ export function footing(b: MeshBuilder, material: string, f: Pose, half: number,
     }
   }
 }
+
+const neg = (v: V3): V3 => [-v[0], -v[1], -v[2]];
+/** Right-handed pose whose y axis lies along the given pose's x axis, for lathing horizontal shapes. */
+export const layX = (f: Pose): Pose => ({ o: f.o, x: f.y, y: f.x, z: neg(f.z) });
+/** Right-handed pose whose y axis lies along the given pose's z axis. */
+export const layZ = (f: Pose): Pose => ({ o: f.o, x: f.x, y: f.z, z: neg(f.y) });
