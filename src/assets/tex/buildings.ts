@@ -74,7 +74,8 @@ function brick(tex: Tex, seed: number, o: BrickOpts): TextureData {
     let b = lerp(c[2] * m, mortar[2] * (1 + grit(x, y) * 0.08), joint);
     let rough = 0.92;
     if (o.paint) {
-      const gone = sstep(0.55 - (o.peel ?? 0) * 0.5, 0.6 - (o.peel ?? 0) * 0.5, peelN(x, y) * 0.9 + 0.5 + joint * 0.05 - face(x, y) * 0.1);
+      const thr = 0.86 - (o.peel ?? 0) * 0.6;
+      const gone = sstep(thr, thr + 0.04, peelN(x, y) * 0.9 + 0.5 + joint * 0.05 - face(x, y) * 0.1);
       const pm = (1 + mottle(x, y) * 0.06) * (1 - joint * 0.22);
       r = lerp(o.paint[0] * pm, r, gone);
       g = lerp(o.paint[1] * pm, g, gone);
@@ -151,7 +152,8 @@ function stucco(tex: Tex, seed: number, o: StuccoOpts): TextureData {
   const tone = tex.noise(1, 1, seed + 3, 3);
   const streak = tex.noise(0.09, 2, seed + 4, 3);
   const damp = tex.noise(0.8, 0.5, seed + 5, 3);
-  const crackA = tex.noise(1, 1.4, seed + 6, 3, 0.55);
+  const crackA = tex.cells(0.9, seed + 6);
+  const crackM = tex.noise(1.2, 1.2, seed + 9, 2);
   const crackB = tex.noise(0.08, 0.08, seed + 7, 2);
   const patchN = tex.noise(1.2, 0.9, seed + 8, 1);
   const stains = o.stains ?? 0.3;
@@ -168,7 +170,8 @@ function stucco(tex: Tex, seed: number, o: StuccoOpts): TextureData {
     const st = stains * (sstep(0.05, 0.7, streak(x, y)) * 0.5 + sstep(0.1, 0.8, damp(x, y)) * 0.35);
     const patch = (o.patches ?? 0) > 0 && patchN(Math.floor(x / 0.6) * 0.6 + 0.3, Math.floor(y / 0.45) * 0.45 + 0.2) > 0.42 - (o.patches ?? 0) * 0.3 ? 1 : 0;
     if (patch) m *= 1.07;
-    const crack = (o.cracks ?? 0) * (1 - sstep(0.004, 0.012 + 0.004 * (o.cracks ?? 0), Math.abs(crackA(x, y) + crackB(x, y) * 0.035)));
+    const cc = (o.cracks ?? 0) > 0 ? crackA(x + crackB(x, y) * 0.05, y + crackB(y, x) * 0.05) : null;
+    const crack = cc ? (1 - sstep(0.004, 0.012, cc.f2 - cc.f1)) * sstep(0.12 - (o.cracks ?? 0) * 0.2, 0.2 - (o.cracks ?? 0) * 0.2, crackM(x, y) + cc.id * 0.2 - 0.1) : 0;
     L.r[k] = o.color[0] * m * (1 - st * 0.42) * (1 - crack * 0.6);
     L.g[k] = o.color[1] * m * (1 - st * 0.45) * (1 - crack * 0.6);
     L.b[k] = o.color[2] * m * (1 - st * 0.5 - patch * 0.03) * (1 - crack * 0.6);
@@ -255,15 +258,15 @@ function stone(tex: Tex, seed: number, o: StoneOpts): TextureData {
     const d = Math.min(fx * bw, (1 - fx) * bw, fy * bh, (1 - fy) * bh);
     const idc = hash2(col % nx, row % ny, seed);
     const c = o.colors[Math.floor(hash2(col % nx, row % ny, seed + 9) * o.colors.length) % o.colors.length];
-    const jw = rust ? 0.02 : 0.004;
+    const jw = rust ? 0.02 : 0.007;
     const joint = 1 - sstep(jw * 0.5, jw, d);
     // Each slab is cut from a different part of the block: shift the pattern per slab.
     const ox = idc * 5;
     const v = (o.veins ?? 0) * (1 - sstep(0.0, 0.05, Math.abs(vein(x + ox, y + warp(x, y) * 0.1))));
     const sp = (o.speckle ?? 0) * (speck(x, y).id - 0.5);
-    let m = 1 + (idc - 0.5) * 0.14 + cloud(x + ox, y) * 0.16 + sp * 0.5 - v * 0.3;
+    let m = 1 + (idc - 0.5) * 0.07 + cloud(x + ox, y) * 0.16 + sp * 0.5 - v * 0.3;
     m *= 1 - sstep(0.1, 0.8, streak(x, y)) * (o.streaks ?? 0.3) * 0.4;
-    const dark = joint * (rust ? 0.45 : 0.6);
+    const dark = joint * (rust ? 0.45 : 0.7);
     L.r[k] = c[0] * m * (1 - dark);
     L.g[k] = c[1] * m * (1 - dark);
     L.b[k] = c[2] * m * (1 - dark);
@@ -351,7 +354,8 @@ function siding(tex: Tex, seed: number, o: SidingOpts): TextureData {
     const gr = grain(vertical ? x + id * 3 : x, vertical ? y : y + id * 3);
     let m = (1 + (cid - 0.5) * (o.bare || o.kind === 'shingle' ? 0.3 : 0.06) + gr * (o.bare ? 0.25 : 0.05) + tone(x, y) * 0.06) * (1 - shadow * 0.7);
     m *= 1 - sstep(0.1, 0.8, streak(x, y)) * 0.12;
-    const gone = o.bare ? 0 : sstep(0.6 - (o.peel ?? 0) * 0.55, 0.64 - (o.peel ?? 0) * 0.55, peelN(x, y) * 0.9 + 0.5 + gr * 0.12);
+    const thr = 0.9 - (o.peel ?? 0) * 0.65;
+    const gone = o.bare || !o.peel ? 0 : sstep(thr, thr + 0.04, peelN(x, y) * 0.9 + 0.5 + gr * 0.12);
     L.r[k] = lerp(o.color[0], wood[0] * (1 + gr * 0.3), gone) * m;
     L.g[k] = lerp(o.color[1], wood[1] * (1 + gr * 0.3), gone) * m;
     L.b[k] = lerp(o.color[2], wood[2] * (1 + gr * 0.3), gone) * m;
@@ -417,12 +421,13 @@ function sheet(tex: Tex, seed: number, o: SheetOpts): TextureData {
     else if (o.kind === 'ribbed') h = sstep(0.0, 0.07, f) * (1 - sstep(0.16, 0.23, f)) * 0.025 + sstep(0.5, 0.52, f) * (1 - sstep(0.56, 0.58, f)) * 0.003;
     else if (o.kind === 'seam') h = (1 - sstep(0.012, 0.03, Math.min(f, 1 - f))) * 0.03;
     else {
-      groove = 1 - sstep(0.004, 0.008, Math.min(f * pitch, (1 - f) * pitch, fy * rowH, (1 - fy) * rowH));
+      groove = 1 - sstep(0.007, 0.012, Math.min(f * pitch, (1 - f) * pitch, fy * rowH, (1 - fy) * rowH));
       h = -groove * 0.006 + dent(x, y) * 0.0015;
     }
     const pid = hash2(i % nx, row, seed);
     let m = 1 + tone(x, y) * 0.06 + (o.kind === 'panel' ? (pid - 0.5) * 0.07 : 0) + (o.color ? 0 : (spangle(x, y).id - 0.5) * 0.12);
-    m *= 1 - sstep(0.15, 0.8, streak(x, y)) * 0.14 - lap * 0.35 - groove * 0.6;
+    m *= 1 - sstep(0.15, 0.8, streak(x, y)) * 0.14 - lap * 0.35 - groove * 0.75;
+    if (o.kind === 'seam') m *= 1 + (1 - sstep(0.02, 0.035, Math.min(f, 1 - f))) * 0.18 - sstep(0.03, 0.04, f) * (1 - sstep(0.05, 0.12, f)) * 0.3;
     const rv = clamp01(sstep(1.0 - rust * 0.8, 1.12 - rust * 0.75, rustN(x, y) * 0.9 + 0.5 + lap * 0.25 + (o.kind === 'seam' ? (1 - sstep(0, 0.08, Math.min(f, 1 - f))) * 0.12 : 0)));
     const rf = 0.75 + rustF(x, y) * 0.4;
     L.r[k] = lerp(base[0] * m, 0.38 * rf, rv);
@@ -469,15 +474,16 @@ function glazed(tex: Tex, seed: number, colors: readonly RGB[], size: readonly [
     const col = Math.floor(x / tw);
     const row = Math.floor(y / th);
     const d = Math.min(x - col * tw, (col + 1) * tw - x, y - row * th, (row + 1) * th - y);
-    const joint = 1 - sstep(0.002, 0.004, d);
+    const joint = 1 - sstep(0.003, 0.006, d);
     const id = hash2(col % nx, row % ny, seed);
     let c = colors[Math.floor(hash2(col % nx, row % ny, seed + 3) * colors.length) % colors.length];
     if (accent && row % ny === Math.floor(ny / 2)) c = accent;
     const cz = craze(x, y);
-    const m = 1 + (id - 0.5) * 0.12 + tone(x, y) * 0.05 - (cz.f2 - cz.f1 < 0.04 ? 0.05 : 0);
-    L.r[k] = lerp(c[0] * m, 0.42, joint);
-    L.g[k] = lerp(c[1] * m, 0.4, joint);
-    L.b[k] = lerp(c[2] * m, 0.37, joint);
+    const m = 1 + (id - 0.5) * 0.08 + tone(x, y) * 0.05 - (cz.f2 - cz.f1 < 0.04 ? 0.05 : 0);
+    const jc = grey(c) > 0.5 ? 0.38 : 0.6;
+    L.r[k] = lerp(c[0] * m, jc, joint);
+    L.g[k] = lerp(c[1] * m, jc * 0.97, joint);
+    L.b[k] = lerp(c[2] * m, jc * 0.92, joint);
     L.rough[k] = lerp(0.12, 0.9, joint);
     L.height[k] = sstep(0, 0.006, d) * 0.0025;
     return 0;
@@ -495,7 +501,37 @@ const CMU: [string, string, RGB[]][] = [
   ['grey', '素地', [hex(0x8e8c88), hex(0x84827e), hex(0x989690)]], ['white', '白塗り', [hex(0xd8d6ce), hex(0xd0cec6)]], ['beige', 'ベージュ塗り', [hex(0xc4b48c), hex(0xbcac84)]],
   ['blue', '青塗り', [hex(0x4c6c94), hex(0x46648a)]], ['yellow', '黄塗り', [hex(0xd0b048), hex(0xc8a840)]], ['red', '赤塗り', [hex(0x9c3c30), hex(0x94362c)]], ['split', '割肌', [hex(0x9c8c74), hex(0x8c7c68), hex(0xa89880)]],
 ];
-for (const [id, label, colors] of CMU) add('wall', `block-${id}`, `コンクリートブロック ${label}`, [1.6, 1.6], (t, s) => S.masonry(t, { seed: s, block: [0.4, 0.2], colors, rough: id === 'split', streaks: 0.5, ...(id === 'grey' || id === 'split' ? {} : { mortar: [grey(colors[0]) * 0.82, grey(colors[0]) * 0.8, grey(colors[0]) * 0.76] as RGB }) }), { density: 200 });
+/** Concrete block: bare, or painted over so that the joints take the paint colour too. */
+function cmu(tex: Tex, seed: number, colors: readonly RGB[], painted: boolean): TextureData {
+  const L = new Layers(tex, colors[0], 0.92);
+  const pore = tex.noise(0.006, 0.006, seed, 2);
+  const tone = tex.noise(0.9, 0.9, seed + 1, 3);
+  const streak = tex.noise(0.08, 1.4, seed + 2, 2);
+  const scuff = tex.noise(0.5, 0.2, seed + 3, 3);
+  tex.map((x, y, k) => {
+    const row = Math.floor(y / 0.2);
+    const s = x / 0.4 + (row % 2) * 0.5;
+    const col = Math.floor(s);
+    const d = Math.min((s - col) * 0.4, (1 - (s - col)) * 0.4, y - row * 0.2, (row + 1) * 0.2 - y);
+    const id = hash2(col % 4, row % 8, seed);
+    const c = colors[Math.floor(hash2(col % 4, row % 8, seed + 5) * colors.length) % colors.length];
+    const joint = 1 - sstep(0.004, 0.009, d);
+    let m = 1 + (id - 0.5) * (painted ? 0.04 : 0.2) + tone(x, y) * 0.07 + pore(x, y) * (painted ? 0.06 : 0.14);
+    m *= 1 - sstep(0.1, 0.7, streak(x, y)) * 0.18 - joint * (painted ? 0.22 : 0.3);
+    m *= 1 - sstep(0.25, 0.5, scuff(x, y)) * 0.06;
+    L.r[k] = c[0] * m;
+    L.g[k] = c[1] * m;
+    L.b[k] = c[2] * m;
+    L.rough[k] = painted ? 0.8 : 0.95;
+    L.height[k] = (1 - joint) * 0.005 + pore(x, y) * 0.0012;
+    return 0;
+  });
+  return L.finish();
+}
+for (const [id, label, colors] of CMU) {
+  if (id === 'split') add('wall', `block-${id}`, `コンクリートブロック ${label}`, [1.6, 1.6], (t, s) => S.masonry(t, { seed: s, block: [0.4, 0.2], colors, rough: true, streaks: 0.5 }), { density: 200 });
+  else add('wall', `block-${id}`, `コンクリートブロック ${label}`, [1.6, 1.6], (t, s) => cmu(t, s, colors, id !== 'grey'), { density: 200 });
+}
 
 // --- Pitched roofs: y runs up the slope. ---
 interface ShingleOpts {
@@ -575,9 +611,9 @@ function barrel(tex: Tex, seed: number, colors: readonly RGB[], age: number): Te
     // Cover tiles (convex) alternate with the pans between them.
     const cover = Math.sin(fx * Math.PI);
     const h = cover ** 0.7 * 0.05 + (1 - fy) * 0.016;
-    const shadow = sstep(0.82, 1, fy) * 0.5 + (1 - sstep(0, 0.3, cover)) * 0.45;
+    const shadow = clamp01(sstep(0.84, 1, fy) * 0.45 + (1 - sstep(0.05, 0.75, cover)) * 0.7);
     const li = age * sstep(0.2, 0.5, lichen(x, y)) * 0.6;
-    const m = (1 + (id - 0.5) * 0.3 + tone(x, y) * 0.08 + fine(x, y) * 0.08) * (1 - shadow);
+    const m = (1 + (id - 0.5) * 0.22 + tone(x, y) * 0.08 + fine(x, y) * 0.08 + sstep(0.8, 1, cover) * 0.12) * (1 - shadow);
     L.r[k] = lerp(c[0] * m, 0.5 * (1 - shadow), li);
     L.g[k] = lerp(c[1] * m, 0.5 * (1 - shadow), li);
     L.b[k] = lerp(c[2] * m, 0.42 * (1 - shadow), li);
@@ -603,6 +639,7 @@ function membrane(tex: Tex, seed: number, color: RGB, o: { dirt: number; kind: '
   const fine = tex.noise(0.006, 0.006, seed + 2, 2);
   const blot = tex.noise(0.3, 0.3, seed + 3, 4, 0.6);
   const wr = tex.noise(0.5, 0.06, seed + 4, 2);
+  const tarN = tex.noise(1, 0.7, seed + 5, 3, 0.6);
   const rollW = o.kind === 'sheet' ? 2 : 1;
   tex.map((x, y, k) => {
     const f = (y / rollW) % 1;
@@ -610,7 +647,7 @@ function membrane(tex: Tex, seed: number, color: RGB, o: { dirt: number; kind: '
     const edge = sstep(0.0, 0.06, f * rollW) < 1 ? 1 - sstep(0, 0.06, f * rollW) : 0;
     const ring = sstep(0.18, 0.24, pond(x, y)) * (1 - sstep(0.24, 0.5, pond(x, y)));
     const dirt = o.dirt * clamp01(0.2 + sstep(0.2, 0.5, pond(x, y)) * 0.5 + ring * 0.5 + blot(x, y) * 0.4);
-    const tar = o.kind === 'tar' ? sstep(0.2, 0.26, blot(x + 3, y)) : 0;
+    const tar = o.kind === 'tar' ? sstep(0.3, 0.33, tarN(x, y) + blot(x, y) * 0.12) * 0.9 : 0;
     const m = 1 + tone(x, y) * 0.07 + fine(x, y) * (o.kind === 'sheet' ? 0.03 : 0.2) - lap * 0.4 + edge * 0.05;
     L.r[k] = lerp(color[0] * m * (1 - dirt * 0.5), 0.05, tar);
     L.g[k] = lerp(color[1] * m * (1 - dirt * 0.52), 0.05, tar);
