@@ -102,7 +102,7 @@ describe('model registry', { timeout: 120_000 }, () => {
   });
 
   it('offers many patterns in every category', () => {
-    const min: Record<ModelCategory, number> = { segment: 40, highway: 10, slope: 12, curve: 8, junction: 25, roundabout: 8, sidewalk: 30, bridge: 25, elevated: 15, signal: 90, sign: 150, furniture: 250, plant: 70, house: 0, apartment: 0, shop: 0, office: 0, industrial: 0, buildpart: 0 };
+    const min: Record<ModelCategory, number> = { segment: 40, highway: 10, slope: 12, curve: 8, junction: 25, roundabout: 8, sidewalk: 30, bridge: 25, elevated: 15, signal: 90, sign: 150, furniture: 250, plant: 70, house: 50, apartment: 35, shop: 45, office: 40, industrial: 30, buildpart: 70 };
     const n = count(MODELS);
     for (const [cat] of MODEL_CATEGORIES) expect(n.get(cat) ?? 0, cat).toBeGreaterThanOrEqual(min[cat]);
     expect(MODELS.length).toBeGreaterThanOrEqual(200);

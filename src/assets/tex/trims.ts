@@ -273,20 +273,23 @@ const PAINTS: [string, string, number, { metal?: number; rough?: number; wear?: 
 for (const [id, label, c, o] of PAINTS) add('trim', `paint-${id}`, `塗装 ${label}`, [1, 1], (t, s) => paint(t, s, hex(c), o), { tile: 'xy', density: 128 });
 
 // --- Awning canvas. ---
+/** A whole number of threads per metre, so the weave meets itself at the tile edge. */
+const WEAVE = 2 * Math.PI * 100;
 function canvas(tex: Tex, seed: number, a: RGB, b: RGB | null, stripe: number, age: number): TextureData {
   const L = new Layers(tex, a, 0.85);
   const fade = tex.noise(0.5, 0.5, seed, 3);
   const streak = tex.noise(0.05, 0.5, seed + 1, 2);
   tex.map((x, y, k) => {
     const c = b && (x / stripe) % 2 >= 1 ? b : a;
-    const weave = 1 + 0.03 * Math.sin(x * 2000) * Math.sin(y * 2000);
+    const w = Math.sin(x * WEAVE) * Math.sin(y * WEAVE);
+    const weave = 1 + 0.03 * w;
     const f = age * (0.35 + fade(x, y) * 0.4);
     const d = 1 - age * sstep(0.1, 0.8, streak(x, y)) * 0.35;
     const chalk = (c[0] + c[1] + c[2]) / 3 * 0.5 + 0.35;
     L.r[k] = lerp(c[0], chalk, f) * weave * d;
     L.g[k] = lerp(c[1], chalk, f) * weave * d;
     L.b[k] = lerp(c[2], chalk * 0.97, f) * weave * d;
-    L.height[k] = 0.0004 * Math.sin(x * 2000) * Math.sin(y * 2000);
+    L.height[k] = 0.0004 * w;
     return 0;
   });
   return L.finish();
@@ -437,7 +440,7 @@ add('trim', 'louver-grey', 'ルーバー 灰', [0.5, 0.5], (t, s) => louver(t, s
 add('trim', 'louver-white', 'ルーバー 白', [0.5, 0.5], (t, s) => louver(t, s, hex(0xdcdcd8), 0.05, false), { tile: 'xy' });
 add('trim', 'louver-dark', 'ルーバー 濃灰', [0.5, 0.5], (t, s) => louver(t, s, hex(0x44464a), 0.08, false), { tile: 'xy' });
 add('trim', 'louver-beige', 'ルーバー ベージュ', [0.5, 0.5], (t, s) => louver(t, s, hex(0xc4bca4), 0.05, false), { tile: 'xy' });
-add('trim', 'coil-fins', '室外機の放熱フィン', [0.5, 0.5], (t, s) => louver(t, s, hex(0x5c5e60), 0.008, true), { tile: 'xy', density: 512 });
+add('trim', 'coil-fins', '室外機の放熱フィン', [0.5, 0.5], (t, s) => louver(t, s, hex(0x5c5e60), 0.5 / 64, true), { tile: 'xy', density: 512 });
 add('trim', 'skylight', '天窓', [1.2, 1.2], (t, s) => { const a = new Art(t, hex(0xa8aaac), 0.4); a.glass(0.08, 0.08, 1.12, 1.12); a.rect(hex(0xa8aaac), 0.59, 0.08, 0.61, 1.12, { height: 0.004 }); return a.done(s, 0.3); }, { reflect: 0.8 });
 add('trim', 'skylight-dome', '天窓 乳白ドーム', [1.2, 1.2], (t, s) => { const a = new Art(t, hex(0x8c8e90), 0.4); a.rect([0.82, 0.84, 0.84], 0.1, 0.1, 1.1, 1.1, { rough: 0.25, soft: 0.05, height: 0.03 }); return a.done(s, 0.4); }, { reflect: 0.4 });
 add('trim', 'tank-staves', '給水塔の木の樽板', [1.2, 1.2], (t, s) => S.planks(t, { seed: s, width: 0.12, color: [0.36, 0.26, 0.18], weathered: 0.6 }), { tile: 'xy', density: 200 });
