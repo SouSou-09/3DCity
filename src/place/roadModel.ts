@@ -936,7 +936,9 @@ function gradeTerrain(city: City, segs: Seg[]): Float32Array {
   }
   for (let k = 0; k < n * n; k++) {
     if (best[k] > FADE || (out[k] < 0 && best[k] > 3)) continue;
-    out[k] = mix(out[k], level[k] - 0.1, 1 - smoothstep(FULL, FADE, Math.max(0, best[k])));
+    // Just under the road at its edges, and further under towards its middle, where a coarse grid would otherwise
+    // show through a road that bends or changes grade within a cell or two.
+    out[k] = mix(out[k], level[k] - 0.1 - 0.2 * smoothstep(0, 3, -best[k]), 1 - smoothstep(FULL, FADE, Math.max(0, best[k])));
   }
   return out;
 }
