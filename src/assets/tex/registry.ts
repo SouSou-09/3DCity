@@ -52,7 +52,6 @@ add({ id: 'asphalt/coarse-chipseal', label: '粗い砕石舗装(チップシー�
 add({ id: 'asphalt/coarse-chipseal-cracked', label: '粗い砕石舗装・ひび', category: 'asphalt', meters: [4, 4], generate: (t) => S.asphalt(t, { seed: 191, age: 0.8, coarse: 2.2, cracks: 0.8, alligator: 0.3 }) });
 
 // --- Concrete: carriageway slabs, pavements, walls. ---
-const GREY: RGB = [0.63, 0.61, 0.57];
 const WARM: RGB = [0.68, 0.63, 0.55];
 const DARK: RGB = [0.45, 0.44, 0.42];
 const WHITE: RGB = [0.76, 0.75, 0.72];

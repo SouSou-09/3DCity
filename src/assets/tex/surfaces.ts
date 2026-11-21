@@ -89,7 +89,7 @@ export function asphalt(tex: Tex, o: AsphaltOpts): TextureData {
     const y = rnd.range(0, tex.mh);
     const m = tex.field();
     tex.rect(m, x, y, x + w, y + h, 1, 0.012);
-    patchTone.push({ mask: m, factor: rnd.chance(0.7) ? rnd.range(0.45, 0.75) : rnd.range(1.15, 1.35) });
+    patchTone.push({ mask: m, factor: rnd.chance(0.7) ? rnd.range(0.6, 0.85) : rnd.range(1.1, 1.25) });
     if (rnd.chance(0.6)) tex.stroke(seal, [[x, y], [x + w, y], [x + w, y + h], [x, y + h], [x, y]], rnd.range(0.012, 0.022));
     for (let k = 0; k < tex.n; k++) patch[k] = Math.max(patch[k], m[k]);
   }
