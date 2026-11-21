@@ -1,4 +1,5 @@
 import { TextureSpec } from './core';
+import { FURNITURE_TEXTURES } from './furniture';
 import { DECALS } from './markings';
 import { SURFACES } from './registry';
 import { SIGNAL_TEXTURES } from './signals';
@@ -8,7 +9,7 @@ export * from './core';
 export { signShape } from './signs';
 export { signOutline } from './signkit';
 export type { SignShape } from './signkit';
-export const TEXTURES: readonly TextureSpec[] = [...SURFACES, ...DECALS, ...SIGN_TEXTURES, ...SIGNAL_TEXTURES];
+export const TEXTURES: readonly TextureSpec[] = [...SURFACES, ...DECALS, ...SIGN_TEXTURES, ...SIGNAL_TEXTURES, ...FURNITURE_TEXTURES];
 const byId = new Map(TEXTURES.map((t) => [t.id, t]));
 export function textureSpec(id: string): TextureSpec {
   const t = byId.get(id);

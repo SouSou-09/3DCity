@@ -8,7 +8,7 @@ import './catalog.css';
 const TEX_CATEGORIES: [string, string][] = [
   ['asphalt', 'アスファルト'], ['concrete', 'コンクリート'], ['paving', '舗装材'], ['curb', '縁石'], ['ground', '地面'],
   ['structure', '構造物'], ['line', '区画線'], ['crosswalk', '横断歩道・停止線'], ['symbol', '路面標示'], ['cover', '蓋・汚れ'],
-  ['sign', '標識面'], ['signal', '信号灯器・支柱'],
+  ['sign', '標識面'], ['signal', '信号灯器・支柱'], ['furniture', '歩道設備'],
 ];
 const params = new URLSearchParams(location.search);
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;

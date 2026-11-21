@@ -449,7 +449,7 @@ export class Layers {
   }
 }
 
-export type TextureCategory = 'asphalt' | 'concrete' | 'paving' | 'curb' | 'ground' | 'structure' | 'line' | 'crosswalk' | 'symbol' | 'cover' | 'sign' | 'signal';
+export type TextureCategory = 'asphalt' | 'concrete' | 'paving' | 'curb' | 'ground' | 'structure' | 'line' | 'crosswalk' | 'symbol' | 'cover' | 'sign' | 'signal' | 'furniture';
 
 export interface TextureSpec {
   id: string;
