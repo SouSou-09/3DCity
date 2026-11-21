@@ -282,7 +282,7 @@ export function roundabout(b: MeshBuilder, o: RoundaboutOpts): void {
   const R = o.radius;
   const paint = o.paint ?? arms[0].arm.section.paint;
   const on = (phi: number, r = R): P2 => [-Math.sin(phi) * r, -Math.cos(phi) * r];
-  const rin = R - o.ring;
+  const rin = o.ring > 0 ? R - o.ring : 0;
   const seg = 48;
   const joins: { a: ArmGeo; c: ArmGeo; curb: P2[]; back: P2[] }[] = [];
   // Circulating road.
