@@ -258,6 +258,12 @@ export function slicePath(path: Path, s0: number, s1: number): Path {
   return out;
 }
 
+/** Like slicePath, but distances restart at 0, as code that lays out a whole road along a path expects. */
+export function cutPath(path: Path, s0: number, s1: number): Path {
+  const first = Math.max(0, s0);
+  return slicePath(path, s0, s1).map((f) => ({ ...f, s: f.s - first }));
+}
+
 /** Point at sideways offset x and height y relative to a frame. */
 export const offset = (f: Frame, x: number, y: number): V3 => v3.mad(v3.mad(f.p, f.r, x), f.u, y);
 

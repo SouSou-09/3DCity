@@ -139,9 +139,10 @@ function sideStrips(side: Side, x: number, dir: 1 | -1, strips: Strip[], top: [n
 
 /** Posts or other repeated items along a path at sideways offset x. */
 export function along(path: Path, spacing: number, fn: (f: Frame, i: number) => void, inset = spacing / 2): void {
-  const L = pathLength(path);
+  const s0 = path[0].s;
+  const L = pathLength(path) - s0;
   const n = Math.max(1, Math.round((L - inset * 2) / spacing));
-  for (let i = 0; i <= n; i++) fn(frameAt(path, inset + ((L - inset * 2) * i) / n), i);
+  for (let i = 0; i <= n; i++) fn(frameAt(path, s0 + inset + ((L - inset * 2) * i) / n), i);
 }
 
 /** Barrier, railing, fence... standing at offset x, height y. `dir` points away from the road. */

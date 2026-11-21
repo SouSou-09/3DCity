@@ -1,4 +1,4 @@
-import { Frame, MeshBuilder, Path, V3, arc, frameAt, helix, hump, pathLength, placePath, slicePath, straight, sweep, through, v3 } from './builder';
+import { Frame, MeshBuilder, Path, V3, arc, cutPath, frameAt, helix, hump, pathLength, placePath, straight, sweep, through, v3 } from './builder';
 import { highway, street } from './presets';
 import { addModel, litter } from './registry';
 import { Section, layout, sweepSection } from './section';
@@ -448,10 +448,10 @@ export function addStructures(): void {
     const path = through([[0, 0, 0], [0, 0.4, -15], [0, 4.5, -60], [0, 9.6, -110], [0, 10, -130]], 40);
     const sec = ramp();
     const w = widthOf(sec);
-    const low = slicePath(path, 0, 62);
+    const low = cutPath(path, 0, 62);
     sweepSection(b, low, sec, { body: 'none' });
     fill(b, low, -w / 2, w / 2, 'wall', 'structure/wall-smooth');
-    const high = slicePath(path, 62, pathLength(path));
+    const high = cutPath(path, 62, pathLength(path));
     sweepSection(b, high, sec, { body: 'deck', deckDepth: 1.5 });
     for (const s of [14, 38, 60]) pier(b, frameAt(high, s), { kind: 'column', w, depth: 1.5 });
   });
@@ -498,9 +498,9 @@ export function addStructures(): void {
     const w = widthOf(upper);
     const L = pathLength(path);
     const s0 = L / 2 - half;
-    const a = slicePath(path, 0, s0);
-    const c = slicePath(path, L - s0, L);
-    const mid = slicePath(path, s0, L - s0);
+    const a = cutPath(path, 0, s0);
+    const c = cutPath(path, L - s0, L);
+    const mid = cutPath(path, s0, L - s0);
     for (const p of [a, c]) {
       sweepSection(b, p, upper, { body: 'none' });
       fill(b, p, -w / 2, w / 2, slopes, slopes === 'slope' ? 'ground/grass-dry' : 'structure/wall-smooth');
