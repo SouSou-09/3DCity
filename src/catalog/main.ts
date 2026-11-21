@@ -8,7 +8,7 @@ import './catalog.css';
 const TEX_CATEGORIES: [string, string][] = [
   ['asphalt', 'アスファルト'], ['concrete', 'コンクリート'], ['paving', '舗装材'], ['curb', '縁石'], ['ground', '地面'],
   ['structure', '構造物'], ['line', '区画線'], ['crosswalk', '横断歩道・停止線'], ['symbol', '路面標示'], ['cover', '蓋・汚れ'],
-  ['sign', '標識面'], ['signal', '信号灯器・支柱'], ['furniture', '歩道設備'], ['plant', '樹皮・葉・花'],
+  ['sign', '標識面'], ['signal', '信号灯器・支柱'], ['furniture', '歩道設備'], ['plant', '樹皮・葉・花'], ['wall', '外壁'], ['roof', '屋根'], ['window', '窓・ガラス'], ['door', '扉・シャッター'], ['trim', '塗装・看板・手すり'],
 ];
 const params = new URLSearchParams(location.search);
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -44,6 +44,28 @@ function paint(canvas: HTMLCanvasElement, d: TextureData, pixels: Uint8ClampedAr
   canvas.getContext('2d')!.putImageData(img, 0, 0);
 }
 
+/** Sky over a dark skyline, for glass and polished stone to mirror. */
+let skyMap: THREE.DataTexture | undefined;
+function sky(): THREE.DataTexture {
+  if (skyMap) return skyMap;
+  const [w, h] = [128, 64];
+  const px = new Uint8Array(w * h * 4);
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const up = (y + 0.5) / h * 2 - 1;
+      const roof = 0.04 + 0.1 * Math.abs(Math.sin(x * 0.37) * Math.sin(x * 0.11 + 1));
+      const c = up > roof ? [200 - 110 * up ** 0.6, 222 - 70 * up ** 0.6, 244 - 12 * up] : up > 0 ? [70, 72, 78] : [96 + 30 * up, 92 + 30 * up, 86 + 30 * up];
+      px.set([c[0], c[1], c[2], 255], (y * w + x) * 4);
+    }
+  }
+  skyMap = new THREE.DataTexture(px, w, h, THREE.RGBAFormat);
+  skyMap.mapping = THREE.EquirectangularReflectionMapping;
+  skyMap.colorSpace = THREE.SRGBColorSpace;
+  skyMap.magFilter = skyMap.minFilter = THREE.LinearFilter;
+  skyMap.needsUpdate = true;
+  return skyMap;
+}
+
 const matCache = new Map<string, THREE.Material>();
 function material(id: string, layer: number): THREE.Material {
   const key = `${id}#${layer}`;
@@ -65,7 +87,7 @@ function material(id: string, layer: number): THREE.Material {
   const orm = make(d.orm, false);
   const albedo = make(d.albedo, true);
   m = new THREE.MeshStandardMaterial({
-    map: albedo, ...(spec.emissive ? { emissive: 0xffffff, emissiveMap: albedo, emissiveIntensity: spec.emissive } : {}), normalMap: make(d.normal, false), roughnessMap: orm, metalnessMap: orm, roughness: 1, metalness: 1,
+    map: albedo, ...(spec.emissive ? { emissive: 0xffffff, emissiveMap: albedo, emissiveIntensity: spec.emissive } : {}), ...(spec.reflect ? { envMap: sky(), envMapIntensity: spec.reflect } : {}), normalMap: make(d.normal, false), roughnessMap: orm, metalnessMap: orm, roughness: 1, metalness: 1,
     transparent: spec.decal, depthWrite: !spec.decal, ...(spec.cutout ? { alphaTest: 0.4, alphaToCoverage: true } : {}), polygonOffset: layer > 0, polygonOffsetFactor: -layer * 2, polygonOffsetUnits: -layer * 4,
     side: spec.decal || spec.cutout ? THREE.FrontSide : THREE.DoubleSide, shadowSide: THREE.DoubleSide,
   });
@@ -286,8 +308,8 @@ function card(label: string, id: string, draw: (c: HTMLCanvasElement) => void, o
   observer.observe(el);
   return el;
 }
-/** Street furniture is looked at from the road, not from above. */
-const defaultDir = (spec: ModelSpec): [number, number, number] | undefined => (spec.category === 'signal' || spec.category === 'sign' ? [0.4, 0.14, 1] : spec.category === 'furniture' || spec.category === 'plant' ? [0.5, 0.28, 1] : undefined);
+/** Street furniture and buildings are looked at from the road, not from above. */
+const defaultDir = (spec: ModelSpec): [number, number, number] | undefined => (spec.category === 'signal' || spec.category === 'sign' ? [0.4, 0.14, 1] : spec.category === 'furniture' || spec.category === 'plant' ? [0.5, 0.28, 1] : ['house', 'apartment', 'shop', 'office', 'industrial', 'buildpart'].includes(spec.category) ? [0.75, 0.42, 1] : undefined);
 function modelThumb(spec: ModelSpec, c: HTMLCanvasElement): void {
   const data = spec.build();
   const group = modelGroup(data);
