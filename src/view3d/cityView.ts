@@ -2,7 +2,9 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { clamp, mix, smoothstep } from '../core/vec2';
 import { City } from '../gen/city';
+import { MODELS } from '../assets/mesh/registry';
 import { RoadModel, buildRoadModel } from '../place/roadModel';
+import { Placed, StreetFurniture, placeStreetFurniture } from '../place/streetFurniture';
 import { Materials } from './materials';
 
 /**
@@ -20,6 +22,8 @@ export class CityView {
   private materials: Materials;
   /** Last road model, for inspection from the console and tests. */
   roads: RoadModel | null = null;
+  /** Signals, signs and lights standing along the roads. */
+  furniture: StreetFurniture | null = null;
 
   /** `quality` scales the road textures (1 = full resolution). */
   constructor(private canvas: HTMLCanvasElement, quality = 0.25) {
@@ -36,6 +40,51 @@ export class CityView {
     this.controls.maxPolarAngle = Math.PI * 0.49;
     this.controls.enableDamping = true;
     window.addEventListener('resize', () => this.resize());
+  }
+
+  /** One instanced mesh per model, material and 800 m tile, so that what is out of view is skipped. */
+  private buildFurniture(items: Placed[]): THREE.Group {
+    const TILE = 800;
+    const groups = new Map<string, Placed[]>();
+    for (const it of items) {
+      const k = `${it.model}|${Math.floor(it.x / TILE)}|${Math.floor(it.y / TILE)}`;
+      const g = groups.get(k);
+      if (g) g.push(it);
+      else groups.set(k, [it]);
+    }
+    const out = new THREE.Group();
+    const geos = new Map<string, { geo: THREE.BufferGeometry; mat: THREE.Material; layer: number }[]>();
+    const m = new THREE.Matrix4();
+    for (const [k, list] of groups) {
+      const id = k.slice(0, k.indexOf('|'));
+      let parts = geos.get(id);
+      if (!parts) {
+        const spec = MODELS.find((s) => s.id === id);
+        if (!spec) throw new Error(`no model ${id}`);
+        parts = spec.build().parts.map((p) => {
+          const geo = new THREE.BufferGeometry();
+          geo.setAttribute('position', new THREE.Float32BufferAttribute(p.positions, 3));
+          geo.setAttribute('normal', new THREE.Float32BufferAttribute(p.normals, 3));
+          geo.setAttribute('uv', new THREE.Float32BufferAttribute(p.uvs, 2));
+          geo.setIndex(p.indices);
+          return { geo, mat: this.materials.material(p.material, p.layer), layer: p.layer };
+        });
+        geos.set(id, parts);
+      }
+      for (const p of parts) {
+        const mesh = new THREE.InstancedMesh(p.geo, p.mat, list.length);
+        list.forEach((it, i) => {
+          m.makeRotationY(-it.yaw);
+          m.setPosition(it.x, it.h, it.y);
+          mesh.setMatrixAt(i, m);
+        });
+        mesh.instanceMatrix.needsUpdate = true;
+        mesh.computeBoundingSphere();
+        mesh.renderOrder = p.layer;
+        out.add(mesh);
+      }
+    }
+    return out;
   }
 
   setCity(city: City): void {
@@ -57,6 +106,8 @@ export class CityView {
       });
       this.content.add(g);
     }
+    this.furniture = placeStreetFurniture(city, roads);
+    this.content.add(this.buildFurniture(this.furniture.items));
     const s = city.config.size;
     const dt = city.districts.downtown.center;
     this.controls.target.set(dt.x, 0, dt.y);
