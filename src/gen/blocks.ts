@@ -3,7 +3,7 @@ import { Rng } from '../core/rng';
 import { SegmentIndex, pointAt, pointSeg, polyLength, segSeg, simplify } from '../core/geom';
 import { Vec2, angleDiff, clamp, dist, norm } from '../core/vec2';
 import { DistrictType, Districts, districtAt } from './districts';
-import { GATE_CLEAR, Rail } from './rail';
+import { Rail } from './rail';
 import { RoadEdge, RoadGraph } from './roadGraph';
 import { RoadClass, isStreet } from './streamlines';
 import { Terrain, gradient, heightAt, inBounds, waterDistAt } from './terrain';
@@ -169,7 +169,6 @@ export function addInfillRoads(graph: RoadGraph, t: Terrain, districts: District
       if (line.structure[i] !== 'tunnel') stamp(p.x, p.y, 18, true);
     });
   }
-  for (const g of rail.gates) stamp(g.x, g.y, GATE_CLEAR, true);
   const index = new SegmentIndex(60);
   /** Pieces that an indexed road has been split into. */
   const pieces = new Map<number, number[]>();

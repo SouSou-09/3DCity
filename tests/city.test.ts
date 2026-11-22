@@ -10,7 +10,7 @@ import { layout } from '../src/assets/mesh/section';
 import { MODELS } from '../src/assets/mesh/registry';
 import { TEXTURES } from '../src/assets/tex';
 import { EDGE_STUB, RoadModel, buildRoadModel } from '../src/place/roadModel';
-import { RailModel, buildRailModel } from '../src/place/railModel';
+import { RailModel, buildRailModel, crossingLook } from '../src/place/railModel';
 import { roadAt, trackAt } from '../src/place/railProfile';
 import { placeStreetFurniture } from '../src/place/streetFurniture';
 import { RAIL_MAX_GRADE, RAIL_MIN_RADIUS, RAIL_STEP, RailIndex, sharpestRailTurn } from '../src/gen/rail';
@@ -274,7 +274,9 @@ describe('city generation', () => {
         const along = Math.atan2(main.points[at + 1].y - main.points[at - 1].y, main.points[at + 1].x - main.points[at - 1].x);
         const away = Math.atan2(line.points[2].y - line.points[0].y, line.points[2].x - line.points[0].x);
         expect(Math.abs(Math.sin(away - along)), 'angle the branch leaves at').toBeLessThan(0.3);
-        expect(off(line.points[0]), 'branch starts on the main line').toBeLessThan(4);
+        // It is its own track from the end of the turnout, beside the track it left.
+        expect(off(line.points[0]), 'branch starts beside the main line').toBeGreaterThan(4.5);
+        expect(off(line.points[0]), 'branch starts beside the main line').toBeLessThan(7);
         expect(Math.abs(line.level[0] - main.level[at]), 'branch starts at the level of the main line').toBeLessThan(0.3);
         expect(sharpestRailTurn(line.points), 'curve of the branch').toBeLessThanOrEqual(RAIL_STEP / RAIL_MIN_RADIUS.freight + 1e-6);
         for (let k = at - 8; k <= at + 8; k++) expect(main.structure[k], 'main line at the junction').toBe(main.structure[at]);
@@ -283,35 +285,17 @@ describe('city generation', () => {
       }
     });
 
-    it('has few level crossings: square to the street, apart, clear of junctions, and none on a main street near the centre', () => {
+    it('has no level crossing on a main street, and few and well apart on the others', () => {
       const c = city(seed);
       const level = c.railCrossings.filter((x) => x.kind === 'level');
-      const main = c.rail.lines.findIndex((l) => l.kind === 'main');
-      expect(level.filter((x) => x.line === main).length).toBeLessThanOrEqual(8);
+      expect(level.length).toBeLessThanOrEqual(8);
       for (const x of level) {
         const e = c.graph.edges[x.edge];
         const line = c.rail.lines[x.line];
         const where = `${e.cls} edge ${e.id} over the ${line.kind} line at ${x.x.toFixed(0)}, ${x.y.toFixed(0)}`;
+        expect(e.cls, where).not.toBe('arterial');
         for (const o of level) {
           if (o !== x && o.line === x.line) expect(Math.hypot(o.x - x.x, o.y - x.y), where).toBeGreaterThan(140);
-        }
-        if (e.cls !== 'arterial') continue;
-        if (x.line === main) expect(dist(x, c.districts.downtown.center), where).toBeGreaterThan(1250);
-        let seg = 0;
-        for (let i = 1; i + 1 < line.points.length; i++) {
-          if (pointSeg(x.x, x.y, line.points[i], line.points[i + 1]).d < pointSeg(x.x, x.y, line.points[seg], line.points[seg + 1]).d) seg = i;
-        }
-        let k = 0;
-        for (let i = 1; i + 1 < e.points.length; i++) {
-          if (pointSeg(x.x, x.y, e.points[i], e.points[i + 1]).d < pointSeg(x.x, x.y, e.points[k], e.points[k + 1]).d) k = i;
-        }
-        const turn = angleDiff(
-          Math.atan2(line.points[seg + 1].y - line.points[seg].y, line.points[seg + 1].x - line.points[seg].x),
-          Math.atan2(e.points[k + 1].y - e.points[k].y, e.points[k + 1].x - e.points[k].x),
-        );
-        expect(Math.abs(Math.PI / 2 - Math.min(turn, Math.PI - turn)), `${where}: skew`).toBeLessThan(0.7);
-        for (const n of c.graph.nodes) {
-          if (n.degree >= 3) expect(Math.hypot(n.x - x.x, n.y - x.y), `${where}: junction ${n.id}`).toBeGreaterThan(40);
         }
       }
     });
@@ -810,8 +794,15 @@ describe('railway in 3D', () => {
       // Two crossings in one town seldom look alike.
       expect(new Set(r.looks.map((l) => `${l.panel} ${l.approach} ${l.head}`)).size).toBeGreaterThanOrEqual(0.6 * r.looks.length);
     }
-    // The towns have some fifteen crossings between them.
-    expect(seen.panel.size).toBeGreaterThanOrEqual(5);
+    // Main streets all pass under the railway, so the towns have few crossings left: the variety is in what each may draw.
+    for (let k = 0; k < 60; k++) {
+      const look = crossingLook(1, { edge: k, line: k % 2 }, ['local', 'collector', 'arterial'][k % 3], k % 2 ? 'freight' : 'main', ['suburb', 'industrial', 'oldtown', 'beach'][k % 4], 'asphalt/plain-used-clean');
+      for (const key of ['panel', 'approach', 'field', 'flange', 'head'] as const) {
+        expect(surfaces.has(look[key]), look[key]).toBe(true);
+        seen[key].add(look[key]);
+      }
+    }
+    expect(seen.panel.size).toBeGreaterThanOrEqual(8);
     expect(seen.approach.size).toBeGreaterThanOrEqual(4);
     expect(seen.flange.size).toBeGreaterThanOrEqual(2);
     expect(seen.head.size).toBeGreaterThanOrEqual(2);
@@ -928,6 +919,8 @@ describe('railway in 3D', () => {
     const total = c.rail.lines.reduce((sum, l) => sum + l.length, 0);
     expect(r.stats.ground + r.stats.elevated + r.stats.bridge + r.stats.tunnel).toBeCloseTo(total, 0);
     expect(r.stats.triangles).toBeGreaterThan(20000);
+    // Every branch leaves the main line through a turnout.
+    expect(r.stats.turnouts).toBe(c.rail.lines.filter((l) => l.kind === 'freight').length);
     for (const tr of m.rail.lines) {
       // Sleepers are laid everywhere but deep inside a tunnel.
       let open = 0;
@@ -1029,8 +1022,8 @@ describe('railway in 3D', () => {
       return Math.max(-lay.road[0], lay.road[1]);
     });
     const fences = r.items.filter((it) => it.kind === 'fence');
-    // Only track on the ground is fenced, and the main line is on a viaduct through town.
-    expect(fences.length).toBeGreaterThan(40);
+    // Only track on the ground is fenced, and most of the main line is on a viaduct.
+    expect(fences.length).toBeGreaterThan(10);
     for (const it of r.items) {
       if (it.kind !== 'fence' && it.kind !== 'signal') continue;
       const where = `${it.model} at ${it.x.toFixed(0)}, ${it.y.toFixed(0)}`;
