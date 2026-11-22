@@ -341,6 +341,11 @@ export function addRamps(builder: RoadBuilder, hwIds: number[], forbidden: { lin
                 if (run > 0.45 * len) ok = false;
                 level = Math.max(level, run + 20);
               });
+              // And over a railway: the ramp is still at deck height where it crosses the tracks.
+              if (builder.rail?.crossings(a, b).length) {
+                if (run > 0.45 * len) ok = false;
+                level = Math.max(level, run + 20);
+              }
             }
             const room = run - level - RAMP_FLAT;
             return ok && room > 30 ? { pts, grade: (top - hg) / room } : null;

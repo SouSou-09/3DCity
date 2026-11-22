@@ -1,7 +1,7 @@
 import { resample } from '../core/geom';
 import { Vec2, clamp, mix } from '../core/vec2';
 import { HIGHWAY_LIFT } from './highways';
-import { Rail } from './rail';
+import { Rail, RailIndex } from './rail';
 import { RoadEdge, RoadGraph, RoadNode } from './roadGraph';
 import { Terrain, heightAt } from './terrain';
 
@@ -18,6 +18,20 @@ export const MAX_GRADE = 0.16;
 /** Freeway surface above the surface of a street passing below: headroom plus the deck. */
 export const STREET_CLEARANCE = 6.4;
 const STEP = 5;
+/** A street meeting the rails: level for this far on both sides of them, this far below the rail heads, and the steepest it climbs to get there. */
+const HUMP_FLAT = 7;
+const HUMP_BELOW = 0.1;
+const HUMP_GRADE = 0.045;
+/** Rail heads above a street that passes under a viaduct, and the most the street dips to get that. */
+/** A junction within this distance of a level crossing takes the height of the rails, if that moves it by no more than BESIDE_LIFT. */
+const BESIDE = 26;
+const BESIDE_LIFT = 3;
+const UNDERPASS = 5.6;
+const UNDERPASS_DIP = 2.5;
+const smooth = (x: number): number => {
+  const v = clamp(x, 0, 1);
+  return v * v * (3 - 2 * v);
+};
 
 /** Junction surface: a plane through the node, tilted with the ground. */
 export interface NodePlane {
@@ -78,6 +92,10 @@ export function roadLevels(graph: RoadGraph, t: Terrain, rail: Rail): RoadLevels
       if (line.structure[i] === 'elevated') bumps.push({ x: p.x, y: p.y, h: line.level[i] + RAIL_CLEARANCE });
     });
   }
+  // Track in the open: a ramp stays at deck height until it is past it.
+  const tracks = rail.lines.flatMap((line) => line.points.filter((_, i) => line.structure[i] !== 'tunnel'));
+  const railNear = (p: Vec2): boolean => tracks.some((q) => Math.hypot(q.x - p.x, q.y - p.y) < 14);
+  const railIndex = new RailIndex(rail);
   const overRail = (x: number, y: number, h: number): number => {
     for (const b of bumps) {
       const d = Math.hypot(b.x - x, b.y - y);
@@ -103,6 +121,27 @@ export function roadLevels(graph: RoadGraph, t: Terrain, rail: Rail): RoadLevels
     gy *= k;
     return { h: Math.max(h, MIN_ROAD), gx, gy };
   });
+  // A junction right beside a level crossing lies at the height of the rails: there is no room between them for the
+  // street to climb to the tracks.
+  for (const e of graph.edges) {
+    if (elevated(e) || e.cls === 'ramp') continue;
+    let run = 0;
+    for (let i = 1; i < e.points.length; i++) {
+      const seg = Math.hypot(e.points[i].x - e.points[i - 1].x, e.points[i].y - e.points[i - 1].y);
+      for (const c of railIndex.crossings(e.points[i - 1], e.points[i])) {
+        const line = rail.lines[c.line];
+        const next = Math.min(c.seg + 1, line.structure.length - 1);
+        if (line.structure[c.seg] !== 'ground' || line.structure[next] !== 'ground') continue;
+        const sc = run + Math.hypot(c.x - e.points[i - 1].x, c.y - e.points[i - 1].y);
+        const rails = Math.max(line.level[c.seg], line.level[next]) - HUMP_BELOW;
+        for (const [node, d] of [[e.a, sc], [e.b, e.length - sc]]) {
+          if (d > BESIDE || kind[node] !== 'street' || Math.abs(rails - nodes[node].h) > BESIDE_LIFT) continue;
+          nodes[node] = { h: rails, gx: 0, gy: 0 };
+        }
+      }
+      run += seg;
+    }
+  }
   const fitted: [number, number, number][] = [];
   // On slopes too steep for a street, junctions move up or down until every street between them can make the climb.
   const floor = nodes.map((p) => p.h);
@@ -238,6 +277,35 @@ export function roadLevels(graph: RoadGraph, t: Terrain, rail: Rail): RoadLevels
       h = h.map((v, i) => clamp(v, Math.max(h0 - lim * s[i], h1 - lim * (L - s[i])), Math.min(h0 + lim * s[i], h1 + lim * (L - s[i]))));
       for (let i = 1; i < h.length; i++) h[i] = clamp(h[i], h[i - 1] - lim * (s[i] - s[i - 1]), h[i - 1] + lim * (s[i] - s[i - 1]));
       for (let i = h.length - 2; i >= 0; i--) h[i] = clamp(h[i], h[i + 1] - lim * (s[i + 1] - s[i]), h[i + 1] + lim * (s[i + 1] - s[i]));
+      // The railway keeps its own easy grade, so a street humps or dips to meet the rails it crosses on the level,
+      // as far as there is room for that between its junctions. What is left, the rails take up.
+      for (let i = 1; i < pts.length; i++) {
+        for (const c of railIndex.crossings(pts[i - 1], pts[i])) {
+          const line = rail.lines[c.line];
+          const next = Math.min(c.seg + 1, line.structure.length - 1);
+          const onGround = line.structure[c.seg] === 'ground' && line.structure[next] === 'ground';
+          const sc = s[i - 1] + Math.hypot(c.x - pts[i - 1].x, c.y - pts[i - 1].y);
+          const [p, q] = [line.points[c.seg], line.points[next]];
+          const f = clamp(Math.hypot(c.x - p.x, c.y - p.y) / (Math.hypot(q.x - p.x, q.y - p.y) || 1), 0, 1);
+          const here = mix(h[i - 1], h[i], (sc - s[i - 1]) / (s[i] - s[i - 1] || 1));
+          const room = Math.min(sc - zone, L - zone - sc) - HUMP_FLAT;
+          const rails = mix(line.level[c.seg], line.level[next], f);
+          if (room < 10) {
+            // Beside a junction that lies at the height of the rails, the street stays there until it is over them.
+            const [end, to] = sc < L - sc ? [e.a, 0] : [e.b, L];
+            if (!onGround || Math.abs(sc - to) > BESIDE || Math.abs(nodes[end].h - (rails - HUMP_BELOW)) > 0.3) continue;
+            const [lo, hi] = [Math.min(to, sc - HUMP_FLAT), Math.max(to, sc + HUMP_FLAT)];
+            h = h.map((v, k) => mix(v, nodes[end].h, 1 - smooth(Math.max(lo - s[k], s[k] - hi, 0) / 20)));
+            continue;
+          }
+          // Under a low viaduct the street dips for headroom instead.
+          const want = onGround ? rails - HUMP_BELOW - here : Math.min(0, Math.max(rails - UNDERPASS - here, -UNDERPASS_DIP));
+          const d = clamp(want, -HUMP_GRADE * room, HUMP_GRADE * room);
+          if (Math.abs(d) < 0.02) continue;
+          const ease = Math.max(20, Math.abs(d) / HUMP_GRADE);
+          h = h.map((v, k) => v + d * (1 - smooth((Math.abs(s[k] - sc) - HUMP_FLAT) / ease)));
+        }
+      }
     }
     return { pts, s, h, ground: g };
   }
@@ -276,6 +344,8 @@ export function roadLevels(graph: RoadGraph, t: Terrain, rail: Rail): RoadLevels
         for (let j = 1; j < n; j++) if (Math.hypot(lv.pts[at(j)].x - c.x, lv.pts[at(j)].y - c.y) < Math.hypot(lv.pts[at(k)].x - c.x, lv.pts[at(k)].y - c.y)) k = j;
         sep = Math.max(sep, Math.min(n - 3, k + 3));
       }
+      // And past any railway on the ground below it.
+      for (let k = 1; k < n; k++) if (railNear(lv.pts[at(k)])) sep = Math.max(sep, Math.min(n - 3, k + 3));
       const s0 = Math.abs(lv.s[at(sep)] - lv.s[at(0)]);
       const hs = deck(lv.pts[at(Math.min(sep, n - 1))]).h;
       for (let k = 0; k < n; k++) {

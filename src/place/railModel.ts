@@ -6,7 +6,7 @@ import { BED, Curve, G, STYLES, TOP, TrackStyle, Way, bed, poseAt, pt, rail, sid
 import { tvm } from '../assets/mesh/railparts';
 import { layout } from '../assets/mesh/section';
 import { EDGE, HIGH, LOW, canopy, footbridge, furnish, platform, podium, stairs, stationHouse } from '../assets/mesh/stations';
-import { viaduct } from '../assets/mesh/tracks';
+import { bufferStop, viaduct } from '../assets/mesh/tracks';
 import { Vec2, clamp } from '../core/vec2';
 import { City } from '../gen/city';
 import { districtAt } from '../gen/districts';
@@ -60,9 +60,11 @@ export interface RailModel {
   tiles: ModelData[];
   items: RailItem[];
   crossings: LevelCrossing[];
+  /** Surfaces of each crossing, by its index in `crossings`. */
+  looks: CrossingLook[];
   stations: BuiltStation[];
   /** Metres of track (centre line) on each kind of structure. */
-  stats: { ground: number; elevated: number; bridge: number; tunnel: number; piers: number; triangles: number };
+  stats: { ground: number; elevated: number; bridge: number; tunnel: number; piers: number; buffers: number; triangles: number };
   /** Roads that cross track on the ground without a crossing of their own (see RailProfile.unbuilt). */
   unbuilt: number;
 }
@@ -151,13 +153,75 @@ function roadCover(city: City, roads: RoadModel): (x: number, y: number, margin:
 
 const STATION_NAMES: [string, string][] = [['harbor', 'white'], ['old-town', 'green'], ['mesa-heights', 'black'], ['palm-ave', 'blue'], ['civic-center', 'white'], ['del-mar', 'green'], ['eastgate', 'white']];
 
+/** Surfaces of one level crossing. */
+export interface CrossingLook {
+  /** Panels between and right beside the rails. */
+  panel: string;
+  /** Road surface between two tracks, and on the ramps up to the deck. */
+  field: string;
+  approach: string;
+  /** Flangeway beside each rail, and the top of the rails. */
+  flange: string;
+  head: string;
+}
+
+const RANK: Record<string, number> = { arterial: 3, collector: 2, local: 1 };
+type Weighted = [string, number][];
+const pick = (list: Weighted, r: number): string => {
+  let left = r * list.reduce((sum, [, w]) => sum + w, 0);
+  for (const [id, w] of list) if ((left -= w) <= 0) return id;
+  return list[list.length - 1][0];
+};
+const PANELS: Record<string, Weighted> = {
+  arterial: [['concrete', 4], ['concrete-stained', 3], ['rubber', 3], ['rubber-worn', 2], ['concrete-cracked', 1], ['asphalt', 2]],
+  collector: [['rubber', 3], ['rubber-worn', 3], ['rubber-grey', 2], ['concrete-stained', 2], ['timber-tarred', 2], ['asphalt', 2], ['concrete-cracked', 1]],
+  local: [['timber', 3], ['timber-old', 3], ['timber-tarred', 2], ['timber-grey', 2], ['rubber-worn', 2], ['rubber-grey', 1], ['asphalt', 2], ['asphalt-broken', 2], ['steel-plate', 1]],
+  alley: [['timber-old', 3], ['timber-grey', 3], ['asphalt-broken', 2], ['steel-rusty', 2], ['gravel', 2]],
+  path: [['timber-grey', 3], ['timber-old', 2], ['gravel', 3], ['steel-plate', 1], ['rubber-grey', 1]],
+};
+/** What the road looks like at a crossing with these panels: new panels come with a new road, old ones with an old one. */
+const ROADS: Record<string, Weighted> = {
+  new: [['', 3], ['rail/xing-road-fresh', 3], ['rail/xing-road-used', 2], ['rail/xing-road-concrete', 1]],
+  used: [['', 3], ['rail/xing-road-used', 3], ['rail/xing-road-rusty', 2], ['rail/xing-road-patched', 2], ['rail/xing-road-oily', 1]],
+  old: [['', 2], ['rail/xing-road-cracked', 3], ['rail/xing-road-patched', 3], ['rail/xing-road-rusty', 2], ['rail/xing-road-oily', 1]],
+};
+const PANEL_AGE: Record<string, keyof typeof ROADS> = {
+  concrete: 'new', rubber: 'new', timber: 'used', 'steel-plate': 'used', asphalt: 'used', 'concrete-stained': 'used', 'rubber-worn': 'used', 'timber-tarred': 'used', setts: 'used',
+};
+
+/**
+ * Surfaces of a level crossing. Busier roads get heavier panels, the freight branch and back streets older ones, and
+ * within that every crossing draws its own, so that no two in a row look the same.
+ */
+export function crossingLook(seed: number, c: { edge: number; line: number }, cls: string, line: 'main' | 'freight', district: string, asphalt: string): CrossingLook {
+  const r = (k: number): number => hash(seed * 7 + c.edge * 131 + c.line * 17 + k);
+  let list = PANELS[cls] ?? PANELS.local;
+  // The branch is maintained less: nothing new on it. Old towns keep their setts.
+  if (line === 'freight') list = [...list.filter(([id]) => PANEL_AGE[id] !== 'new'), ['steel-rusty', 2], ['timber-old', 2], ['asphalt-broken', 2]];
+  if (district === 'oldtown' || district === 'beach') list = [...list, ['setts', district === 'oldtown' ? 6 : 2]];
+  const id = pick(list, r(1));
+  const age = PANEL_AGE[id] ?? 'old';
+  const unpaved = id === 'gravel';
+  const road = unpaved ? '' : pick(ROADS[age], r(2));
+  // Between two tracks either the road carries on or the panels do.
+  const field = unpaved || r(3) < 0.3 ? `rail/xing-${id}` : road || asphalt;
+  const quiet = line === 'freight' || cls === 'alley' || cls === 'path';
+  return {
+    panel: `rail/xing-${id}`,
+    field,
+    approach: road || asphalt,
+    flange: age === 'new' || (age === 'used' && r(4) < 0.4) ? 'rail/xing-flangeway-rubber' : 'rail/xing-flangeway',
+    head: quiet ? (r(5) < 0.35 ? 'rail/head-rusty' : 'rail/head-dull') : r(5) < 0.25 ? 'rail/head-dull' : 'rail/head-bright',
+  };
+}
+
 /** Tracks, viaducts, bridges, tunnel mouths, level crossings and stations along the generated railway. */
 export function buildRailModel(city: City, roads: RoadModel): RailModel {
   const t = city.terrain;
   const profile = roads.rail;
   const items: RailItem[] = [];
   const stations: BuiltStation[] = [];
-  const stats = { ground: 0, elevated: 0, bridge: 0, tunnel: 0, piers: 0, triangles: 0 };
+  const stats = { ground: 0, elevated: 0, bridge: 0, tunnel: 0, piers: 0, buffers: 0, triangles: 0 };
   const builders = new Map<number, MeshBuilder>();
   const tile = (x: number, y: number): MeshBuilder => {
     const key = clamp(Math.floor(x / TILE), 0, 63) * 64 + clamp(Math.floor(y / TILE), 0, 63);
@@ -165,6 +229,7 @@ export function buildRailModel(city: City, roads: RoadModel): RailModel {
     if (!b) builders.set(key, (b = new MeshBuilder()));
     return b;
   };
+  const looks: CrossingLook[] = [];
   const onRoad = roadCover(city, roads);
   const groundAt = (x: number, y: number): number => {
     const fx = clamp(x / t.cell, 0, t.n - 1.001);
@@ -196,7 +261,9 @@ export function buildRailModel(city: City, roads: RoadModel): RailModel {
     /** Half the length of track that a crossing's road covers. */
     const cover = (c: LevelCrossing): number => c.outer / (Math.abs(c.tan.x * c.dir.y - c.tan.y * c.dir.x) || 1) + 2;
     const bare = profile.unbuilt.filter((u) => u.line === tr.line);
-    const nearCrossing = (s: number, pad: number): boolean => mine.some(({ c }) => Math.abs(c.s - s) < cover(c) + pad) || bare.some((u) => Math.abs(u.s - s) < 20 + pad);
+    const through = profile.through.filter((x) => x.line === tr.line);
+    const nearCrossing = (s: number, pad: number): boolean =>
+      mine.some(({ c }) => Math.abs(c.s - s) < cover(c) + pad) || bare.some((u) => Math.abs(u.s - s) < 20 + pad) || through.some((x) => s > x.s0 - 2 - pad && s < x.s1 + 2 + pad);
 
     // --- Stations: where they fit between crossings and changes of structure. ---
     const wide = new Uint8Array(n);
@@ -294,6 +361,14 @@ export function buildRailModel(city: City, roads: RoadModel): RailModel {
       layTrack(w, s0, s1);
       i = j;
     }
+    // The branch stops short of the map's edge, at a buffer.
+    if (tr.kind === 'freight' && tr.structure[n - 1] === 'ground') {
+      const end = tr.pts[n - 1];
+      const w = wayOn(tile(end.x, end.y));
+      const kinds = ['timber', 'steel', 'concrete', 'steel'] as const;
+      for (const d of lats) bufferStop(sideWay(w, d), tr.s[n - 1] - 1.4, kinds[Math.floor(hash(city.config.seed * 3 + tr.line) * kinds.length)]);
+      stats.buffers++;
+    }
     // Sleepers: one run per structure, so that the ladders line up from end to end.
     for (let i = 0; i < n - 1; ) {
       const kind = segKind(i);
@@ -377,14 +452,26 @@ export function buildRailModel(city: City, roads: RoadModel): RailModel {
         b.quad(mat, o[0], o[1], o[2], o[3], uv, layer, [0, 1, 0]);
       };
       const strip = (mat: string, l0: number, l1: number, layer = 1): void => up(mat, [corner(l0, -1), corner(l0, 1), corner(l1, 1), corner(l1, -1)], layer);
-      const panel = e.cls === 'arterial' ? 'rail/xing-concrete' : e.cls === 'collector' ? 'rail/xing-rubber' : e.cls === 'local' ? 'rail/xing-timber' : 'rail/xing-timber-old';
+      const look = crossingLook(city.config.seed, c, e.cls, tr.kind, districtAt(t, city.districts, c.x, c.y).type, sec.asphalt);
+      looks[id] = look;
+      const { panel } = look;
+      /** A strip along the track that lies above or below the deck (rail heads, flangeways). */
+      const band = (mat: string, l0: number, l1: number, dy: number): void => {
+        const p = [corner(l0, -1), corner(l0, 1), corner(l1, 1), corner(l1, -1)].map((v) => [v[0], v[1] + dy, v[2]] as V3);
+        up(mat, p, 1);
+      };
       for (const d of lats) {
         strip(panel, d - G - 0.635, d - G - 0.045);
         strip(panel, d - G + 0.105, d + G - 0.105);
         strip(panel, d + G + 0.045, d + G + 0.635);
+        for (const sg of [-1, 1]) {
+          // The groove for the wheel flanges inside each rail, and the running surface the road traffic polishes or leaves to rust.
+          band(look.flange, d + sg * G - sg * 0.105, d + sg * G - sg * 0.035, -0.04);
+          band(look.head, d + sg * G - 0.036, d + sg * G + 0.036, 0.009);
+        }
       }
-      // Asphalt between and beside the tracks, easing down to the road on both sides.
-      for (let k = 0; k + 1 < lats.length; k++) strip(sec.asphalt, lats[k] + G + 0.635, lats[k + 1] - G - 0.635);
+      // Road surface between and beside the tracks, easing down to the road on both sides.
+      for (let k = 0; k + 1 < lats.length; k++) strip(look.field, lats[k] + G + 0.635, lats[k + 1] - G - 0.635);
       const outer = Math.max(...lats) + G + 0.635;
       for (const sgn of [-1, 1]) {
         // The carriageway climbs onto the deck; the pavements are already at its level.
@@ -394,7 +481,7 @@ export function buildRailModel(city: City, roads: RoadModel): RailModel {
           const p = corner(sgn * (outer + ramp), e2, c.half);
           return [p[0], roadAt(road, p[0], p[2]).h - 0.05, p[2]];
         };
-        up(sec.asphalt, [corner(sgn * outer, -1, c.half), corner(sgn * outer, 1, c.half), far(1), far(-1)], 1);
+        up(look.approach, [corner(sgn * outer, -1, c.half), corner(sgn * outer, 1, c.half), far(1), far(-1)], 1);
         if (c.outer > c.half + 0.3) for (const e2 of [-1, 1]) up(panel, [corner(sgn * outer, e2, c.half), corner(sgn * outer, e2), corner(sgn * (outer + 0.6), e2), corner(sgn * (outer + 0.6), e2, c.half)], 1);
       }
       // What guards the crossing: one unit on the right of each approach, facing the traffic.
@@ -444,6 +531,49 @@ export function buildRailModel(city: City, roads: RoadModel): RailModel {
             mark(`symbol/railroad-x-${paint === 'faded' ? 'worn' : paint}`, stop + 7, stop + 13, mid - 1.2, mid + 1.2);
           }
         }
+      }
+    }
+
+    // --- Track through a junction: set into its surface from one side to the other, as a tramway is. ---
+    for (const th of through) {
+      const j = roads.junctions[th.junction];
+      const arms = j.arms.filter((a) => Number.isFinite(a.reach));
+      const cls = arms.map((a) => city.graph.edges[a.edge].cls).sort((a, b) => (RANK[b] ?? 0) - (RANK[a] ?? 0))[0] ?? 'local';
+      const mid = trackAt(tr, (th.s0 + th.s1) / 2);
+      const w = wayOn(tile(mid.p.x, mid.p.y));
+      const look = crossingLook(city.config.seed, { edge: th.edge, line: tr.line }, cls, tr.kind, districtAt(t, city.districts, mid.p.x, mid.p.y).type, roads.sections[th.edge].asphalt);
+      const y = TOP - 0.006;
+      const lay = (mat: string, l0: number, l1: number, dy = 0): void => sweep(w, mat, th.s0, th.s1, [[l0, y + dy], [l1, y + dy]], { layer: 1, step: 2, c0: l0 });
+      for (const d of lats) {
+        lay(look.panel, d - G - 0.635, d - G - 0.045);
+        lay(look.panel, d - G + 0.105, d + G - 0.105);
+        lay(look.panel, d + G + 0.045, d + G + 0.635);
+        for (const sg of [-1, 1]) {
+          lay(look.flange, d + sg * G - (sg > 0 ? 0.105 : -0.035), d + sg * G - (sg > 0 ? 0.035 : -0.105), -0.04);
+          lay(look.head, d + sg * G - 0.036, d + sg * G + 0.036, 0.015);
+        }
+      }
+      for (let k = 0; k + 1 < lats.length; k++) lay(look.field, lats[k] + G + 0.635, lats[k + 1] - G - 0.635);
+      // The junction's own surface is a plane; the deck eases down to it on both sides.
+      const SKIRT = 2.6;
+      const [lo, hi] = [Math.min(...lats) - G - 0.635, Math.max(...lats) + G + 0.635];
+      const drop = (s: number, lat: number): number => {
+        const p = pt(probe, lat, 0, s);
+        return Math.max(0.02, trackAt(tr, s).h - (j.plane.h + j.plane.gx * (p[0] - j.x) + j.plane.gy * (p[2] - j.y)) + 0.04);
+      };
+      sweep(w, look.approach, th.s0, th.s1, (s) => [[lo - SKIRT, y - drop(s, lo - SKIRT)], [lo, y]], { layer: 1, step: 2 });
+      sweep(w, look.approach, th.s0, th.s1, (s) => [[hi, y], [hi + SKIRT, y - drop(s, hi + SKIRT)]], { layer: 1, step: 2 });
+      // Flashing lights face the traffic that comes in on each road, back from the junction's own signals.
+      for (const a of arms) {
+        if (cls === 'alley' || cls === 'path') break;
+        const lane = layout(roads.sections[a.edge]);
+        const kerb = Math.max(-lane.road[0], lane.road[1]);
+        const [bx, by] = [j.x + a.dir.x * (a.reach + 5), j.y + a.dir.y * (a.reach + 5)];
+        // Traffic heads for the centre; its right-hand side is where the post stands.
+        const [x, yy] = [bx + a.dir.y * (kerb + 0.9), by - a.dir.x * (kerb + 0.9)];
+        const clear = Math.min(...tr.pts.map((p) => Math.hypot(p.x - x, p.y - yy)));
+        if (clear < hi + 2.5 || isWater(t, x, yy)) continue;
+        items.push({ model: 'signal/rail-flashers-both', kind: 'gate', x, y: yy, h: groundAt(x, yy) + 0.1, yaw: facing(a.dir), line: tr.line });
       }
     }
 
@@ -568,5 +698,5 @@ export function buildRailModel(city: City, roads: RoadModel): RailModel {
 
   const tiles = [...builders.values()].map((b) => b.build());
   stats.triangles = tiles.reduce((sum, m) => sum + m.triangles, 0);
-  return { tiles, items, crossings: profile.crossings, stations, stats, unbuilt: profile.unbuilt.length };
+  return { tiles, items, crossings: profile.crossings, looks, stations, stats, unbuilt: profile.unbuilt.length };
 }

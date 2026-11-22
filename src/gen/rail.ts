@@ -32,6 +32,12 @@ export const RAIL_MIN_RADIUS = { main: 300, freight: 160 };
 export const RAIL_MAX_GRADE = 0.03;
 /** Streets keep this far from tracks they do not cross. */
 export const RAIL_CLEARANCE = 16;
+/** Ground above the rails at a tunnel mouth, the least that the deepest part of a tunnel lies under, and its shortest length in points. */
+const PORTAL_COVER = 9;
+const TUNNEL_COVER = 12;
+const TUNNEL_MIN = 8;
+/** Furthest above or below the ground that track can be for a local street to cross it on the level. */
+const CROSSING_REACH = 2;
 const VIADUCT_HEIGHT = 7.5;
 const GRID = 40;
 
@@ -230,6 +236,24 @@ function finish(t: Terrain, districts: Districts, kind: 'main' | 'freight', poin
     const d = level[i] - ground[i];
     return d > 3.5 ? 'elevated' : d < -7 ? 'tunnel' : 'ground';
   });
+  // A tunnel has a hill over it: its mouths stand where the ground is well above the rails, and what lies between
+  // them must be long and deep enough to be worth boring. Anything less is an open cutting.
+  for (let i = 0; i < n; ) {
+    if (structure[i] !== 'tunnel') {
+      i++;
+      continue;
+    }
+    let j = i;
+    while (j < n && structure[j] === 'tunnel') j++;
+    let [a, b] = [i, j - 1];
+    while (a <= b && a > 0 && ground[a] - level[a] < PORTAL_COVER) a++;
+    while (b >= a && b < n - 1 && ground[b] - level[b] < PORTAL_COVER) b--;
+    let deepest = 0;
+    for (let k = a; k <= b; k++) deepest = Math.max(deepest, ground[k] - level[k]);
+    const bored = b - a + 1 >= TUNNEL_MIN && deepest >= TUNNEL_COVER;
+    for (let k = i; k < j; k++) if (!bored || k < a || k > b) structure[k] = 'ground';
+    i = j;
+  }
   // Bridges start on the bank, and very short viaducts, tunnels and gaps between them are not worth building.
   for (let i = 0; i < n; i++) {
     if (!wet[i]) continue;
@@ -238,7 +262,7 @@ function finish(t: Terrain, districts: Districts, kind: 'main' | 'freight', poin
   for (let i = 0; i < n; ) {
     let j = i;
     while (j < n && structure[j] === structure[i]) j++;
-    if (structure[i] !== 'bridge' && j - i < 8 && (i > 0 || j < n)) {
+    if (structure[i] !== 'bridge' && structure[i] !== 'tunnel' && j - i < 8 && (i > 0 || j < n)) {
       const before = i > 0 ? structure[i - 1] : structure[j];
       const after = j < n ? structure[j] : before;
       const fill = before === 'bridge' ? (after === 'bridge' ? 'elevated' : after) : before;
@@ -252,6 +276,8 @@ function finish(t: Terrain, districts: Districts, kind: 'main' | 'freight', poin
   const zones: boolean[] = [];
   const crossable = structure.map((s, i) => {
     if (s !== 'ground') return true;
+    // No level crossing in a cutting or on a bank: a street cannot get down or up to the rails there.
+    if (Math.abs(level[i] - ground[i]) > CROSSING_REACH) return false;
     const z = Math.floor(i / zone);
     while (zones.length <= z) zones.push(rng.chance(open));
     return zones[z];
@@ -373,7 +399,21 @@ export function generateRail(t: Terrain, districts: Districts, highways: Vec2[][
       main.points.forEach((p, i) => {
         if (dist(p, freightPts[0]) < dist(main.points[at], freightPts[0])) at = i;
       });
-      lines.push(finish(t, districts, 'freight', freightPts, rng.fork('freight-profile'), main.level[at]));
+      const branch = finish(t, districts, 'freight', freightPts, rng.fork('freight-profile'), main.level[at]);
+      // The branch ends in a yard on open ground: not inside a hill, in a cutting or up on a viaduct.
+      let end = branch.points.length - 1;
+      const open = (i: number): boolean => {
+        const p = branch.points[i];
+        return branch.structure[i] === 'ground' && Math.abs(branch.level[i] - heightAt(t, p.x, p.y)) <= 1.5;
+      };
+      while (end > 0 && !(open(end) && open(Math.max(0, end - 2)) && open(Math.max(0, end - 4)))) end--;
+      if (end >= 30) {
+        if (end < branch.points.length - 1) {
+          branch.points.length = branch.structure.length = branch.level.length = branch.crossable.length = end + 1;
+          branch.length = polyLength(branch.points);
+        }
+        lines.push(branch);
+      }
     }
   }
   return { lines };
