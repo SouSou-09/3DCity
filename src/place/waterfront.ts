@@ -536,7 +536,8 @@ export function placeWaterfront(site: Site): Waterfront {
           else site.put(rnd(124, f.edge, slot) < 0.8 ? palm : pick(palms, rnd(125, f.edge, slot)), 'tree', bed[0], bed[2], rnd(126, f.edge, slot) * 6.3, { h: q.top, scale: 0.85 + rnd(127, f.edge, slot) * 0.3 });
         } else if (rnd(128, f.edge, slot) < 0.55) site.put(pick(under, rnd(129, f.edge, slot)), 'plant', bed[0], bed[2], rnd(130, f.edge, slot) * 6.3, { h: q.top, scale: 0.7 + rnd(131, f.edge, slot) * 0.4 });
       }
-      for (const o of [1.2, 3.4]) site.stampDisc(q.p.x + q.n.x * o, q.p.y + q.n.y * o, 2.2, USED, FREE);
+      // A ramp reaches further out over the sand than the bed and wall do; nothing is set down on its boards.
+      for (const o of open ? [1.2, 3.4, 5.6, 7.8] : [1.2, 3.4]) site.stampDisc(q.p.x + q.n.x * o, q.p.y + q.n.y * o, 2.2, USED, FREE);
     }
     out.fronts.push({ edge: f.edge, side: f.side, kerb: f.posts.map((q) => q.p), top: f.posts.map((q) => q.top), wall, steps });
   }
