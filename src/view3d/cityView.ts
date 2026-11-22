@@ -5,6 +5,7 @@ import { City } from '../gen/city';
 import { MODELS } from '../assets/mesh/registry';
 import { RoadModel, buildRoadModel } from '../place/roadModel';
 import { RailModel, buildRailModel } from '../place/railModel';
+import { OpenSpace, placeOpenSpace } from '../place/openSpace';
 import { StreetFurniture, placeStreetFurniture } from '../place/streetFurniture';
 import { Materials } from './materials';
 
@@ -18,6 +19,8 @@ interface Instance {
   slopeX?: number;
   slopeZ?: number;
   scale?: number;
+  /** Scale along the model's own x axis. */
+  stretch?: number;
 }
 
 /**
@@ -39,6 +42,8 @@ export class CityView {
   furniture: StreetFurniture | null = null;
   /** Tracks, level crossings and stations along the railway. */
   rail: RailModel | null = null;
+  /** Parks, the waterfront and fences as placed. */
+  open: OpenSpace | null = null;
 
   /** `quality` scales the road textures (1 = full resolution). */
   constructor(private canvas: HTMLCanvasElement, quality = 0.25) {
@@ -91,9 +96,9 @@ export class CityView {
         const mesh = new THREE.InstancedMesh(p.geo, p.mat, list.length);
         list.forEach((it, i) => {
           m.makeRotationY(-it.yaw);
-          if (it.scale) m.scale(size.setScalar(it.scale));
+          if (it.scale || it.stretch) m.scale(size.set((it.scale ?? 1) * (it.stretch ?? 1), it.scale ?? 1, it.scale ?? 1));
           // Things that follow a grade are sheared, so that posts stay upright.
-          m.elements[1] = it.slopeX ?? 0;
+          m.elements[1] = (it.slopeX ?? 0) * (it.stretch ?? 1);
           m.elements[9] = it.slopeZ ?? 0;
           m.setPosition(it.x, it.h, it.y);
           mesh.setMatrixAt(i, m);
@@ -118,7 +123,8 @@ export class CityView {
     });
     this.content.clear();
     const roads = (this.roads = buildRoadModel(city));
-    this.content.add(this.buildTerrain(city, roads.ground), this.buildWater(city));
+    const open = (this.open = placeOpenSpace(city, roads));
+    this.content.add(this.buildTerrain(city, open), this.buildWater(city));
     for (const tile of roads.tiles) {
       const g = this.materials.group(tile);
       g.traverse((o) => {
@@ -133,6 +139,8 @@ export class CityView {
     const rail = (this.rail = buildRailModel(city, roads));
     for (const tile of rail.tiles) this.content.add(this.materials.group(tile));
     this.content.add(this.buildFurniture(rail.items));
+    for (const tile of open.tiles) this.content.add(this.materials.group(tile));
+    this.content.add(this.buildFurniture(open.items));
     const s = city.config.size;
     const dt = city.districts.downtown.center;
     this.controls.target.set(dt.x, 0, dt.y);
@@ -141,7 +149,8 @@ export class CityView {
     this.controls.update();
   }
 
-  private buildTerrain(city: City, height: Float32Array): THREE.Mesh {
+  private buildTerrain(city: City, open: OpenSpace): THREE.Mesh {
+    const height = open.ground;
     const t = city.terrain;
     const n = t.n;
     const pos = new Float32Array(n * n * 3);
@@ -153,16 +162,20 @@ export class CityView {
         pos[k * 3] = i * t.cell;
         pos[k * 3 + 1] = height[k];
         pos[k * 3 + 2] = j * t.cell;
-        const sd = t.seaDist[k];
         const hl = t.hill[k];
         let r = mix(0.8, 0.5, hl);
         let g = mix(0.79, 0.58, hl);
         let b = mix(0.72, 0.36, hl);
-        const sand = Math.max(1 - smoothstep(18, 34, sd), 1 - smoothstep(0, 8, t.riverBank[k]));
+        // A port's yard is paved; sand lies where the shore was left a beach.
+        const yard = open.shore.paved[k];
+        r = mix(r, 0.56, yard);
+        g = mix(g, 0.56, yard);
+        b = mix(b, 0.55, yard);
+        const sand = Math.max(open.shore.sand[k], 1 - smoothstep(0, 8, t.riverBank[k]));
         r = mix(r, 0.85, sand);
         g = mix(g, 0.78, sand);
         b = mix(b, 0.58, sand);
-        if (city.districts.parks.some((p) => Math.hypot(p.center.x - i * t.cell, p.center.y - j * t.cell) < p.radius)) {
+        if (open.isPark(i * t.cell, j * t.cell)) {
           r = 0.36;
           g = 0.55;
           b = 0.3;
