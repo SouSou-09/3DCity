@@ -3,6 +3,7 @@ import { Layout, layout, reversed } from '../assets/mesh/section';
 import { Vec2 } from '../core/vec2';
 import { City } from '../gen/city';
 import { DistrictType } from '../gen/districts';
+import { RailIndex } from '../gen/rail';
 import { isWater } from '../gen/terrain';
 import { RoadClass } from '../gen/streamlines';
 import { Junction, JunctionArm, RoadModel } from './roadModel';
@@ -163,8 +164,17 @@ export function placeStreetFurniture(city: City, roads: RoadModel): StreetFurnit
     return false;
   };
 
+  /** Whether a point lies on the railway's ballast at the level of the rails. */
+  const railIndex = new RailIndex(city.rail);
+  const onTrack = (x: number, y: number, h: number): boolean => {
+    const hit = railIndex.nearest(x, y, 8);
+    if (!hit) return false;
+    const tr = roads.rail.lines[hit.line];
+    return hit.d < tr.tracks * 2 + 2.8 && Math.abs(tr.level[hit.seg] - h) < 3;
+  };
+
   const put = (it: Placed, clear = 1.2, own?: number): boolean => {
-    if (!free(it.x, it.y, clear) || inLane(it.x, it.y, it.h, own)) return false;
+    if (!free(it.x, it.y, clear) || inLane(it.x, it.y, it.h, own) || onTrack(it.x, it.y, it.h)) return false;
     if (isWater(city.terrain, it.x, it.y) && !(it.edge !== undefined && graph.edges[it.edge].bridge)) return false;
     items.push(it);
     stats[it.kind]++;

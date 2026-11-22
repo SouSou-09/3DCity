@@ -42,13 +42,15 @@ export interface Way {
   b: MeshBuilder;
   f: Pose;
   c: Curve;
+  /** Height of the formation at distance s, for a way that climbs and falls (a route laid over terrain). */
+  lift?: (s: number) => number;
 }
 export const way = (b: MeshBuilder, f: Pose, c: Curve = line): Way => ({ b, f, c });
 export const sideWay = (w: Way, d: number): Way => ({ ...w, c: beside(w.c, d) });
 
 export function pt(w: Way, lat: number, y: number, s: number): V3 {
   const { p, t } = w.c(s);
-  return at(w.f, p[0] + t[1] * lat, y, p[1] - t[0] * lat);
+  return at(w.f, p[0] + t[1] * lat, w.lift ? y + w.lift(s) : y, p[1] - t[0] * lat);
 }
 /** Pose on the track: x across, z along. */
 export function poseAt(w: Way, s: number, lat = 0, y = 0): Pose {

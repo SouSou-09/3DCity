@@ -7,7 +7,10 @@ import { Vec2, clamp, mix, smoothstep } from '../core/vec2';
 import { City } from '../gen/city';
 import { NodePlane, RoadLevels, freewayRun, roadLevels } from '../gen/roadHeights';
 import { RoadClass } from '../gen/streamlines';
+import { STATION_HALF } from '../gen/stations';
 import { heightAt } from '../gen/terrain';
+import { TOP as RAIL_TOP } from '../assets/mesh/railkit';
+import { RailProfile, railProfile } from './railProfile';
 import { HIGHWAY_DECK, RAMP_DECK, sectionFor, surface } from './roadSections3d';
 
 const TILE = 800;
@@ -56,6 +59,8 @@ export interface RoadModel {
   junctions: Junction[];
   /** Centre line of each edge's road as built ([x, height, y]); null where a junction swallowed the edge. */
   lines: (V3[] | null)[];
+  /** The railway's final levels and its level crossings; the ground is graded to its formation. */
+  rail: RailProfile;
   /** Cross slope (rise per metre to the right) at each point of `lines`. */
   cross: (number[] | null)[];
   /** Cross-section of each edge as built, in the edge's direction. */
@@ -907,11 +912,23 @@ export function buildRoadModel(city: City): RoadModel {
       segs.push({ ax: c.x, ay: c.y, ah: c.plane.h, ac: cross, bx, by, bh: c.plane.h + c.plane.gx * (bx - c.x) + c.plane.gy * (by - c.y), bc: cross, half: half[a.edge] });
     }
   }
+  // The railway comes to the roads' level at its level crossings, and the ground is graded to its formation too.
+  const rail = railProfile(city, lines, secs);
+  for (const tr of rail.lines) {
+    const zones = city.stations.filter((st) => st.line === tr.line).map((st) => tr.s[st.index]);
+    for (let i = 0; i + 1 < tr.pts.length; i++) {
+      if (tr.structure[i] !== 'ground' || tr.structure[i + 1] !== 'ground') continue;
+      const a = tr.pts[i];
+      const b = tr.pts[i + 1];
+      const station = zones.some((z) => Math.abs(z - tr.s[i]) < STATION_HALF);
+      segs.push({ ax: a.x, ay: a.y, ah: tr.level[i] - RAIL_TOP, ac: 0, bx: b.x, by: b.y, bh: tr.level[i + 1] - RAIL_TOP, bc: 0, half: station ? 22 : tr.tracks > 1 ? 5.5 : 3.5 });
+    }
+  }
   const ground = (graded = gradeTerrain(city, segs));
   for (const fn of standing) fn();
   const tiles = [...builders.values()].map((b) => b.build());
   stats.triangles = tiles.reduce((s, m) => s + m.triangles, 0);
-  return { tiles, ground, levels, junctions: clusters.map(({ nodes, x, y, plane, arms, signal }) => ({ nodes, x, y, plane, arms, signal })), lines, cross: crossOf, sections: secs, cuts, stats };
+  return { tiles, ground, levels, junctions: clusters.map(({ nodes, x, y, plane, arms, signal }) => ({ nodes, x, y, plane, arms, signal })), lines, rail, cross: crossOf, sections: secs, cuts, stats };
 }
 
 /** Terrain with the ground under and beside every at-grade road brought to the road's level. */

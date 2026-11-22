@@ -393,10 +393,11 @@ export function subwayEntrance(b: MeshBuilder, f: Pose, o: SubwayOpts): void {
   }
 }
 
-const EDGE = 1.62;
+/** Distance from a track's centre to the platform edge. */
+export const EDGE = 1.62;
 const st = (k: StyleName | StyleName[]): TrackStyle | TrackStyle[] => (Array.isArray(k) ? k.map((x) => STYLES[x] as TrackStyle) : (STYLES[k] as TrackStyle));
 
-interface FurnishOpts {
+export interface FurnishOpts {
   name: string;
   /** Benches face +x (1), -x (-1) or stand back to back (0). */
   face: 1 | -1 | 0;
@@ -410,7 +411,7 @@ interface FurnishOpts {
   pole?: string;
 }
 /** Benches, bins, name boards and lamps along the platform strip centred on lateral position x. */
-function furnish(w: Way, s0: number, s1: number, x: number, h: number, o: FurnishOpts): void {
+export function furnish(w: Way, s0: number, s1: number, x: number, h: number, o: FurnishOpts): void {
   const b = w.b;
   const n = o.n ?? Math.max(1, Math.round((s1 - s0) / 15));
   const yaws = o.face === 0 ? [90, -90] : [o.face > 0 ? 90 : -90];
@@ -428,7 +429,7 @@ function furnish(w: Way, s0: number, s1: number, x: number, h: number, o: Furnis
 }
 
 /** Pad that raises a building to platform level, with steps down to the street on its -z side. */
-function podium(b: MeshBuilder, f: Pose, w: number, d: number, h: number, steps = 4): void {
+export function podium(b: MeshBuilder, f: Pose, w: number, d: number, h: number, steps = 4): void {
   box(b, 'structure/wall-smooth', f, [0, h / 2, 0], [w / 2 + 0.6, h / 2, d / 2 + 0.6], 'Yy');
   const P = (x: number, z: number): V3 => at(f, x, h, z);
   b.quad('concrete/walk-square-dirty', P(-w / 2 - 0.6, d / 2 + 0.6), P(w / 2 + 0.6, d / 2 + 0.6), P(w / 2 + 0.6, -d / 2 - 0.6), P(-w / 2 - 0.6, -d / 2 - 0.6), [[0, 0], [w + 1.2, 0], [w + 1.2, d + 1.2], [0, d + 1.2]]);

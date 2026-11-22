@@ -4,12 +4,24 @@ import { clamp, mix, smoothstep } from '../core/vec2';
 import { City } from '../gen/city';
 import { MODELS } from '../assets/mesh/registry';
 import { RoadModel, buildRoadModel } from '../place/roadModel';
-import { Placed, StreetFurniture, placeStreetFurniture } from '../place/streetFurniture';
+import { RailModel, buildRailModel } from '../place/railModel';
+import { StreetFurniture, placeStreetFurniture } from '../place/streetFurniture';
 import { Materials } from './materials';
 
+/** A catalogue model standing somewhere in the city. */
+interface Instance {
+  model: string;
+  x: number;
+  y: number;
+  h: number;
+  yaw: number;
+  slopeX?: number;
+  slopeZ?: number;
+}
+
 /**
- * 3D view of the generated city: terrain graded to the roads, water, and the road models
- * (streets with their junctions, freeways on viaducts, ramps).
+ * 3D view of the generated city: terrain graded to the roads and tracks, water, the road models
+ * (streets with their junctions, freeways on viaducts, ramps), the equipment along them and the railway.
  * Map (x, y) becomes world (x, z); height is world y.
  */
 export class CityView {
@@ -24,6 +36,8 @@ export class CityView {
   roads: RoadModel | null = null;
   /** Signals, signs and lights standing along the roads. */
   furniture: StreetFurniture | null = null;
+  /** Tracks, level crossings and stations along the railway. */
+  rail: RailModel | null = null;
 
   /** `quality` scales the road textures (1 = full resolution). */
   constructor(private canvas: HTMLCanvasElement, quality = 0.25) {
@@ -43,9 +57,9 @@ export class CityView {
   }
 
   /** One instanced mesh per model, material and 800 m tile, so that what is out of view is skipped. */
-  private buildFurniture(items: Placed[]): THREE.Group {
+  private buildFurniture(items: Instance[]): THREE.Group {
     const TILE = 800;
-    const groups = new Map<string, Placed[]>();
+    const groups = new Map<string, Instance[]>();
     for (const it of items) {
       const k = `${it.model}|${Math.floor(it.x / TILE)}|${Math.floor(it.y / TILE)}`;
       const g = groups.get(k);
@@ -75,6 +89,9 @@ export class CityView {
         const mesh = new THREE.InstancedMesh(p.geo, p.mat, list.length);
         list.forEach((it, i) => {
           m.makeRotationY(-it.yaw);
+          // Things that follow a grade are sheared, so that posts stay upright.
+          m.elements[1] = it.slopeX ?? 0;
+          m.elements[9] = it.slopeZ ?? 0;
           m.setPosition(it.x, it.h, it.y);
           mesh.setMatrixAt(i, m);
         });
@@ -109,6 +126,9 @@ export class CityView {
     }
     this.furniture = placeStreetFurniture(city, roads);
     this.content.add(this.buildFurniture(this.furniture.items));
+    const rail = (this.rail = buildRailModel(city, roads));
+    for (const tile of rail.tiles) this.content.add(this.materials.group(tile));
+    this.content.add(this.buildFurniture(rail.items));
     const s = city.config.size;
     const dt = city.districts.downtown.center;
     this.controls.target.set(dt.x, 0, dt.y);
