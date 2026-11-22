@@ -916,10 +916,12 @@ export function placeParks(site: Site): { parks: ParkPlan[]; tiles: ModelData[] 
       const tclr = clearance(occ, w, w, LAWN);
       const G = 8;
       const dense = tier === 'central' || tier === 'district' ? 1 : 0.6;
+      /** Where the tree of a grid square stands, if it has one. */
+      const treeAt = (gx: number, gy: number): Vec2 => ({ x: (gx + 0.2 + hash(seed, pi, gx, gy, 1) * 0.6) * G, y: (gy + 0.2 + hash(seed, pi, gx, gy, 2) * 0.6) * G });
+      const seconds: Vec2[] = [];
       for (let gy = Math.floor(cy(0) / G); gy * G < cy(w); gy++)
         for (let gx = Math.floor(cx(0) / G); gx * G < cx(w); gx++) {
-          const x = (gx + 0.2 + hash(seed, pi, gx, gy, 1) * 0.6) * G;
-          const y = (gy + 0.2 + hash(seed, pi, gx, gy, 2) * 0.6) * G;
+          const { x, y } = treeAt(gx, gy);
           const k = cellOf(x, y);
           if (k < 0 || occ[k] !== LAWN || tclr[k] * C < 2.6) continue;
           const grove = noise(seed * 7 + pi, x, y, 46);
@@ -944,6 +946,15 @@ export function placeParks(site: Site): { parks: ParkPlan[]; tiles: ModelData[] 
             const [tx, ty] = [x + Math.cos(a) * d, y + Math.sin(a) * d];
             const tk = cellOf(tx, ty);
             if (tk < 0 || occ[tk] !== LAWN || tclr[tk] * C < 2.6) continue;
+            // Clear of the trees of the squares round about and of the other trees added to groves.
+            let clash = seconds.some((t) => Math.hypot(t.x - tx, t.y - ty) < 2.4);
+            for (let ny = gy - 1; ny <= gy + 1 && !clash; ny++)
+              for (let nx = gx - 1; nx <= gx + 1 && !clash; nx++) {
+                const t = treeAt(nx, ny);
+                clash = (nx !== gx || ny !== gy) && Math.hypot(t.x - tx, t.y - ty) < 2.4;
+              }
+            if (clash) continue;
+            seconds.push({ x: tx, y: ty });
             put(kind, 'tree', tx, ty, h(18 + q) * 6.3, { scale: 0.6 + h(20 + q) * 0.35 });
           }
           for (let q = 0; q < 3; q++) {
