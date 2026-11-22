@@ -162,12 +162,16 @@ export class CityView {
         pos[k * 3] = i * t.cell;
         pos[k * 3 + 1] = height[k];
         pos[k * 3 + 2] = j * t.cell;
-        const sd = t.seaDist[k];
         const hl = t.hill[k];
         let r = mix(0.8, 0.5, hl);
         let g = mix(0.79, 0.58, hl);
         let b = mix(0.72, 0.36, hl);
-        const sand = Math.max(1 - smoothstep(18, 34, sd), 1 - smoothstep(0, 8, t.riverBank[k]));
+        // A port's yard is paved; sand lies where the shore was left a beach.
+        const yard = open.shore.paved[k];
+        r = mix(r, 0.56, yard);
+        g = mix(g, 0.56, yard);
+        b = mix(b, 0.55, yard);
+        const sand = Math.max(open.shore.sand[k], 1 - smoothstep(0, 8, t.riverBank[k]));
         r = mix(r, 0.85, sand);
         g = mix(g, 0.78, sand);
         b = mix(b, 0.58, sand);

@@ -2,6 +2,7 @@
 import { MODELS } from '../assets/mesh/registry';
 import { MeshBuilder, V3 } from '../assets/mesh/builder';
 import { layout, reversed } from '../assets/mesh/section';
+import { pointAt, polyLength } from '../core/geom';
 import { Vec2 } from '../core/vec2';
 import { City } from '../gen/city';
 import { sample, waterDistAt } from '../gen/terrain';
@@ -104,7 +105,9 @@ export class Site {
         if (waterDistAt(t, x, y) < 0.5) grid[j * n + i] = WATER;
         else {
           const [li, lj] = [Math.floor(x / land.cell), Math.floor(y / land.cell)];
-          if (li >= 0 && lj >= 0 && li < land.n && lj < land.n && land.grid[lj * land.n + li] > 0) grid[j * n + i] = LOT;
+          // Lots left as open space are open ground like the rest.
+          const lot = li >= 0 && lj >= 0 && li < land.n && lj < land.n ? land.grid[lj * land.n + li] : 0;
+          if (lot > 0 && land.lots[lot - 1]?.use !== 'OS') grid[j * n + i] = LOT;
         }
       }
     }
@@ -226,6 +229,30 @@ export class Site {
     if (o.h !== undefined) it.h = o.h + (lift ?? 0);
     this.items.push(it);
     return it;
+  }
+
+  /** Stands a model with its origin at (x, y) and height h. */
+  set(model: string, kind: SiteKind, x: number, y: number, h: number, yaw: number, o: Partial<SiteItem> = {}): SiteItem {
+    const it: SiteItem = { model, kind, x, y, h, yaw, ...o };
+    this.items.push(it);
+    return it;
+  }
+
+  /**
+   * Stands 12 m fence panels along a line, each stretched to fit and sheared to the ground between its ends
+   * (or level at `level`). Returns how many it stood.
+   */
+  panels(model: string, kind: SiteKind, pts: Vec2[], o: Partial<SiteItem> = {}, level?: number): number {
+    const len = polyLength(pts);
+    if (len < 1.5) return 0;
+    const n = Math.max(1, Math.round(len / 12));
+    for (let i = 0; i < n; i++) {
+      const [p, q] = [pointAt(pts, (len * i) / n).p, pointAt(pts, (len * (i + 1)) / n).p];
+      const l = Math.hypot(q.x - p.x, q.y - p.y) || 1;
+      const [h0, h1] = level === undefined ? [this.heightAt(p.x, p.y), this.heightAt(q.x, q.y)] : [level, level];
+      this.set(model, kind, (p.x + q.x) / 2, (p.y + q.y) / 2, (h0 + h1) / 2, Math.atan2(q.y - p.y, q.x - p.x), { stretch: l / 12, slopeX: (h1 - h0) / l, ...o });
+    }
+    return n;
   }
 
   /**
