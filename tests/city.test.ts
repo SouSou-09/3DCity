@@ -1,19 +1,22 @@
 import { describe, expect, it, vi } from 'vitest';
 import { SegmentIndex, pointSeg, segSeg } from '../src/core/geom';
-import { angleDiff, clamp, dist, mix } from '../src/core/vec2';
+import { Vec2, angleDiff, clamp, dist, mix } from '../src/core/vec2';
 import { City, DEFAULT_CONFIG, generateCity } from '../src/gen/city';
+import { districtAt } from '../src/gen/districts';
 import { LAND_USES, LandUse, Site, useWeights } from '../src/gen/landuse';
-import { STREET_CLEARANCE } from '../src/gen/roadHeights';
+import { STREET_CLEARANCE, roadLevels } from '../src/gen/roadHeights';
 import { profileWidth } from '../src/gen/roadSections';
 import { layout } from '../src/assets/mesh/section';
 import { MODELS } from '../src/assets/mesh/registry';
+import { TEXTURES } from '../src/assets/tex';
 import { EDGE_STUB, RoadModel, buildRoadModel } from '../src/place/roadModel';
 import { RailModel, buildRailModel } from '../src/place/railModel';
 import { roadAt, trackAt } from '../src/place/railProfile';
 import { placeStreetFurniture } from '../src/place/streetFurniture';
 import { RAIL_MAX_GRADE, RAIL_MIN_RADIUS, RAIL_STEP, RailIndex, sharpestRailTurn } from '../src/gen/rail';
+import { STATION_HALF } from '../src/gen/stations';
 import { isStreet } from '../src/gen/streamlines';
-import { REF_SIZE, inBounds, isWater, seaDistAt, waterDistAt } from '../src/gen/terrain';
+import { REF_SIZE, heightAt, inBounds, isWater, seaDistAt, waterDistAt } from '../src/gen/terrain';
 
 const SEEDS = [1, 2, 3, 4, 5, 6, 7, 8, 16, 21];
 // Generating a full-size city takes several seconds.
@@ -243,6 +246,76 @@ describe('city generation', () => {
       }
     });
 
+    it('routes the railway clear of the freeway, with the branch short and among the works', () => {
+      const c = city(seed);
+      const freeway = new SegmentIndex(80);
+      for (const e of c.graph.edges) if (e.cls === 'highway') freeway.addLine(e.id, e.points);
+      for (const line of c.rail.lines) {
+        // Under or over the freeway once or twice, never beside it.
+        let beside = 0;
+        for (const p of line.points) {
+          let near = false;
+          freeway.query(p.x - 60, p.y - 60, p.x + 60, p.y + 60, (r) => {
+            near ||= pointSeg(p.x, p.y, r.a, r.b).d < 60;
+          });
+          if (near) beside++;
+        }
+        expect(beside * RAIL_STEP, `${line.kind} beside the freeway`).toBeLessThanOrEqual(260);
+        if (line.kind !== 'freight') continue;
+        expect(line.length).toBeLessThanOrEqual(1600);
+        // Past the junction, where it runs beside the main line, it is on the land of the works it serves.
+        const main = c.rail.lines.find((l) => l.kind === 'main')!;
+        const off = (p: Vec2) => Math.min(...main.points.slice(1).map((q, i) => pointSeg(p.x, p.y, main.points[i], q).d));
+        const beyond = line.points.filter((p) => off(p) > 45);
+        const works = beyond.filter((p) => districtAt(c.terrain, c.districts, p.x, p.y).type === 'industrial').length;
+        expect(works / beyond.length, 'branch among the works').toBeGreaterThan(0.6);
+        // It leaves the main line the way a turnout does - alongside it, from plain track - and no station reaches into the junction.
+        const at = main.points.reduce((b, q, i) => (dist(q, line.points[0]) < dist(main.points[b], line.points[0]) ? i : b), 0);
+        const along = Math.atan2(main.points[at + 1].y - main.points[at - 1].y, main.points[at + 1].x - main.points[at - 1].x);
+        const away = Math.atan2(line.points[2].y - line.points[0].y, line.points[2].x - line.points[0].x);
+        expect(Math.abs(Math.sin(away - along)), 'angle the branch leaves at').toBeLessThan(0.3);
+        expect(off(line.points[0]), 'branch starts on the main line').toBeLessThan(4);
+        expect(Math.abs(line.level[0] - main.level[at]), 'branch starts at the level of the main line').toBeLessThan(0.3);
+        expect(sharpestRailTurn(line.points), 'curve of the branch').toBeLessThanOrEqual(RAIL_STEP / RAIL_MIN_RADIUS.freight + 1e-6);
+        for (let k = at - 8; k <= at + 8; k++) expect(main.structure[k], 'main line at the junction').toBe(main.structure[at]);
+        expect(['ground', 'elevated']).toContain(main.structure[at]);
+        for (const st of c.stations) expect(dist(st, line.points[0]), 'station by the junction').toBeGreaterThan(STATION_HALF + 150);
+      }
+    });
+
+    it('has few level crossings: square to the street, apart, clear of junctions, and none on a main street near the centre', () => {
+      const c = city(seed);
+      const level = c.railCrossings.filter((x) => x.kind === 'level');
+      const main = c.rail.lines.findIndex((l) => l.kind === 'main');
+      expect(level.filter((x) => x.line === main).length).toBeLessThanOrEqual(8);
+      for (const x of level) {
+        const e = c.graph.edges[x.edge];
+        const line = c.rail.lines[x.line];
+        const where = `${e.cls} edge ${e.id} over the ${line.kind} line at ${x.x.toFixed(0)}, ${x.y.toFixed(0)}`;
+        for (const o of level) {
+          if (o !== x && o.line === x.line) expect(Math.hypot(o.x - x.x, o.y - x.y), where).toBeGreaterThan(140);
+        }
+        if (e.cls !== 'arterial') continue;
+        if (x.line === main) expect(dist(x, c.districts.downtown.center), where).toBeGreaterThan(1250);
+        let seg = 0;
+        for (let i = 1; i + 1 < line.points.length; i++) {
+          if (pointSeg(x.x, x.y, line.points[i], line.points[i + 1]).d < pointSeg(x.x, x.y, line.points[seg], line.points[seg + 1]).d) seg = i;
+        }
+        let k = 0;
+        for (let i = 1; i + 1 < e.points.length; i++) {
+          if (pointSeg(x.x, x.y, e.points[i], e.points[i + 1]).d < pointSeg(x.x, x.y, e.points[k], e.points[k + 1]).d) k = i;
+        }
+        const turn = angleDiff(
+          Math.atan2(line.points[seg + 1].y - line.points[seg].y, line.points[seg + 1].x - line.points[seg].x),
+          Math.atan2(e.points[k + 1].y - e.points[k].y, e.points[k + 1].x - e.points[k].x),
+        );
+        expect(Math.abs(Math.PI / 2 - Math.min(turn, Math.PI - turn)), `${where}: skew`).toBeLessThan(0.7);
+        for (const n of c.graph.nodes) {
+          if (n.degree >= 3) expect(Math.hypot(n.x - x.x, n.y - x.y), `${where}: junction ${n.id}`).toBeGreaterThan(40);
+        }
+      }
+    });
+
     it('lets local streets cross the tracks only at the places left open, and no street runs along them', () => {
       const c = city(seed);
       for (const x of c.railCrossings) {
@@ -326,6 +399,12 @@ describe('land use', () => {
       expect(main.structure[s.index]).not.toBe('tunnel');
       expect(main.structure[s.index]).not.toBe('bridge');
       if (i > 0) expect(dist(s, c.stations[i - 1])).toBeGreaterThan(600);
+      // The platforms are on one kind of track, and a train standing at them does not hold a crossing's gates down.
+      const half = Math.round(STATION_HALF / RAIL_STEP);
+      for (let k = s.index - half; k <= s.index + half; k++) expect(main.structure[k], `station ${s.id} at ${k}`).toBe(main.structure[s.index]);
+      for (const x of c.railCrossings) {
+        if (x.kind === 'level' && x.line === 0) expect(dist(s, x), `station ${s.id}`).toBeGreaterThan(STATION_HALF + 40);
+      }
     });
   });
 
@@ -457,6 +536,23 @@ describe('roads in 3D', () => {
       }
     }
     expect(steep).toBeLessThan(0.004 * all);
+  });
+
+  it('does not hold a ramp up for a railway it only runs beside', () => {
+    // Seed 30 ends two ramps next to the main line without crossing it.
+    const c = generateCity({ ...DEFAULT_CONFIG, seed: 30 });
+    const levels = roadLevels(c.graph, c.terrain, c.rail);
+    let ramps = 0;
+    for (const e of c.graph.edges) {
+      const lv = levels.edges[e.id];
+      if (e.cls !== 'ramp' || !lv) continue;
+      ramps++;
+      for (let i = 1; i < lv.h.length; i++) {
+        const run = lv.s[i] - lv.s[i - 1];
+        if (run > 0.5) expect(Math.abs(lv.h[i] - lv.h[i - 1]) / run, `ramp ${e.id}`).toBeLessThan(0.08);
+      }
+    }
+    expect(ramps).toBeGreaterThan(4);
   });
 
   it.each(MODEL_SEEDS)('seed %i: ramps come down gently and roads do not kink where they leave a junction', (seed) => {
@@ -694,8 +790,135 @@ describe('railway in 3D', () => {
     expect(b.items).toEqual(a.items);
     expect(b.stations).toEqual(a.stations);
     expect(b.stats).toEqual(a.stats);
+    expect(b.looks).toEqual(a.looks);
     const ids = new Set(MODELS.map((m) => m.id));
     for (const it of a.items) expect(ids.has(it.model), it.model).toBe(true);
+  });
+
+  it('gives its level crossings different decks, roads and rails, all from the catalogue', () => {
+    const surfaces = new Set(TEXTURES.map((x) => x.id));
+    const seen = { panel: new Set<string>(), approach: new Set<string>(), field: new Set<string>(), flange: new Set<string>(), head: new Set<string>() };
+    for (const seed of MODEL_SEEDS) {
+      const r = railModel(seed);
+      expect(r.looks.length).toBe(r.crossings.length);
+      for (const look of r.looks) {
+        for (const k of ['panel', 'approach', 'field', 'flange', 'head'] as const) {
+          expect(surfaces.has(look[k]), look[k]).toBe(true);
+          seen[k].add(look[k]);
+        }
+      }
+      // Two crossings in one town seldom look alike.
+      expect(new Set(r.looks.map((l) => `${l.panel} ${l.approach} ${l.head}`)).size).toBeGreaterThanOrEqual(0.6 * r.looks.length);
+    }
+    // The towns have some fifteen crossings between them.
+    expect(seen.panel.size).toBeGreaterThanOrEqual(5);
+    expect(seen.approach.size).toBeGreaterThanOrEqual(4);
+    expect(seen.flange.size).toBeGreaterThanOrEqual(2);
+    expect(seen.head.size).toBeGreaterThanOrEqual(2);
+  });
+
+  it.each(MODEL_SEEDS)('seed %i: tunnels are under a hill, and the branch ends at a buffer stop on open ground', (seed) => {
+    const c = city(seed);
+    const m = model(seed);
+    const r = railModel(seed);
+    for (const line of c.rail.lines) {
+      const cover = (i: number): number => heightAt(c.terrain, line.points[i].x, line.points[i].y) - line.level[i];
+      for (let i = 0; i < line.points.length; ) {
+        if (line.structure[i] !== 'tunnel') {
+          i++;
+          continue;
+        }
+        let j = i;
+        while (j + 1 < line.points.length && line.structure[j + 1] === 'tunnel') j++;
+        const where = `${line.kind} tunnel at ${line.points[i].x.toFixed(0)}, ${line.points[i].y.toFixed(0)}`;
+        expect(j - i + 1, where).toBeGreaterThanOrEqual(8);
+        if (i > 0) expect(cover(i), where).toBeGreaterThan(8);
+        if (j + 1 < line.points.length) expect(cover(j), where).toBeGreaterThan(8);
+        let deep = 0;
+        for (let k = i; k <= j; k++) deep = Math.max(deep, cover(k));
+        expect(deep, where).toBeGreaterThan(11);
+        i = j + 1;
+      }
+    }
+    // Bringing the rails to the roads' level never makes a tunnel.
+    m.rail.lines.forEach((tr) => tr.structure.forEach((k, i) => expect(k === 'tunnel', `${tr.kind} at ${i}`).toBe(c.rail.lines[tr.line].structure[i] === 'tunnel')));
+    const branches = m.rail.lines.filter((tr) => tr.kind === 'freight');
+    expect(r.stats.buffers).toBe(branches.length);
+    for (const tr of branches) {
+      const n = tr.pts.length;
+      expect(tr.structure[n - 1]).toBe('ground');
+      expect(Math.abs(c.rail.lines[tr.line].level[n - 1] - heightAt(c.terrain, tr.pts[n - 1].x, tr.pts[n - 1].y))).toBeLessThan(1.6);
+    }
+  });
+
+  it.each(MODEL_SEEDS)('seed %i: every street that meets the rails crosses them on a deck, under a bridge or over one', (seed) => {
+    const c = city(seed);
+    const m = model(seed);
+    let bare = 0;
+    for (const x of c.railCrossings) {
+      const e = c.graph.edges[x.edge];
+      const tr = m.rail.lines[x.line];
+      let s = 0;
+      let near = Infinity;
+      for (let i = 0; i + 1 < tr.pts.length; i++) {
+        const q = pointSeg(x.x, x.y, tr.pts[i], tr.pts[i + 1]);
+        if (q.d < near) [near, s] = [q.d, tr.s[i] + q.t * (tr.s[i + 1] - tr.s[i])];
+      }
+      const rail = trackAt(tr, s);
+      const kind = tr.structure[rail.i] === 'ground' && tr.structure[Math.min(rail.i + 1, tr.pts.length - 1)] === 'ground' ? 'ground' : 'other';
+      const where = `${e.cls} ${x.edge} at ${x.x.toFixed(0)}, ${x.y.toFixed(0)}`;
+      const line = m.lines[x.edge];
+      const road = line ? roadAt(line, x.x, x.y) : null;
+      if (e.cls === 'highway' || e.cls === 'ramp') {
+        // Freeways and their ramps pass well over the trains.
+        if (road && road.d < 3 && tr.structure[rail.i] !== 'tunnel') expect(road.h - rail.h, where).toBeGreaterThan(5.5);
+        continue;
+      }
+      if (kind !== 'ground') continue;
+      if (m.rail.crossings.some((k) => k.edge === x.edge && k.line === x.line && Math.abs(k.s - s) < 3)) continue;
+      const deck = m.rail.through.find((k) => k.line === x.line && s > k.s0 - 3 && s < k.s1 + 3);
+      if (deck) {
+        // Set into the junction: level through it, and no lower than its surface.
+        const j = m.junctions[deck.junction];
+        for (let q = deck.s0; q <= deck.s1; q += 2) {
+          const p = trackAt(tr, q);
+          const paved = j.plane.h + j.plane.gx * (p.p.x - j.x) + j.plane.gy * (p.p.y - j.y);
+          expect(p.h - paved, where).toBeGreaterThan(-0.02);
+          expect(p.h - paved, where).toBeLessThan(1.2);
+        }
+        continue;
+      }
+      expect(m.rail.unbuilt.some((k) => k.edge === x.edge && k.line === x.line), where).toBe(true);
+      // A street far below an embankment has a bridge over it instead.
+      if (road && road.d < 3) expect(rail.h - road.h, where).toBeLessThan(3.4);
+      bare++;
+    }
+    expect(bare).toBeLessThanOrEqual(1);
+  });
+
+  it.each(MODEL_SEEDS)('seed %i: the ground around a station does not cover the streets beside it', (seed) => {
+    const c = city(seed);
+    const m = model(seed);
+    const r = railModel(seed);
+    const t = c.terrain;
+    const ground = (x: number, y: number): number => {
+      const fx = clamp(x / t.cell, 0, t.n - 1.001);
+      const fy = clamp(y / t.cell, 0, t.n - 1.001);
+      const [i, j] = [Math.floor(fx), Math.floor(fy)];
+      const [u, v] = [fx - i, fy - j];
+      const g = m.ground;
+      return (g[j * t.n + i] * (1 - u) + g[j * t.n + i + 1] * u) * (1 - v) + (g[(j + 1) * t.n + i] * (1 - u) + g[(j + 1) * t.n + i + 1] * u) * v;
+    };
+    for (const st of r.stations) {
+      for (const e of c.graph.edges) {
+        const line = m.lines[e.id];
+        if (!line || e.cls === 'highway' || e.cls === 'ramp' || e.bridge) continue;
+        for (const p of line) {
+          if (Math.hypot(p[0] - st.x, p[2] - st.y) > 90) continue;
+          expect(ground(p[0], p[2]) - p[1], `station ${st.id}: ${e.cls} ${e.id} at ${p[0].toFixed(0)}, ${p[2].toFixed(0)}`).toBeLessThan(0.5);
+        }
+      }
+    }
   });
 
   it.each(MODEL_SEEDS)('seed %i: track is laid along every line, double on the main line and single on the branch', (seed) => {
@@ -751,7 +974,6 @@ describe('railway in 3D', () => {
     const c = city(seed);
     const m = model(seed);
     const r = railModel(seed);
-    expect(r.crossings.length).toBeGreaterThan(0);
     r.crossings.forEach((x, id) => {
       const e = c.graph.edges[x.edge];
       const tr = m.rail.lines[x.line];
@@ -760,7 +982,7 @@ describe('railway in 3D', () => {
       expect(c.railCrossings.some((k) => k.kind === 'level' && k.edge === x.edge && k.line === x.line && Math.hypot(k.x - x.x, k.y - x.y) < 0.01), where).toBe(true);
       expect(tr.structure[x.index], where).toBe('ground');
       // The rails are level with the crossing's deck, which is just above the road.
-      expect(trackAt(tr, x.s).h, where).toBeCloseTo(x.h, 2);
+      expect(Math.abs(trackAt(tr, x.s).h - x.h), where).toBeLessThan(0.02);
       const road = roadAt(m.lines[x.edge]!, x.x, x.y);
       expect(x.h - road.h, where).toBeGreaterThan(0);
       expect(x.h - road.h, where).toBeLessThan(x.table + 1);
@@ -807,7 +1029,8 @@ describe('railway in 3D', () => {
       return Math.max(-lay.road[0], lay.road[1]);
     });
     const fences = r.items.filter((it) => it.kind === 'fence');
-    expect(fences.length).toBeGreaterThan(100);
+    // Only track on the ground is fenced, and the main line is on a viaduct through town.
+    expect(fences.length).toBeGreaterThan(40);
     for (const it of r.items) {
       if (it.kind !== 'fence' && it.kind !== 'signal') continue;
       const where = `${it.model} at ${it.x.toFixed(0)}, ${it.y.toFixed(0)}`;

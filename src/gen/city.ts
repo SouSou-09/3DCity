@@ -71,7 +71,7 @@ export function generateCity(config: CityConfig = DEFAULT_CONFIG): City {
   const graph = buildRoadGraph(roads.lines, terrain, districts, rng.fork('graph'), railIndex);
   const infill = addInfillRoads(graph, terrain, districts, roads.rail, rng.fork('infill'));
   const crossings = railCrossings(railIndex, graph);
-  const stations = placeStations(roads.rail, terrain, districts, rng.fork('stations'));
+  const stations = placeStations(roads.rail, terrain, districts, rng.fork('stations'), graph, crossings);
   const land = planLandUse(graph, terrain, districts, roads.rail, stations, rng.fork('land'));
 
   const profiles = roadProfiles(graph, terrain, districts, land, rng.fork('profiles'));

@@ -268,12 +268,94 @@ function concretePanel(tex: Tex, seed: number, stain: number): TextureData {
   L.paint(lug, [0.08, 0.075, 0.07], { height: -0.01 });
   return L.finish();
 }
+/** Chequer plate bolted down over the sleepers, worn bright where the tyres run. */
+function steelPanel(tex: Tex, seed: number, rust: number): TextureData {
+  const L = new Layers(tex, [0.3, 0.3, 0.31], 0.55);
+  const tone = tex.noise(0.3, 0.3, seed, 3);
+  const patch = tex.noise(0.5, 0.8, seed + 1, 3);
+  const bolts = tex.field();
+  for (const bx of [0.06, tex.mw - 0.06]) for (let by = 0.15; by < tex.mh; by += 0.4) tex.disc(bolts, bx, by, 0.018, 1, 0.004);
+  tex.map((x, y, k) => {
+    // Raised lozenges in two directions, alternating.
+    const [u, v] = [(x + y) / 0.045, (x - y) / 0.045];
+    const [fu, fv] = [u - Math.floor(u) - 0.5, v - Math.floor(v) - 0.5];
+    const odd = (Math.floor(u) + Math.floor(v)) & 1;
+    const lug = sstep(0.42, 0.3, Math.abs(odd ? fu : fv)) * sstep(0.16, 0.08, Math.abs(odd ? fv : fu));
+    const joint = sstep(0.012, 0.004, Math.min(y, tex.mh - y)) + sstep(0.01, 0.003, Math.min(x, tex.mw - x));
+    const ru = clamp01(rust * (0.45 + patch(x, y) * 0.9) * (1 - lug * 0.6) + joint * 0.4);
+    const m = (1 + tone(x, y) * 0.15) * (1 - joint * 0.6) * (0.8 + lug * 0.45) * (1 - bolts[k] * 0.4);
+    L.r[k] = lerp(0.3, 0.36, ru) * m;
+    L.g[k] = lerp(0.3, 0.19, ru) * m;
+    L.b[k] = lerp(0.31, 0.1, ru) * m;
+    L.rough[k] = lerp(0.4, 0.92, ru);
+    L.metal[k] = (1 - ru) * 0.8;
+    L.height[k] = lug * 0.003 - joint * 0.008 + bolts[k] * 0.004;
+    return 0;
+  });
+  return L.finish();
+}
+/** Rust washed off the rails and oil dripped from the trains, laid over a finished road surface in bands across it (u along the rails). */
+function railWash(data: TextureData, tex: Tex, seed: number, rust: number, oil: number): TextureData {
+  const n = tex.noise(0.5, 0.25, seed + 11, 3);
+  const streak = tex.noise(0.04, 0.6, seed + 12, 3);
+  const drip = tex.noise(0.12, 0.12, seed + 13, 3);
+  const a = data.albedo;
+  tex.map((x, y, k) => {
+    const ru = clamp01(rust * (0.3 + n(x, y) * 0.5 + streak(x, y) * 0.35));
+    const ol = clamp01(oil * sstep(0.1, 0.45, drip(x, y)));
+    const c = [a[k * 4] / 255, a[k * 4 + 1] / 255, a[k * 4 + 2] / 255];
+    const out = [lerp(c[0], c[0] * 0.75 + RUST[0] * 0.55, ru * 0.6), lerp(c[1], c[1] * 0.7 + RUST[1] * 0.5, ru * 0.6), lerp(c[2], c[2] * 0.62 + RUST[2] * 0.4, ru * 0.6)];
+    a[k * 4] = lerp(out[0], OIL[0], ol * 0.75) * 255;
+    a[k * 4 + 1] = lerp(out[1], OIL[1], ol * 0.75) * 255;
+    a[k * 4 + 2] = lerp(out[2], OIL[2], ol * 0.75) * 255;
+    return 0;
+  });
+  return data;
+}
+function flangeway(tex: Tex, seed: number, rubber: number): TextureData {
+  const base: RGB = rubber ? [0.05, 0.05, 0.052] : [0.16, 0.13, 0.1];
+  const L = new Layers(tex, base, rubber ? 0.7 : 0.97);
+  const grit = tex.noise(0.015, 0.015, seed, 2);
+  const mud = tex.noise(0.3, 0.05, seed + 1, 3);
+  tex.map((x, y, k) => {
+    const g = rubber ? 0.15 * grit(x, y) + 0.5 * clamp01(mud(x, y)) * 0.4 : 0.5 * grit(x, y) + 0.3 * mud(x, y);
+    const rib = rubber ? (Math.abs(((x / 0.03) % 1) - 0.5) < 0.12 ? 0.6 : 1) : 1;
+    L.r[k] = base[0] * (1 + g) * rib + (rubber ? 0 : 0.05 * clamp01(mud(x, y)));
+    L.g[k] = base[1] * (1 + g) * rib;
+    L.b[k] = base[2] * (1 + g) * rib;
+    L.height[k] = -0.004 * (1 - rib) + grit(x, y) * (rubber ? 0.0005 : 0.002);
+    return 0;
+  });
+  return L.finish();
+}
 add('xing-timber', '踏切の敷板 木', [1.29, 3], (t, s) => S.planks(t, { seed: s, width: 0.215, color: hex(0x3c2e22), weathered: 0.25 }), tiled);
 add('xing-timber-old', '踏切の敷板 木・風化', [1.29, 3], (t, s) => S.planks(t, { seed: s, width: 0.215, color: hex(0x54483c), weathered: 0.75 }), tiled);
 add('xing-rubber', '踏切の敷板 ゴム', [1.29, 0.9], (t, s) => rubberPanel(t, s, 0.25), tiled);
 add('xing-rubber-worn', '踏切の敷板 ゴム・土ぼこり', [1.29, 0.9], (t, s) => rubberPanel(t, s, 0.8), tiled);
 add('xing-concrete', '踏切の敷板 コンクリート', [1.29, 2.4], (t, s) => concretePanel(t, s, 0.2), tiled);
 add('xing-concrete-stained', '踏切の敷板 コンクリート・汚れ', [1.29, 2.4], (t, s) => concretePanel(t, s, 0.8), tiled);
+add('xing-concrete-cracked', '踏切の敷板 コンクリート・ひび', [1.29, 2.4], (t, s) => concretePanel(t, s, 1.6), tiled);
+add('xing-rubber-grey', '踏切の敷板 ゴム・白化', [1.29, 0.9], (t, s) => rubberPanel(t, s, 1.25), tiled);
+add('xing-timber-tarred', '踏切の敷板 木・防腐剤で黒い', [1.29, 3], (t, s) => S.planks(t, { seed: s, width: 0.26, color: hex(0x1f1a16), weathered: 0.4 }), tiled);
+add('xing-timber-grey', '踏切の敷板 木・日焼けした灰色', [1.29, 3], (t, s) => S.planks(t, { seed: s, width: 0.18, color: hex(0x7c766a), weathered: 1 }), tiled);
+add('xing-steel-plate', '踏切の敷板 縞鋼板', [1.29, 1.5], (t, s) => steelPanel(t, s, 0.25), tiled);
+add('xing-steel-rusty', '踏切の敷板 縞鋼板・さび', [1.29, 1.5], (t, s) => steelPanel(t, s, 0.85), tiled);
+add('xing-asphalt', '踏切の敷板 アスファルト充填', [1.29, 3], (t, s) => railWash(S.asphalt(t, { seed: s, age: 0.45, cracks: 0.35, sealed: 0.6, coarse: 0.8 }), t, s, 0.5, 0), tiled);
+add('xing-asphalt-broken', '踏切の敷板 アスファルト・割れ', [1.29, 3], (t, s) => railWash(S.asphalt(t, { seed: s, age: 0.9, cracks: 0.8, alligator: 0.5, patches: 1, coarse: 1.2 }), t, s, 0.9, 0), tiled);
+add('xing-setts', '踏切の敷板 石畳', [1.29, 1.6], (t, s) => railWash(S.pavers(t, { seed: s, bond: 'setts', unit: 0.1, colors: [hex(0x6c6862), hex(0x5c5852), hex(0x7a756c), hex(0x504c48)], domed: true, jointWidth: 0.012, dirt: 0.5 }), t, s, 0.6, 0), tiled);
+add('xing-gravel', '踏切の敷板 砂利敷き', [1.29, 1.6], (t, s) => S.gravel(t, { seed: s, size: 0.03, colors: [hex(0x7c746a), hex(0x675f56), hex(0x8d857a), hex(0x554e47)], soil: [0.24, 0.2, 0.16], cover: 0.8 }), tiled);
+// Road surface on the approaches and between the tracks: what the traffic and the rails do to it.
+const ROAD: Extra = { tile: 'xy', density: 96 };
+add('xing-road-fresh', '踏切の路面 打ち替えたばかり', [3.5, 6], (t, s) => S.asphalt(t, { seed: s, age: 0.03, coarse: 0.9 }), ROAD);
+add('xing-road-used', '踏切の路面 使い込み・さび汁', [3.5, 6], (t, s) => railWash(S.asphalt(t, { seed: s, age: 0.5, lane: true, cracks: 0.25, sealed: 0.5, stains: 0.3 }), t, s, 0.55, 0.3), ROAD);
+add('xing-road-rusty', '踏切の路面 さび汁で茶色', [3.5, 6], (t, s) => railWash(S.asphalt(t, { seed: s, age: 0.65, lane: true, cracks: 0.4, stains: 0.2 }), t, s, 1.1, 0.15), ROAD);
+add('xing-road-patched', '踏切の路面 継ぎはぎ', [3.5, 6], (t, s) => railWash(S.asphalt(t, { seed: s, age: 0.7, cracks: 0.5, sealed: 0.8, patches: 4, trench: true }), t, s, 0.4, 0.2), ROAD);
+add('xing-road-cracked', '踏切の路面 亀甲割れ', [3.5, 6], (t, s) => railWash(S.asphalt(t, { seed: s, age: 0.95, lane: true, cracks: 0.9, alligator: 0.55, patches: 1 }), t, s, 0.6, 0.1), ROAD);
+add('xing-road-oily', '踏切の路面 油じみ', [3.5, 6], (t, s) => railWash(S.asphalt(t, { seed: s, age: 0.55, lane: true, cracks: 0.3, stains: 1 }), t, s, 0.3, 0.9), ROAD);
+add('xing-road-concrete', '踏切の路面 コンクリート版', [3.5, 6], (t, s) => railWash(S.concrete(t, { seed: s, finish: 'broom', slab: [3.5, 3], joint: 'tooled', dirt: 0.5, stains: 0.6, cracks: 0.3 }), t, s, 0.7, 0.3), ROAD);
+// The groove a wheel flange runs in, beside each rail.
+add('xing-flangeway', '踏切のフランジウェイ 泥と砂', [1, 0.08], (t, s) => flangeway(t, s, 0), { tile: 'x', density: 384 });
+add('xing-flangeway-rubber', '踏切のフランジウェイ ゴム充填', [1, 0.08], (t, s) => flangeway(t, s, 1), { tile: 'x', density: 384 });
 
 // --- Platforms. ---
 /** Edge of a platform, u along it and the track at the top: coping with a painted line or a stencilled warning. */

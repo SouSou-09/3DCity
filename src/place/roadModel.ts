@@ -75,6 +75,8 @@ interface Seg {
   ax: number; ay: number; ah: number; ac: number;
   bx: number; by: number; bh: number; bc: number;
   half: number;
+  /** Railway formation: it shapes the ground only where no road does. */
+  rail?: boolean;
 }
 
 const norm2 = (x: number, y: number): Vec2 => {
@@ -882,6 +884,8 @@ export function buildRoadModel(city: City): RoadModel {
         segs.push({ ax: f0.p[0], ay: f0.p[2], ah: f0.p[1], ac: 0, bx: f1.p[0], by: f1.p[2], bh: f1.p[1], bc: 0, half: hc });
       }
       if (f0.p[1] - g0 < 0.6 || f1.p[1] - g1 < 0.6 || inFreeway || nearCrossing(f0, 15) || nearCrossing(f1, 15)) continue;
+      // The deck spans the railway; no wall stands across the tracks.
+      if (railPts.some((p) => Math.hypot(p.x - f0.p[0], p.y - f0.p[2]) < 10 || Math.hypot(p.x - f1.p[0], p.y - f1.p[2]) < 10)) continue;
       standing.push(() => {
         for (const sd of [1, -1] as const) {
           const x = sd * (hc - 0.15);
@@ -913,7 +917,11 @@ export function buildRoadModel(city: City): RoadModel {
     }
   }
   // The railway comes to the roads' level at its level crossings, and the ground is graded to its formation too.
-  const rail = railProfile(city, lines, secs);
+  const rail = railProfile(city, lines, secs, clusters.map((c) => ({ x: c.x, y: c.y, plane: c.plane, reach: Math.max(6, ...c.arms.map((a) => (Number.isFinite(a.reach) ? a.reach : 0))),
+      arms: c.arms.filter((a) => Number.isFinite(a.reach)).map((a) => {
+        const lay = layout(secs[a.edge]);
+        return { dir: a.dir, reach: a.reach, half: Math.max(-lay.outer[0], lay.outer[1]) };
+      }) })));
   for (const tr of rail.lines) {
     const zones = city.stations.filter((st) => st.line === tr.line).map((st) => tr.s[st.index]);
     for (let i = 0; i + 1 < tr.pts.length; i++) {
@@ -921,7 +929,7 @@ export function buildRoadModel(city: City): RoadModel {
       const a = tr.pts[i];
       const b = tr.pts[i + 1];
       const station = zones.some((z) => Math.abs(z - tr.s[i]) < STATION_HALF);
-      segs.push({ ax: a.x, ay: a.y, ah: tr.level[i] - RAIL_TOP, ac: 0, bx: b.x, by: b.y, bh: tr.level[i + 1] - RAIL_TOP, bc: 0, half: station ? 22 : tr.tracks > 1 ? 5.5 : 3.5 });
+      segs.push({ ax: a.x, ay: a.y, ah: tr.level[i] - RAIL_TOP, ac: 0, bx: b.x, by: b.y, bh: tr.level[i + 1] - RAIL_TOP, bc: 0, half: station ? 22 : tr.tracks > 1 ? 5.5 : 3.5, rail: true });
     }
   }
   const ground = (graded = gradeTerrain(city, segs));
@@ -938,6 +946,7 @@ function gradeTerrain(city: City, segs: Seg[]): Float32Array {
   const out = Float32Array.from(t.height);
   const best = new Float32Array(n * n).fill(1e9);
   const level = new Float32Array(n * n);
+  const byRail = new Uint8Array(n * n);
   const FULL = cell * 1.45;
   const FADE = FULL + 12;
   const each = (x0: number, y0: number, x1: number, y1: number, fn: (k: number, x: number, y: number) => void): void => {
@@ -959,7 +968,14 @@ function gradeTerrain(city: City, segs: Seg[]): Float32Array {
       const py = s.ay + dy * q;
       // Negative inside the road, so that where roads overlap the one whose middle is nearer wins.
       const d = Math.hypot(x - px, y - py) - s.half;
-      if (d >= best[k] || d > FADE) return;
+      if (d > FADE) return;
+      // A road keeps the ground under and right beside it, however wide the railway's formation is there
+      // (a street along a station).
+      const mine = !s.rail && d <= FULL;
+      const theirs = !byRail[k] && best[k] <= FULL;
+      // Otherwise the nearer of the two shapes it.
+      if (mine !== theirs ? theirs : d >= best[k]) return;
+      byRail[k] = s.rail ? 1 : 0;
       // Signed distance to the right of the road, for its cross slope.
       const lat = clamp(((x - s.ax) * -dy + (y - s.ay) * dx) / l, -s.half - 3, s.half + 3);
       best[k] = d;
