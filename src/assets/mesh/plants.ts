@@ -74,6 +74,8 @@ export interface TreeOpts {
   cards?: number;
   /** Twigs and leaf cards hang down. */
   weep?: boolean;
+  /** For trees that stand by the thousand: no twigs under the leaves, and limbs of few sides. */
+  lean?: boolean;
 }
 export function tree(b: MeshBuilder, f: Pose, o: TreeOpts): void {
   const rnd = new Rand(o.seed);
@@ -105,7 +107,8 @@ export function tree(b: MeshBuilder, f: Pose, o: TreeOpts): void {
     const twig = level >= levels;
     const r1 = twig ? r * 0.3 : r * 0.62;
     const radius = level === 0 ? (q: number): number => r * (1 - 0.38 * q) * (1 + 0.75 * Math.exp((-q * len) / 0.3)) : (q: number): number => r + (r1 - r) * q;
-    pipe(b, o.bark, pts, radius, level === 0 ? 10 : level === 1 ? 7 : twig ? 4 : 5, twig);
+    if (!o.lean) pipe(b, o.bark, pts, radius, level === 0 ? 10 : level === 1 ? 7 : twig ? 4 : 5, twig);
+    else if (!twig) pipe(b, o.bark, level === 0 ? pts : [pts[0], pts[n]], radius, level === 0 ? 6 : 3, false);
     const pointAt = (t: number): [V3, V3] => {
       const x = Math.min(0.999, Math.max(0, t)) * n;
       const i = Math.floor(x);
@@ -122,7 +125,7 @@ export function tree(b: MeshBuilder, f: Pose, o: TreeOpts): void {
     if (level === levels - 1 && level > 0) for (const t of [0.35, 0.6, 0.85]) leafAt(...pointAt(t));
     const whole = level === 0 && o.leader;
     const t0 = whole ? (o.clear ?? 0.3) / 0.94 : 0.35;
-    const kids = whole ? Math.round(o.h * 2.6) : level === 0 ? (o.limbs ?? 5) : level === 1 ? 5 : 4;
+    const kids = whole ? Math.round(o.h * (o.lean ? 1.2 : 2.6)) : level === 0 ? (o.limbs ?? 5) : level === 1 ? 5 : 4;
     for (let i = 0; i < kids; i++) {
       let t = t0 + (1 - t0) * ((i + 0.3 + rnd.next() * 0.5) / kids);
       let theta = spread * (0.8 + rnd.next() * 0.45);
@@ -429,6 +432,13 @@ export function addPlants(): void {
   for (const [id, label, o] of TREES) {
     const s = seed++;
     add(`tree-${id}`, label, (b) => tree(b, O, { ...o, seed: s }));
+  }
+  // The same trees for the streets, where thousands stand: two steps of branching and fewer, larger leaf cards.
+  for (const [id, label, o] of TREES) {
+    if (!o.leaf) continue;
+    const s = 300 + TREES.findIndex((t) => t[0] === id);
+    const size = (o.card ?? Math.max(0.7, Math.min(1.3, o.h * 0.1))) * 2;
+    add(`street-${id}`, `${label}(街路用・軽量)`, (b) => tree(b, O, { ...o, seed: s, lean: true, levels: Math.min(2, o.levels ?? 3), cards: 2, card: size * 1.1 }));
   }
 
   const PALMS: [string, string, Omit<PalmOpts, 'seed'>][] = [

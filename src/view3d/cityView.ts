@@ -17,6 +17,7 @@ interface Instance {
   yaw: number;
   slopeX?: number;
   slopeZ?: number;
+  scale?: number;
 }
 
 /**
@@ -69,6 +70,7 @@ export class CityView {
     const out = new THREE.Group();
     const geos = new Map<string, { geo: THREE.BufferGeometry; mat: THREE.Material; layer: number }[]>();
     const m = new THREE.Matrix4();
+    const size = new THREE.Vector3();
     for (const [k, list] of groups) {
       const id = k.slice(0, k.indexOf('|'));
       let parts = geos.get(id);
@@ -89,6 +91,7 @@ export class CityView {
         const mesh = new THREE.InstancedMesh(p.geo, p.mat, list.length);
         list.forEach((it, i) => {
           m.makeRotationY(-it.yaw);
+          if (it.scale) m.scale(size.setScalar(it.scale));
           // Things that follow a grade are sheared, so that posts stay upright.
           m.elements[1] = it.slopeX ?? 0;
           m.elements[9] = it.slopeZ ?? 0;

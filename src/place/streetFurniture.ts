@@ -3,7 +3,7 @@ import { MODELS } from '../assets/mesh/registry';
 import { MeshBuilder, ModelData, V3 } from '../assets/mesh/builder';
 import { CABLE, POLE_TAPS, Taps } from '../assets/mesh/furniture';
 import { catenary, pipe } from '../assets/mesh/kit';
-import { Layout, Side, bayReach, layout, reversed } from '../assets/mesh/section';
+import { Layout, Side, bayReach, layout, reversed, sideWidth } from '../assets/mesh/section';
 import { Vec2 } from '../core/vec2';
 import { City } from '../gen/city';
 import { DistrictType } from '../gen/districts';
@@ -14,7 +14,8 @@ import { BusBay, Junction, JunctionArm, RoadModel } from './roadModel';
 
 export type FurnitureKind =
   | 'signal' | 'ped' | 'cabinet' | 'stop' | 'street' | 'speed' | 'light' | 'oneway' | 'warning' | 'guide'
-  | 'pole' | 'hydrant' | 'bin' | 'bench' | 'busstop' | 'shelter' | 'mail' | 'news' | 'meter' | 'rack' | 'box';
+  | 'pole' | 'hydrant' | 'bin' | 'bench' | 'busstop' | 'shelter' | 'mail' | 'news' | 'meter' | 'rack' | 'box'
+  | 'tree' | 'pit' | 'plant';
 
 /** One catalogue model standing in the city. */
 export interface Placed {
@@ -26,6 +27,10 @@ export interface Placed {
   h: number;
   /** The model's +x axis points along (cos yaw, sin yaw) on the map, its +z axis along (-sin yaw, cos yaw). */
   yaw: number;
+  /** Size against the catalogue model's, for the trees. */
+  scale?: number;
+  /** Rise per metre along the model's +x axis, for flat things let into a sloping pavement. */
+  slopeX?: number;
   /** Junction (index into the road model's junctions) it belongs to, if any, and the edge it stands beside. */
   junction?: number;
   edge?: number;
@@ -83,6 +88,36 @@ const SPEED: Record<string, string> = { arterial: 'sign/speed-40', collector: 's
 const BUS = 13.5;
 
 /** Deterministic value in [0, 1) from a few integers. */
+/** Street trees by district: for the main roads, and for the collectors and local streets (docs/placement-plan.md §19.1). */
+const STREET_TREES: Record<string, [string[], string[]]> = {
+  downtown: [['plant/street-plane', 'plant/street-ficus'], ['plant/street-pear', 'plant/street-ficus-small']],
+  midtown: [['plant/street-ficus', 'plant/palm-queen'], ['plant/street-jacaranda', 'plant/street-elm']],
+  oldtown: [['plant/street-plane-large', 'plant/street-elm'], ['plant/street-magnolia']],
+  residential: [['plant/palm-fan', 'plant/street-ficus'], ['plant/street-jacaranda', 'plant/street-maple', 'plant/street-magnolia', 'plant/street-cherry']],
+  suburb: [['plant/street-oak', 'plant/street-eucalyptus'], ['plant/street-maple', 'plant/street-pear', 'plant/street-birch']],
+  hills: [[], ['plant/street-oak', 'plant/street-eucalyptus', 'plant/street-olive']],
+  beach: [['plant/palm-coconut', 'plant/palm-fan', 'plant/palm-date'], ['plant/palm-queen', 'plant/street-tabebuia']],
+  industrial: [[], []],
+};
+/** Trees that stay under the wires. */
+const LOW_TREES = ['plant/street-olive', 'plant/street-cherry', 'plant/street-magnolia', 'plant/street-ficus-small'];
+const PALM = /palm-/;
+/** Trees that are small as they are. */
+const SMALL = /sapling|planter|olive|cherry|magnolia|ficus-small/;
+/** Side of the square a tree in the paving has to itself. */
+const TREE_PIT = 1.2;
+/** Height of a raised median above the road. */
+const MEDIAN_H = 0.15;
+/** How far a tree keeps from what stands on the pavement, and how far ahead of it a signal or a sign must stay in view. */
+const TREE_CLEAR: Partial<Record<FurnitureKind, number>> = { light: 5, signal: 6, ped: 3, pole: 3, hydrant: 2, busstop: 6, shelter: 6, tree: 5, pit: 5, meter: 1, plant: 2 };
+const TREE_AHEAD: Partial<Record<FurnitureKind, number>> = { signal: 15, stop: 8, speed: 8, warning: 8, oneway: 8, guide: 8, street: 8 };
+const MEDIAN_PLANTS = ['', '', 'plant/grass-fountain-row', 'plant/flower-lavender-row', 'plant/grass-fountain-row', 'plant/hedge-low'];
+const PLANTERS: Record<string, string[]> = {
+  downtown: ['furniture/planter-box-flowers', 'furniture/planter-tall-black', 'furniture/planter-box', 'furniture/planter-bowl-flowers'],
+  midtown: ['furniture/planter-bowl-flowers', 'furniture/planter-box-exposed', 'furniture/planter-trough-flowers', 'furniture/planter-wood'],
+  beach: ['furniture/planter-wood-weathered', 'furniture/planter-barrel', 'furniture/planter-pot-large', 'furniture/planter-bowl'],
+};
+
 function hash(...v: number[]): number {
   let h = 2166136261;
   for (const x of v) {
@@ -121,6 +156,7 @@ export function placeStreetFurniture(city: City, roads: RoadModel): StreetFurnit
   const stats: Record<FurnitureKind, number> = {
     signal: 0, ped: 0, cabinet: 0, stop: 0, street: 0, speed: 0, light: 0, oneway: 0, warning: 0, guide: 0,
     pole: 0, hydrant: 0, bin: 0, bench: 0, busstop: 0, shelter: 0, mail: 0, news: 0, meter: 0, rack: 0, box: 0,
+    tree: 0, pit: 0, plant: 0,
   };
   const seed = city.config.seed;
 
@@ -221,16 +257,23 @@ export function placeStreetFurniture(city: City, roads: RoadModel): StreetFurnit
     return false;
   };
 
+  /** Whether something may stand at a point at all: not in a lane, on the railway, in a bus bay or in the water. */
+  const ground = (it: Placed, own?: number): boolean => {
+    if (inLane(it.x, it.y, it.h, own) || onTrack(it.x, it.y, it.h) || inBay(it.x, it.y)) return false;
+    return !isWater(city.terrain, it.x, it.y) || (it.edge !== undefined && graph.edges[it.edge].bridge);
+  };
   const put = (it: Placed, clear = 1.2, own?: number): boolean => {
-    if (!free(it.x, it.y, clear) || inLane(it.x, it.y, it.h, own) || onTrack(it.x, it.y, it.h) || inBay(it.x, it.y)) return false;
-    if (isWater(city.terrain, it.x, it.y) && !(it.edge !== undefined && graph.edges[it.edge].bridge)) return false;
+    if (!free(it.x, it.y, clear) || !ground(it, own)) return false;
+    add(it);
+    return true;
+  };
+  const add = (it: Placed): void => {
     items.push(it);
     stats[it.kind]++;
     const k = key(it.x, it.y);
     const cell = grid.get(k);
     if (cell) cell.push(it);
     else grid.set(k, [it]);
-    return true;
   };
 
   /** Layout of an arm's road, looking away from the junction. */
@@ -716,6 +759,7 @@ export function placeStreetFurniture(city: City, roads: RoadModel): StreetFurnit
     return { x: q.x, y: q.y, t: bay.side > 0 ? q.t : rev(q.t) };
   });
   const mails: Vec2[] = [];
+  const busZones = new Map<number, { side: number; from: number; to: number }[]>();
 
   graph.edges.forEach((e) => {
     const cls: RoadClass = e.cls;
@@ -747,6 +791,7 @@ export function placeStreetFurniture(city: City, roads: RoadModel): StreetFurnit
 
     /** Lengths of kerb kept for the buses. */
     const zones: { side: number; from: number; to: number }[] = [];
+    busZones.set(e.id, zones);
 
     // Utility poles down one side, with the wires from pole to pole.
     if (overhead(type, e.points[0])) {
@@ -941,6 +986,170 @@ export function placeStreetFurniture(city: City, roads: RoadModel): StreetFurnit
       le.linked = true;
     }
   }
+
+  // Street trees and planting come last, into the room that everything else has left.
+  const spanCells = new Map<number, StreetFurniture['spans']>();
+  for (const sp of spans) {
+    const n = Math.max(1, Math.ceil(Math.hypot(sp.b.x - sp.a.x, sp.b.y - sp.a.y) / 10));
+    const seen = new Set<number>();
+    for (let k = 0; k <= n; k++) {
+      const kk = laneKey(sp.a.x + ((sp.b.x - sp.a.x) * k) / n, sp.a.y + ((sp.b.y - sp.a.y) * k) / n);
+      if (seen.has(kk)) continue;
+      seen.add(kk);
+      spanCells.set(kk, [...(spanCells.get(kk) ?? []), sp]);
+    }
+  }
+  /** Whether wires hang within `r` of a point. */
+  const underWires = (x: number, y: number, r: number): boolean => {
+    for (let dx = -1; dx <= 1; dx++)
+      for (let dy = -1; dy <= 1; dy++)
+        for (const sp of spanCells.get(laneKey(x + dx * LANE, y + dy * LANE)) ?? []) {
+          const [vx, vy] = [sp.b.x - sp.a.x, sp.b.y - sp.a.y];
+          const u = Math.min(1, Math.max(0, ((x - sp.a.x) * vx + (y - sp.a.y) * vy) / (vx * vx + vy * vy || 1)));
+          if (Math.hypot(sp.a.x + vx * u - x, sp.a.y + vy * u - y) < r) return true;
+        }
+    return false;
+  };
+  /** Whether a tree has its room at a point: clear of what stands there, and not in front of a signal or a sign for those who drive along `t`. */
+  const roomFor = (x: number, y: number, t: Vec2, r = 1): boolean => {
+    const reach = 4;
+    for (let dx = -reach; dx <= reach; dx++)
+      for (let dy = -reach; dy <= reach; dy++)
+        for (const o of grid.get(key(x + dx * CELL, y + dy * CELL)) ?? []) {
+          const [ox, oy] = [o.x - x, o.y - y];
+          if (Math.hypot(ox, oy) < (TREE_CLEAR[o.kind] ?? 1.6) * r) return false;
+          const ahead = TREE_AHEAD[o.kind];
+          if (!ahead) continue;
+          const u = ox * t.x + oy * t.y;
+          if (u > 0 && u < ahead && Math.abs(oy * t.x - ox * t.y) < 3.5) return false;
+        }
+    return true;
+  };
+  graph.edges.forEach((e) => {
+    const cls: RoadClass = e.cls;
+    if ((cls !== 'arterial' && cls !== 'collector' && cls !== 'local') || e.bridge) return;
+    const tr = track(e.id);
+    if (!tr || tr.len < 36) return;
+    const { len, lay, at } = tr;
+    const type = profiles[e.id].type as string;
+    const sec = roads.sections[e.id];
+    const set = STREET_TREES[type]?.[cls === 'arterial' ? 0 : 1] ?? [];
+    if (!set.length) return;
+    // A street keeps to one kind of tree, or two in turn, and to one spacing.
+    const mid = e.points[Math.floor(e.points.length / 2)];
+    const here = [Math.floor(mid.x / 320), Math.floor(mid.y / 320), cls === 'arterial' ? 0 : cls === 'collector' ? 1 : 2];
+    const first = pick(set, ...here, 80);
+    const second = hash(seed, ...here, 81) < 0.3 ? pick(set, ...here, 82) : first;
+    const corner = cls === 'arterial' ? 15 : cls === 'collector' ? 12 : 10;
+    const walkway = type === 'downtown' ? 2.4 : 1.5;
+    const zones = busZones.get(e.id) ?? [];
+    const grade = (d: number): number => (at(Math.min(len, d + 1), 0).h - at(Math.max(0, d - 1), 0).h) / (Math.min(len, d + 1) - Math.max(0, d - 1));
+    /** Whether a length of kerb is the buses'. */
+    const kept = (d: number, side: number): boolean =>
+      zones.some((z) => z.side === side && d > z.from - 3 && d < z.to + 3) || roads.bays.some((bay) => bay.edge === e.id && bay.side === side && d > bay.from - 2 && d < bay.to + 2);
+    /** Plants one tree, moved a little along the street if its place is taken. */
+    const plant = (d0: number, x: number, side: number, model: string, v: number[], lift = 0, pit?: string): boolean => {
+      for (const shift of [0, 2, -2, 3.5, -3.5]) {
+        const d = d0 + shift;
+        if (d < corner || d > len - corner || kept(d, side)) continue;
+        const q = at(d, x);
+        const it: Placed = { model, kind: 'tree', x: q.x, y: q.y, h: q.h + lift, yaw: hash(seed, e.id, ...v, 83) * 6.283, edge: e.id };
+        if (!ground(it, x > lay.road[0] && x < lay.road[1] ? e.id : undefined) || !roomFor(q.x, q.y, side > 0 ? q.t : rev(q.t))) continue;
+        if ([[0, 0], [4, 0], [-4, 0], [0, 4], [0, -4]].some(([ax, ay]) => underDeck(q.x + ax, q.y + ay))) continue;
+        // Under the wires only what stays small.
+        if (underWires(q.x, q.y, 3)) {
+          if (PALM.test(model)) continue;
+          if (!SMALL.test(model)) it.model = pick(LOW_TREES, ...here, 84);
+          it.scale = 0.85 + 0.15 * hash(seed, e.id, ...v, 85);
+        } else if (!model.includes('planter')) it.scale = 0.85 + 0.3 * hash(seed, e.id, ...v, 85);
+        if (pit) add({ model: pit, kind: 'pit', x: q.x, y: q.y, h: q.h, yaw: along(q.t), slopeX: grade(d), edge: e.id });
+        add(it);
+        return true;
+      }
+      return false;
+    };
+    /** The tree of a place in the row: now and then a sapling that replaced one, or a dead one. */
+    const kind = (k: number, side: number, young: string): string => {
+      const r = hash(seed, e.id, k, side, 86);
+      return r < 0.065 ? young : r < 0.08 ? pick(['plant/tree-dead', 'plant/tree-bare'], e.id, k, 87) : k % 2 ? second : first;
+    };
+
+    for (const side of [1, -1]) {
+      const fl = side > 0 ? sec.right : sec.left;
+      const edge = side > 0 ? lay.road[1] : -lay.road[0];
+      if (!fl.curb) {
+        // No kerb: trees as they grew, off the edge of the road.
+        if (type !== 'hills') continue;
+        for (let d = corner + 30 * hash(seed, e.id, side, 88), k = 0; d < len - corner; d += 16 + 34 * hash(seed, e.id, side, k, 89), k++) {
+          plant(d, side * (edge + sideWidth(fl) + 1.2 + 2.5 * hash(seed, e.id, side, k, 90)), side, pick(set, e.id, side, k, 91), [k, side]);
+        }
+        continue;
+      }
+      const v = fl.verge && !fl.verge.tex.includes('gravel') ? fl.verge.w : 0;
+      const paved = fl.walk?.w ?? 0;
+      // In the verge where there is one; else in a pit in the paving, where that leaves room to walk past.
+      const grass = v >= 1;
+      if (!grass && paved < TREE_PIT + 0.25 + walkway) continue;
+      if (grass && !fl.walk && cls !== 'local') continue;
+      const x = side * (edge + 0.15 + (grass ? v / 2 : (fl.verge?.w ?? 0) + 0.25 + TREE_PIT / 2));
+      const step0 = cls === 'arterial' ? 9 + 3 * hash(seed, ...here, 92) : cls === 'collector' ? 11 + 3 * hash(seed, ...here, 92) : 17 + 6 * hash(seed, ...here, 92);
+      const count = Math.floor((len - 2 * corner) / step0);
+      if (count < 1) continue;
+      const step = (len - 2 * corner) / count;
+      const smart = type === 'downtown' || type === 'midtown';
+      const grate = type === 'downtown' ? 'furniture/planter-grate-square' : 'furniture/planter-grate-round';
+      for (let k = 0; k < count; k++) {
+        // One to a lot on the quiet streets, so not quite in step.
+        const d = corner + step * (k + 0.5) + (cls === 'local' ? (hash(seed, e.id, k, side, 93) - 0.5) * 5 : 0);
+        if (hash(seed, e.id, k, side, 94) < 0.1) {
+          // A tree that went and was not replaced leaves its pit.
+          if (!grass && !kept(d, side)) {
+            const q = at(d, x);
+            if (roomFor(q.x, q.y, q.t) && ground({ model: '', kind: 'pit', x: q.x, y: q.y, h: q.h, yaw: 0 })) add({ model: 'furniture/planter-pit', kind: 'pit', x: q.x, y: q.y, h: q.h, yaw: along(q.t), slopeX: grade(d), edge: e.id });
+          }
+          continue;
+        }
+        if (grass) plant(d, x, side, kind(k, side, 'plant/street-sapling'), [k, side]);
+        else {
+          const model = kind(k, side, smart ? 'furniture/planter-grate-tree' : 'furniture/planter-pit-tree');
+          const own = model.includes('planter');
+          plant(d, x, side, model, [k, side], 0, own ? undefined : smart ? (hash(seed, e.id, k, side, 95) < 0.15 ? 'furniture/planter-grate-guard' : grate) : 'furniture/planter-pit');
+        }
+      }
+    }
+
+    // A planted median carries a row of its own, with low planting between the trees.
+    for (const ln of lay.lanes) {
+      if (ln.lane.kind !== 'median' || ln.lane.median !== 'planted' || ln.x1 - ln.x0 < 2 || len < 80) continue;
+      const x = (ln.x0 + ln.x1) / 2;
+      const count = Math.floor((len - 50) / (13 + 3 * hash(seed, ...here, 96)));
+      const step = (len - 50) / Math.max(1, count);
+      const filler = pick(MEDIAN_PLANTS, ...here, 97);
+      for (let k = 0; k < count; k++) {
+        const d = 25 + step * (k + 0.5);
+        if (hash(seed, e.id, k, 98) >= 0.1) plant(d, x, 0, kind(k, 0, 'plant/street-sapling'), [k, 0], MEDIAN_H);
+        if (!filler || k === count - 1) continue;
+        const q = at(d + step / 2, x);
+        const it: Placed = { model: filler, kind: 'plant', x: q.x, y: q.y, h: q.h + MEDIAN_H, yaw: along(q.t), edge: e.id };
+        if (ground(it, e.id) && free(q.x, q.y, 2)) add(it);
+      }
+    }
+
+    // Planters at the kerb of the busy streets, between the trees.
+    if ((type === 'downtown' || type === 'midtown' || type === 'beach') && cls !== 'local') {
+      const models = PLANTERS[type];
+      for (const side of [1, -1]) {
+        const fl = side > 0 ? sec.right : sec.left;
+        if (!fl.curb || fl.verge || (fl.walk?.w ?? 0) < 0.45 + 1.1 + walkway) continue;
+        for (let d = corner + 6 + 40 * hash(seed, e.id, side, 99), k = 0; d < len - corner; d += 30 + 40 * hash(seed, e.id, side, k, 100), k++) {
+          if (kept(d, side)) continue;
+          const q = at(d, side * ((side > 0 ? lay.road[1] : -lay.road[0]) + 0.15 + 0.45 + 0.55));
+          const it: Placed = { model: pick(models, e.id, side, k, 101), kind: 'plant', x: q.x, y: q.y, h: q.h, yaw: along(q.t), edge: e.id };
+          if (ground(it) && roomFor(q.x, q.y, q.t, 0.6) && free(q.x, q.y, 2.2)) add(it);
+        }
+      }
+    }
+  });
 
   return { items, tiles: [...wires.values()].map((b) => b.build()), spans, stats };
 }
