@@ -1,7 +1,7 @@
 import { Frame, MeshBuilder, ModelData, Path, V3, frameAt, offset, pathLength, slicePath } from '../assets/mesh/builder';
 import { Arm, Control, armReach, junction } from '../assets/mesh/junction';
 import { plainTex } from '../assets/mesh/presets';
-import { Section, layout, reversed, sweepSection } from '../assets/mesh/section';
+import { Bay, Section, layout, reversed, sweepSection } from '../assets/mesh/section';
 import { pointSeg, resample } from '../core/geom';
 import { Vec2, clamp, mix, smoothstep } from '../core/vec2';
 import { City } from '../gen/city';
@@ -65,10 +65,44 @@ export interface RoadModel {
   cross: (number[] | null)[];
   /** Cross-section of each edge as built, in the edge's direction. */
   sections: Section[];
+  /** Bus bays cut into the kerb of the main roads. */
+  bays: BusBay[];
   /** Where a freeway is cut off outside the map. */
   cuts: { x: number; y: number; h: number; edge: number }[];
   /** stats.folds: roads whose edges fold back over themselves somewhere along a curve too tight for their width. */
   stats: { junctions: number; signals: number; swallowed: number; folds: number; piers: number; triangles: number };
+}
+
+/** A bus bay; distances are along the edge's line in `lines`, measured on the map. */
+export interface BusBay {
+  edge: number;
+  /** 1: on the right of the edge's direction, for traffic that runs along it; -1: on the left, for traffic against it. */
+  side: 1 | -1;
+  from: number;
+  to: number;
+  /** Where the front of the bus stands. */
+  head: number;
+  /** How far the kerb steps back, and how far the pavement widens away from the road to make up for it. */
+  depth: number;
+  bulge: number;
+  /** Lengths of the tapers after `from` and before `to`. */
+  taper: [number, number];
+}
+/** Bus bay: tapers in and out, the straight kerb between them, and how far the kerb steps back. */
+const BAY = { enter: 14, stand: 15, leave: 9, depth: 3, front: 1.5 };
+/** Districts whose buildings stand back from the street, so that the pavement can widen behind a bay. */
+const BAY_TYPES = new Set(['residential', 'suburb', 'industrial', 'hills', 'beach']);
+/** Deterministic value in [0, 1) from a few integers. */
+function hash(...v: number[]): number {
+  let h = 2166136261;
+  for (const x of v) {
+    h ^= Math.round(x) + 0x9e3779b9 + (h << 6) + (h >>> 2);
+    h = Math.imul(h, 16777619);
+  }
+  h ^= h >>> 15;
+  h = Math.imul(h, 2246822519);
+  h ^= h >>> 13;
+  return (h >>> 0) / 4294967296;
 }
 
 interface Seg {
@@ -504,6 +538,9 @@ export function buildRoadModel(city: City): RoadModel {
   const lines: (V3[] | null)[] = graph.edges.map(() => null);
   const crossOf: (number[] | null)[] = graph.edges.map(() => null);
   const cuts: RoadModel['cuts'] = [];
+  const bays: BusBay[] = [];
+  /** Head and direction of travel of each bay, to keep the stops of a street apart. */
+  const bayStops: { x: number; y: number; t: Vec2 }[] = [];
 
   // --- Roads between the junctions. Ramps and branches first, so that the freeway knows its openings. ---
   const order = graph.edges.map((e) => e.id).sort((a, b) => Number(graph.edges[a].cls === 'highway') - Number(graph.edges[b].cls === 'highway') || a - b);
@@ -753,7 +790,58 @@ export function buildRoadModel(city: City): RoadModel {
     const nearCrossing = (f: Frame, r: number): boolean => crossings.some((c) => Math.hypot(c.x - f.p[0], c.y - f.p[2]) < r);
 
     if (e.cls !== 'highway' && e.cls !== 'ramp') {
-      sweepSection(b3, path, sec, { body: e.bridge ? 'deck' : 'sides', deckDepth: 1.2, caps: false });
+      // Bus bays on the main roads of the districts whose buildings stand back: just past the junction, in each direction.
+      const cut: Bay[] = [];
+      const prof = city.profiles[id];
+      if (e.cls === 'arterial' && !e.bridge && BAY_TYPES.has(prof.type)) {
+        // Distance on the map of each point of the line, beside the distance along the path.
+        const flat = [0];
+        for (let k = 1; k < line.length; k++) flat.push(flat[k - 1] + Math.hypot(line[k][0] - line[k - 1][0], line[k][2] - line[k - 1][2]));
+        const len = flat[flat.length - 1];
+        const onPath = (d: number): number => {
+          let k = 1;
+          while (k < flat.length - 1 && flat[k] < d) k++;
+          return mix(path[k - 1].s, path[k].s, clamp((d - flat[k - 1]) / (flat[k] - flat[k - 1] || 1), 0, 1));
+        };
+        const total = BAY.enter + BAY.stand + BAY.leave;
+        for (const dir of [1, -1] as const) {
+          if (dir < 0 && prof.oneWay) continue;
+          const side = dir > 0 ? sec.right : sec.left;
+          const lane = dir > 0 ? sec.lanes[sec.lanes.length - 1] : sec.lanes[0];
+          // Where there is a parking or bus lane the bus stops in that; a bay takes its room from the pavement and the verge.
+          if (lane.kind !== 'drive' || !side.curb || !side.walk || side.ground || (side.edge && side.edge !== 'none')) continue;
+          const room = (side.verge?.w ?? 0) + side.walk.w;
+          if (room < 2 || len < 6 + total + 26 || hash(city.config.seed, id, dir, 50) > len / 120) continue;
+          for (let a = 6; a <= 30 && a + total + 26 <= len; a += 6) {
+            const [from, to] = dir > 0 ? [a, a + total] : [len - a - total, len - a];
+            const head = dir > 0 ? to - BAY.leave - BAY.front : from + BAY.leave + BAY.front;
+            const fs = [0, 0.25, 0.5, 0.75, 1].map((q) => frameAt(path, onPath(mix(from, to, q))));
+            // Straight and fairly level, clear of the freeway's piers and of the railway.
+            if (fs.some((f) => f.t[0] * fs[0].t[0] + f.t[2] * fs[0].t[2] < 0.985 * Math.hypot(f.t[0], f.t[2]) * Math.hypot(fs[0].t[0], fs[0].t[2]) || Math.abs(f.t[1]) > 0.06)) continue;
+            if (fs.some((f) => graph.crossings.some((c) => Math.hypot(c.x - f.p[0], c.y - f.p[2]) < 40) || railPts.some((r) => Math.hypot(r.x - f.p[0], r.y - f.p[2]) < 25))) continue;
+            const hf = frameAt(path, onPath(head));
+            const t = norm2(hf.t[0] * dir, hf.t[2] * dir);
+            const spot = { x: hf.p[0], y: hf.p[2], t };
+            // Stops for the same direction along the same street are a few minutes' walk apart.
+            if (bayStops.some((o) => {
+              const [dx, dy] = [spot.x - o.x, spot.y - o.y];
+              const l = Math.hypot(dx, dy);
+              return l < 30 || (l < 280 && o.t.x * t.x + o.t.y * t.y > 0.3 && Math.abs(dx * o.t.y - dy * o.t.x) < 60);
+            })) break;
+            // The pavement keeps the depth that the stop's shelter, bench or sign needs: it widens away from the road.
+            const need = room >= 3.75 ? 3.8 : room >= 2.55 ? 2.6 : 2.05;
+            const bulge = clamp(need - (room - BAY.depth), 0, 3);
+            const taper: [number, number] = dir > 0 ? [BAY.enter, BAY.leave] : [BAY.leave, BAY.enter];
+            bays.push({ edge: id, side: dir, from, to, head, depth: BAY.depth, bulge, taper });
+            bayStops.push(spot);
+            const [s0, s1] = [onPath(from), onPath(to)];
+            const stretch = (s1 - s0) / (to - from);
+            cut.push({ side: dir, from: s0, to: s1, depth: BAY.depth, bulge, taper: [taper[0] * stretch, taper[1] * stretch], curb: prof.age === 'fresh' ? 'curb/red' : 'curb/red-worn' });
+            break;
+          }
+        }
+      }
+      sweepSection(b3, path, sec, { body: e.bridge ? 'deck' : 'sides', deckDepth: 1.2, caps: false, bays: cut });
       if (e.bridge) {
         const count = Math.floor(L / 26);
         for (let k = 1; k <= count; k++) {
@@ -936,7 +1024,7 @@ export function buildRoadModel(city: City): RoadModel {
   for (const fn of standing) fn();
   const tiles = [...builders.values()].map((b) => b.build());
   stats.triangles = tiles.reduce((s, m) => s + m.triangles, 0);
-  return { tiles, ground, levels, junctions: clusters.map(({ nodes, x, y, plane, arms, signal }) => ({ nodes, x, y, plane, arms, signal })), lines, rail, cross: crossOf, sections: secs, cuts, stats };
+  return { tiles, ground, levels, junctions: clusters.map(({ nodes, x, y, plane, arms, signal }) => ({ nodes, x, y, plane, arms, signal })), lines, rail, cross: crossOf, sections: secs, bays, cuts, stats };
 }
 
 /** Terrain with the ground under and beside every at-grade road brought to the road's level. */

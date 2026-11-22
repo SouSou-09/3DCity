@@ -1,14 +1,21 @@
-import { V3 } from '../assets/mesh/builder';
-import { Layout, layout, reversed } from '../assets/mesh/section';
+// The registry comes first: the kit modules below register their models with it as they load.
+import { MODELS } from '../assets/mesh/registry';
+import { MeshBuilder, ModelData, V3 } from '../assets/mesh/builder';
+import { CABLE, POLE_TAPS, Taps } from '../assets/mesh/furniture';
+import { catenary, pipe } from '../assets/mesh/kit';
+import { Layout, Side, bayReach, layout, reversed, sideWidth } from '../assets/mesh/section';
 import { Vec2 } from '../core/vec2';
 import { City } from '../gen/city';
 import { DistrictType } from '../gen/districts';
 import { RailIndex } from '../gen/rail';
 import { isWater } from '../gen/terrain';
 import { RoadClass } from '../gen/streamlines';
-import { Junction, JunctionArm, RoadModel } from './roadModel';
+import { BusBay, Junction, JunctionArm, RoadModel } from './roadModel';
 
-export type FurnitureKind = 'signal' | 'ped' | 'cabinet' | 'stop' | 'street' | 'speed' | 'light' | 'oneway' | 'warning' | 'guide';
+export type FurnitureKind =
+  | 'signal' | 'ped' | 'cabinet' | 'stop' | 'street' | 'speed' | 'light' | 'oneway' | 'warning' | 'guide'
+  | 'pole' | 'hydrant' | 'bin' | 'bench' | 'busstop' | 'shelter' | 'mail' | 'news' | 'meter' | 'rack' | 'box'
+  | 'tree' | 'pit' | 'plant';
 
 /** One catalogue model standing in the city. */
 export interface Placed {
@@ -20,6 +27,10 @@ export interface Placed {
   h: number;
   /** The model's +x axis points along (cos yaw, sin yaw) on the map, its +z axis along (-sin yaw, cos yaw). */
   yaw: number;
+  /** Size against the catalogue model's, for the trees. */
+  scale?: number;
+  /** Rise per metre along the model's +x axis, for flat things let into a sloping pavement. */
+  slopeX?: number;
   /** Junction (index into the road model's junctions) it belongs to, if any, and the edge it stands beside. */
   junction?: number;
   edge?: number;
@@ -29,6 +40,10 @@ export interface Placed {
 
 export interface StreetFurniture {
   items: Placed[];
+  /** The wires between the utility poles and the paving of the bus stops, in tiles. */
+  tiles: ModelData[];
+  /** Spans of wire from pole to pole: `low` is the least height of a wire above the line between the feet of the poles, `crossing` whether it passes over a carriageway. */
+  spans: { a: Vec2; b: Vec2; low: number; crossing: boolean }[];
   stats: Record<FurnitureKind, number>;
 }
 
@@ -69,7 +84,42 @@ const isPostTop = (id: string): boolean => /light-(globe|acorn|lantern|disc)/.te
 
 const SPEED: Record<string, string> = { arterial: 'sign/speed-40', collector: 'sign/speed-30', local: 'sign/speed-25' };
 
+/** Length of kerb behind the head of a bus stop that a bus takes. */
+const BUS = 13.5;
+
 /** Deterministic value in [0, 1) from a few integers. */
+/** Street trees by district: for the main roads, and for the collectors and local streets (docs/placement-plan.md §19.1). */
+export const STREET_TREES: Record<string, [string[], string[]]> = {
+  downtown: [['plant/street-plane', 'plant/street-ficus'], ['plant/street-pear', 'plant/street-ficus-small']],
+  midtown: [['plant/street-ficus', 'plant/palm-queen'], ['plant/street-jacaranda', 'plant/street-elm']],
+  oldtown: [['plant/street-plane-large', 'plant/street-elm'], ['plant/street-magnolia']],
+  residential: [['plant/palm-fan', 'plant/street-ficus'], ['plant/street-jacaranda', 'plant/street-maple', 'plant/street-magnolia', 'plant/street-cherry']],
+  suburb: [['plant/street-oak', 'plant/street-eucalyptus'], ['plant/street-maple', 'plant/street-pear', 'plant/street-birch']],
+  hills: [[], ['plant/street-oak', 'plant/street-eucalyptus', 'plant/street-olive']],
+  beach: [['plant/palm-coconut', 'plant/palm-fan', 'plant/palm-date'], ['plant/palm-queen', 'plant/street-tabebuia']],
+  industrial: [[], []],
+};
+/** Trees that stay under the wires. */
+export const LOW_TREES = ['plant/street-olive', 'plant/street-cherry', 'plant/street-magnolia', 'plant/street-ficus-small'];
+const PALM = /palm-/;
+/** Trees that are small as they are. */
+const SMALL = /sapling|planter|olive|cherry|magnolia|ficus-small|tree-dead/;
+/** Side of the square a tree in the paving has to itself. */
+const TREE_PIT = 1.2;
+/** Height of a raised median above the road. */
+const MEDIAN_H = 0.15;
+/** How far the crown of a tree stays below the wires over it. */
+const WIRE_GAP = 0.35;
+/** How far a tree keeps from what stands on the pavement, and how far ahead of it a signal or a sign must stay in view. */
+const TREE_CLEAR: Partial<Record<FurnitureKind, number>> = { light: 5, signal: 6, ped: 3, pole: 3, hydrant: 2, busstop: 6, shelter: 6, tree: 5, pit: 5, meter: 1, plant: 2 };
+const TREE_AHEAD: Partial<Record<FurnitureKind, number>> = { signal: 15, stop: 8, speed: 8, warning: 8, oneway: 8, guide: 8, street: 8 };
+const MEDIAN_PLANTS = ['', '', 'plant/grass-fountain-row', 'plant/flower-lavender-row', 'plant/grass-fountain-row', 'plant/hedge-low'];
+const PLANTERS: Record<string, string[]> = {
+  downtown: ['furniture/planter-box-flowers', 'furniture/planter-tall-black', 'furniture/planter-box', 'furniture/planter-bowl-flowers'],
+  midtown: ['furniture/planter-bowl-flowers', 'furniture/planter-box-exposed', 'furniture/planter-trough-flowers', 'furniture/planter-wood'],
+  beach: ['furniture/planter-wood-weathered', 'furniture/planter-barrel', 'furniture/planter-pot-large', 'furniture/planter-bowl'],
+};
+
 function hash(...v: number[]): number {
   let h = 2166136261;
   for (const x of v) {
@@ -85,6 +135,16 @@ function hash(...v: number[]): number {
 const right = (t: Vec2): Vec2 => ({ x: -t.y, y: t.x });
 /** Yaw that turns a model's +x axis along `d`. */
 const along = (d: Vec2): number => Math.atan2(d.y, d.x);
+const footprints = new Map<string, [number, number]>();
+/** How far a model reaches in front of its origin and behind it. */
+function footprint(id: string): [number, number] {
+  let f = footprints.get(id);
+  if (!f) {
+    const { min, max } = MODELS.find((m) => m.id === id)!.build();
+    footprints.set(id, (f = [-min[2], max[2]]));
+  }
+  return f;
+}
 /** Yaw that turns a model's front (+z) towards `d`. */
 const facing = (d: Vec2): number => Math.atan2(-d.x, d.y);
 
@@ -95,7 +155,11 @@ const facing = (d: Vec2): number => Math.atan2(-d.x, d.y);
 export function placeStreetFurniture(city: City, roads: RoadModel): StreetFurniture {
   const { graph, profiles } = city;
   const items: Placed[] = [];
-  const stats: Record<FurnitureKind, number> = { signal: 0, ped: 0, cabinet: 0, stop: 0, street: 0, speed: 0, light: 0, oneway: 0, warning: 0, guide: 0 };
+  const stats: Record<FurnitureKind, number> = {
+    signal: 0, ped: 0, cabinet: 0, stop: 0, street: 0, speed: 0, light: 0, oneway: 0, warning: 0, guide: 0,
+    pole: 0, hydrant: 0, bin: 0, bench: 0, busstop: 0, shelter: 0, mail: 0, news: 0, meter: 0, rack: 0, box: 0,
+    tree: 0, pit: 0, plant: 0,
+  };
   const seed = city.config.seed;
 
   // Poles keep clear of each other.
@@ -173,16 +237,45 @@ export function placeStreetFurniture(city: City, roads: RoadModel): StreetFurnit
     return hit.d < tr.tracks * 2 + 2.8 && Math.abs(tr.level[hit.seg] - h) < 3;
   };
 
+  /** Whether a point lies in a bus bay: between the edge of the lanes and the kerb where it steps back. */
+  const inBay = (x: number, y: number): boolean => {
+    for (const bay of roads.bays) {
+      const line = roads.lines[bay.edge]!;
+      const edge = bay.side > 0 ? layout(roads.sections[bay.edge]).road[1] : -layout(roads.sections[bay.edge]).road[0];
+      let d = 0;
+      for (let i = 1; i < line.length && d < bay.to; i++) {
+        const [a, b] = [line[i - 1], line[i]];
+        const [vx, vy] = [b[0] - a[0], b[2] - a[2]];
+        const l = Math.hypot(vx, vy) || 1;
+        d += l;
+        if (d < bay.from) continue;
+        const u = ((x - a[0]) * vx + (y - a[2]) * vy) / (l * l);
+        if (u < 0 || u > 1) continue;
+        const out = (((x - a[0]) * -vy + (y - a[2]) * vx) / l) * bay.side - edge;
+        const deep = bay.depth * bayReach(bay, d - l + u * l);
+        if (deep > 0.05 && out > -0.3 && out < deep + 0.3) return true;
+      }
+    }
+    return false;
+  };
+
+  /** Whether something may stand at a point at all: not in a lane, on the railway, in a bus bay or in the water. */
+  const ground = (it: Placed, own?: number): boolean => {
+    if (inLane(it.x, it.y, it.h, own) || onTrack(it.x, it.y, it.h) || inBay(it.x, it.y)) return false;
+    return !isWater(city.terrain, it.x, it.y) || (it.edge !== undefined && graph.edges[it.edge].bridge);
+  };
   const put = (it: Placed, clear = 1.2, own?: number): boolean => {
-    if (!free(it.x, it.y, clear) || inLane(it.x, it.y, it.h, own) || onTrack(it.x, it.y, it.h)) return false;
-    if (isWater(city.terrain, it.x, it.y) && !(it.edge !== undefined && graph.edges[it.edge].bridge)) return false;
+    if (!free(it.x, it.y, clear) || !ground(it, own)) return false;
+    add(it);
+    return true;
+  };
+  const add = (it: Placed): void => {
     items.push(it);
     stats[it.kind]++;
     const k = key(it.x, it.y);
     const cell = grid.get(k);
     if (cell) cell.push(it);
     else grid.set(k, [it]);
-    return true;
   };
 
   /** Layout of an arm's road, looking away from the junction. */
@@ -199,14 +292,36 @@ export function placeStreetFurniture(city: City, roads: RoadModel): StreetFurnit
   const behind = (w: number): number => (w >= 1.2 ? 0.7 : w + 0.4);
 
   /** Walks a road as built: its length and the point `d` along it and `x` to its right, with the road's direction there. */
-  const track = (id: number): { len: number; lay: Layout; at: (d: number, x: number) => { x: number; y: number; h: number; t: Vec2 } } | null => {
+  const track = (id: number): {
+    len: number;
+    lay: Layout;
+    at: (d: number, x: number) => { x: number; y: number; h: number; t: Vec2 };
+    /** How far the kerb of a side stands back at `d` for a bus bay, and how far the back of the pavement moves out there. */
+    indent: (d: number, side: number) => number;
+    widen: (d: number, side: number) => number;
+    /** `d`, moved out of the length of kerb where a bus stands on the side of `x`, with `m` to spare. */
+    dodge: (d: number, x: number, m?: number) => number;
+  } | null => {
     const line = roads.lines[id];
     const cross = roads.cross[id];
     if (!line || !cross || line.length < 2) return null;
     const lay = layout(roads.sections[id]);
     const s = [0];
     for (let k = 1; k < line.length; k++) s.push(s[k - 1] + Math.hypot(line[k][0] - line[k - 1][0], line[k][2] - line[k - 1][2]));
-    const at = (d: number, x: number): { x: number; y: number; h: number; t: Vec2 } => {
+    const cut = roads.bays.filter((bay) => bay.edge === id);
+    const indent = (d: number, side: number): number => cut.reduce((sum, bay) => (bay.side === side ? sum + bay.depth * bayReach(bay, d) : sum), 0);
+    const widen = (d: number, side: number): number => cut.reduce((sum, bay) => (bay.side === side ? sum + bay.bulge * bayReach(bay, d) : sum), 0);
+    const dodge = (d: number, x: number, m = 1): number => {
+      for (const bay of cut) {
+        if (bay.side !== (x > 0 ? 1 : -1)) continue;
+        const [lo, hi] = bay.side > 0 ? [bay.head - BUS, bay.head + 1.5] : [bay.head - 1.5, bay.head + BUS];
+        if (d > lo - m && d < hi + m) return d - lo < hi - d ? lo - m : hi + m;
+      }
+      return d;
+    };
+    const at = (d: number, x0: number): { x: number; y: number; h: number; t: Vec2 } => {
+      // Whatever stands behind the kerb stands behind the kerb of a bus bay.
+      const x = cut.length && x0 > lay.road[1] ? x0 + indent(d, 1) : cut.length && x0 < lay.road[0] ? x0 - indent(d, -1) : x0;
       let k = 1;
       while (k < line.length - 1 && s[k] < d) k++;
       const [a, b]: [V3, V3] = [line[k - 1], line[k]];
@@ -218,7 +333,7 @@ export function placeStreetFurniture(city: City, roads: RoadModel): StreetFurnit
       const c = cross[k - 1] + (cross[k] - cross[k - 1]) * q;
       return { x: a[0] + (b[0] - a[0]) * q + r.x * x, y: a[2] + (b[2] - a[2]) * q + r.y * x, h: a[1] + (b[1] - a[1]) * q + c * x + raised, t };
     };
-    return { len: s[s.length - 1], lay, at };
+    return { len: s[s.length - 1], lay, at, indent, widen, dodge };
   };
   const rev = (t: Vec2): Vec2 => ({ x: -t.x, y: -t.y });
   const isStreet = (id: number): boolean => {
@@ -437,7 +552,7 @@ export function placeStreetFurniture(city: City, roads: RoadModel): StreetFurnit
     if (cls === 'alley' || cls === 'path') return;
     const tr = track(e.id);
     if (!tr) return;
-    const { len, lay, at } = tr;
+    const { len, lay, at, dodge } = tr;
     const p = profiles[e.id];
     const offR = lay.road[1] + behind(lay.outer[1] - lay.road[1]);
     const offL = lay.road[0] - behind(lay.road[0] - lay.outer[0]);
@@ -492,10 +607,9 @@ export function placeStreetFurniture(city: City, roads: RoadModel): StreetFurnit
       const step = (len - 12) / count;
       const first = hash(seed, e.id, 2) < 0.5 ? 1 : -1;
       for (let k = 0; k < count; k++) {
-        const d = 6 + step * (k + 0.5);
         // Staggered from side to side; a local street keeps to one side.
         const side = both ? (k % 2 ? first : -first) : first;
-        const q = at(d, side > 0 ? offR : offL);
+        const q = at(dodge(6 + step * (k + 0.5), side, 1.5), side > 0 ? offR : offL);
         const r = right(q.t);
         let model = base;
         if (hash(seed, e.id, k, 4) < 0.05) model = TIRED.find(([m]) => base.includes(m))?.[1] ?? base;
@@ -518,7 +632,7 @@ export function placeStreetFurniture(city: City, roads: RoadModel): StreetFurnit
         if (end === 0 && p.oneWay) continue;
         const node = end === 0 ? e.a : e.b;
         if (!signalAt.has(node)) continue;
-        const q = end === 1 ? at(len - 95, offR) : at(95, offL);
+        const q = end === 1 ? at(dodge(len - 95, 1, 4), offR) : at(dodge(95, -1, 4), offL);
         put({ model: hash(seed, e.id, end, 14) < 0.15 ? 'sign/warn-signal-ahead-old' : 'sign/warn-signal-ahead', kind: 'warning', x: q.x, y: q.y, h: q.h, yaw: facing(end === 1 ? rev(q.t) : q.t), edge: e.id }, 1.5);
       }
     }
@@ -527,14 +641,527 @@ export function placeStreetFurniture(city: City, roads: RoadModel): StreetFurnit
     const limit = SPEED[cls];
     if (limit && len > (cls === 'local' ? 260 : 140) && (cls !== 'local' || hash(seed, e.id, 6) < 0.25)) {
       const model = p.type === 'downtown' && cls === 'arterial' ? 'sign/speed-35' : hash(seed, e.id, 7) < 0.06 && cls === 'local' ? 'sign/speed-25-old' : limit;
-      const fwd = at(34, offR);
+      const fwd = at(dodge(34, 1, 4), offR);
       put({ model, kind: 'speed', x: fwd.x, y: fwd.y, h: fwd.h, yaw: facing({ x: -fwd.t.x, y: -fwd.t.y }), edge: e.id }, 1.5);
       if (!p.oneWay) {
-        const back = at(len - 34, offL);
+        const back = at(dodge(len - 34, -1, 4), offL);
         put({ model, kind: 'speed', x: back.x, y: back.y, h: back.h, yaw: facing(back.t), edge: e.id }, 1.5);
       }
     }
   });
 
-  return { items, stats };
+  // --- Sidewalk furniture: what stands in the furnishing zone behind the kerb. ---
+  const pick = <T>(list: T[], ...v: number[]): T => list[Math.floor(hash(seed, ...v) * list.length)];
+  /** Whether a freeway or a railway viaduct passes over a point. */
+  const underDeck = (x: number, y: number): boolean => {
+    const hit = railIndex.nearest(x, y, 9);
+    if (hit && roads.rail.lines[hit.line].structure[hit.seg] !== 'ground') return true;
+    for (let dx = -1; dx <= 1; dx++)
+      for (let dy = -1; dy <= 1; dy++)
+        for (const sg of lanes.get(laneKey(x + dx * LANE, y + dy * LANE)) ?? []) {
+          const c = graph.edges[sg.edge].cls;
+          if (c !== 'highway' && c !== 'ramp') continue;
+          const [vx, vy] = [sg.bx - sg.ax, sg.by - sg.ay];
+          const l = Math.hypot(vx, vy) || 1;
+          const u = ((x - sg.ax) * vx + (y - sg.ay) * vy) / (l * l);
+          const off = ((x - sg.ax) * -vy + (y - sg.ay) * vx) / l;
+          if (u >= -0.05 && u <= 1.05 && off > sg.l - 2 && off < sg.r + 2) return true;
+        }
+    return false;
+  };
+
+  type Pole = Placed & { taps: Taps; fallback: Taps };
+  /** The poles at the two ends of each street's line, and the way the line leaves the node there. */
+  const lineEnds: { node: number; pole: Pole; out: Vec2; linked: boolean }[] = [];
+  const wires = new Map<number, MeshBuilder>();
+  const WIRE_TILE = 800;
+  const spans: StreetFurniture['spans'] = [];
+  const builder = (x: number, y: number): MeshBuilder => {
+    const key = Math.floor(x / WIRE_TILE) * 64 + Math.floor(y / WIRE_TILE);
+    let b = wires.get(key);
+    if (!b) wires.set(key, (b = new MeshBuilder()));
+    return b;
+  };
+  const world = (p: Pole, t: V3): V3 => {
+    const [c, sn] = [Math.cos(p.yaw), Math.sin(p.yaw)];
+    return [p.x + t[0] * c - t[2] * sn, p.h + t[1], p.y + t[0] * sn + t[2] * c];
+  };
+  const stringWires = (a: Pole, c: Pole, across = false): void => {
+    const gap = Math.hypot(c.x - a.x, c.y - a.y);
+    if (gap < 8 || gap > 75) return;
+    for (let k = 1; k < 6; k++) if (underDeck(a.x + ((c.x - a.x) * k) / 6, a.y + ((c.y - a.y) * k) / 6)) return;
+    const b = builder((a.x + c.x) / 2, (a.y + c.y) / 2);
+    const n = { x: -(c.y - a.y) / gap, y: (c.x - a.x) / gap };
+    // Wires keep their place across the line from pole to pole.
+    const sorted = (p: Pole, list: V3[]): V3[] => list.map((t) => world(p, t)).sort((u, v) => (u[0] - p.x) * n.x + (u[2] - p.y) * n.y - ((v[0] - p.x) * n.x + (v[2] - p.y) * n.y));
+    // Over a carriageway the wires are pulled tight and the lowest cable is left out, to clear the lorries.
+    let crossing = across;
+    for (let k = 1; k < 10 && !crossing; k++) crossing = inLane(a.x + ((c.x - a.x) * k) / 10, a.y + ((c.y - a.y) * k) / 10, a.h + ((c.h - a.h) * k) / 10);
+    let low = Infinity;
+    for (const kind of ['power', 'low', 'comm'] as const) {
+      const from = sorted(a, kind === 'comm' && !a.taps.comm.length ? a.fallback.comm : a.taps[kind]);
+      const to = sorted(c, kind === 'comm' && !c.taps.comm.length ? c.fallback.comm : c.taps[kind]);
+      if (kind === 'comm') [from, to].forEach((l) => l.sort((u, v) => v[1] - u[1]));
+      for (let i = 0; i < Math.min(from.length, to.length, kind === 'comm' && crossing ? 1 : 9); i++) {
+        const sag = crossing ? Math.min(gap * 0.012, 0.5) : kind === 'comm' ? Math.min(gap * 0.035, 1.3) : gap * 0.03;
+        const pts = catenary(from[i], to[i], sag, 6);
+        pts.forEach((q, k) => (low = Math.min(low, q[1] - (a.h + ((c.h - a.h) * k) / (pts.length - 1)))));
+        pipe(b, CABLE, pts, kind === 'comm' ? (i ? 0.016 : 0.026) : 0.014, 3, false);
+      }
+    }
+    spans.push({ a: { x: a.x, y: a.y }, b: { x: c.x, y: c.y }, low, crossing });
+  };
+
+  /** Wooden poles carry the wires where they were never put underground. */
+  const POLE_SET: Record<string, { base: string[]; can: string[]; light: string; old: string[]; comm: string }> = {
+    pin: { base: ['furniture/pole-wood-comm', 'furniture/pole-wood-comm', 'furniture/pole-wood'], can: ['furniture/pole-wood-transformer'], light: 'furniture/pole-wood-light', old: ['furniture/pole-wood-transformer-old'], comm: 'furniture/pole-wood-comm' },
+    arms: { base: ['furniture/pole-wood-2arm'], can: ['furniture/pole-wood-transformer-2'], light: 'furniture/pole-wood-light-transformer', old: ['furniture/pole-wood-grey'], comm: 'furniture/pole-wood-light-transformer' },
+    main: { base: ['furniture/pole-steel'], can: ['furniture/pole-concrete-transformer'], light: 'furniture/pole-steel', old: ['furniture/pole-steel'], comm: 'furniture/pole-wood-light-transformer' },
+  };
+  /** Older parts of town still have their wires on poles; of the suburbs, the older half. */
+  const overhead = (type: string, at: Vec2): boolean => type === 'residential' || type === 'oldtown' || type === 'beach' || type === 'industrial' || (type === 'suburb' && hash(seed, Math.floor(at.x / 600), Math.floor(at.y / 600), 31) < 0.5);
+
+  const HYDRANTS: Record<string, string[]> = {
+    downtown: ['furniture/hydrant-yellow'],
+    midtown: ['furniture/hydrant-yellow', 'furniture/hydrant-yellow-green'],
+    oldtown: ['furniture/hydrant-red', 'furniture/hydrant-red-white'],
+    residential: ['furniture/hydrant-red', 'furniture/hydrant-yellow'],
+    suburb: ['furniture/hydrant-yellow', 'furniture/hydrant-yellow-blue'],
+    hills: ['furniture/hydrant-wet-yellow', 'furniture/hydrant-wet-red'],
+    beach: ['furniture/hydrant-white-red', 'furniture/hydrant-wet-white-blue'],
+    industrial: ['furniture/hydrant-silver', 'furniture/hydrant-silver-orange'],
+  };
+  const OLD_HYDRANTS = ['furniture/hydrant-red-old', 'furniture/hydrant-yellow-old', 'furniture/hydrant-black-old', 'furniture/hydrant-leaning', 'furniture/hydrant-wet-silver-old'];
+  const BINS: Record<string, string[]> = {
+    downtown: ['furniture/bin-solar', 'furniture/bin-slat', 'furniture/bin-pair', 'furniture/bin-solar-pair'],
+    midtown: ['furniture/bin-hood', 'furniture/bin-dome', 'furniture/bin-hood-green', 'furniture/bin-dome-burgundy'],
+    oldtown: ['furniture/bin-post', 'furniture/bin-concrete', 'furniture/bin-concrete-green'],
+    beach: ['furniture/bin-drum', 'furniture/bin-mesh', 'furniture/bin-drum-blue', 'furniture/bin-mesh-green'],
+    industrial: ['furniture/bin-drum'],
+  };
+  const FULL_BINS: [string, string][] = [['bin-mesh', 'furniture/bin-mesh-full'], ['bin-drum', 'furniture/bin-drum-full'], ['bin-concrete', 'furniture/bin-concrete-full'], ['bin-hood', 'furniture/bin-hood-full'], ['bin-dome', 'furniture/bin-dome-old'], ['bin-slat', 'furniture/bin-slat-weathered']];
+  const BENCHES: Record<string, string[]> = {
+    downtown: ['furniture/bench-metal', 'furniture/bench-flat', 'furniture/bench-metal-steel'],
+    midtown: ['furniture/bench-metal', 'furniture/bench-ad-lawyer', 'furniture/bench-ad-realtor', 'furniture/bench-ad-dentist', 'furniture/bench-metal-blue'],
+    oldtown: ['furniture/bench-park', 'furniture/bench-park-green', 'furniture/bench-park-weathered'],
+    beach: ['furniture/bench-park', 'furniture/bench-concrete', 'furniture/bench-concrete-wood'],
+  };
+  const SHELTERS: Record<string, string[]> = {
+    downtown: ['furniture/shelter-flat-sign', 'furniture/shelter-flat-long', 'furniture/shelter-tilt'],
+    midtown: ['furniture/shelter-flat', 'furniture/shelter-flat-sign', 'furniture/shelter-barrel'],
+    oldtown: ['furniture/shelter-barrel', 'furniture/shelter-faded-barrel'],
+    beach: ['furniture/shelter-tilt-open', 'furniture/shelter-barrel'],
+  };
+  const OTHER_SHELTERS = ['furniture/shelter-flat', 'furniture/shelter-flat-short', 'furniture/shelter-tagged', 'furniture/shelter-faded-barrel'];
+  const NEWS = ['furniture/news-red', 'furniture/news-blue', 'furniture/news-yellow', 'furniture/news-green', 'furniture/news-row-3', 'furniture/news-row-5', 'furniture/news-empty', 'furniture/news-fallen'];
+  // The bus bays are stops already.
+  const stops: { x: number; y: number; t: Vec2 }[] = roads.bays.map((bay) => {
+    const tr = track(bay.edge)!;
+    const q = tr.at(bay.head, bay.side > 0 ? tr.lay.road[1] + 0.6 : tr.lay.road[0] - 0.6);
+    return { x: q.x, y: q.y, t: bay.side > 0 ? q.t : rev(q.t) };
+  });
+  const mails: Vec2[] = [];
+  const busZones = new Map<number, { side: number; from: number; to: number }[]>();
+
+  graph.edges.forEach((e) => {
+    const cls: RoadClass = e.cls;
+    if (cls !== 'arterial' && cls !== 'collector' && cls !== 'local') return;
+    const tr = track(e.id);
+    if (!tr || tr.len < 30) return;
+    const { len, lay, at, indent, widen, dodge } = tr;
+    const p = profiles[e.id];
+    const type = p.type as string;
+    const width = [lay.road[0] - lay.outer[0], lay.outer[1] - lay.road[1]];
+    /** Offset from the centre line of a point `back` behind the kerb on a side (-1 left, 1 right). */
+    const off = (side: number, back: number): number => (side > 0 ? lay.road[1] + back : lay.road[0] - back);
+    const w = (side: number): number => width[side > 0 ? 1 : 0];
+    const sec = roads.sections[e.id];
+    const flank = (side: number): Side => (side > 0 ? sec.right : sec.left);
+    const kerb = (side: number): number => (flank(side).curb ? 0.15 : 0);
+    /** Widths of the verge and of the paving; at `d`, where a bus bay may have taken the verge and part of the paving. */
+    const verge = (side: number, d?: number): number => Math.max(0, (flank(side).verge?.w ?? 0) - (d === undefined ? 0 : indent(d, side)));
+    const paved = (side: number, d?: number): number => (flank(side).walk?.w ?? 0) - (d === undefined ? 0 : Math.max(0, indent(d, side) - (flank(side).verge?.w ?? 0)) - widen(d, side));
+    const bayOn = (side: number): BusBay | undefined => roads.bays.find((bay) => bay.edge === e.id && bay.side === side);
+    /** Width that stays clear for people on foot. */
+    const walkway = p.type === 'downtown' ? 2.4 : 1.5;
+    /** Away from the road on a side. */
+    const away = (q: { t: Vec2 }, side: number): Vec2 => (side > 0 ? right(q.t) : rev(right(q.t)));
+    const dry = (q: Vec2): boolean => !e.bridge && !isWater(city.terrain, q.x, q.y);
+    // The side the lights of a local street stand on; the poles take the other.
+    const lit = hash(seed, e.id, 2) < 0.5 ? 1 : -1;
+    const gone = (v: number): boolean => hash(seed, e.id, v, 40) < 0.07;
+
+    /** Lengths of kerb kept for the buses. */
+    const zones: { side: number; from: number; to: number }[] = [];
+    busZones.set(e.id, zones);
+
+    // Utility poles down one side, with the wires from pole to pole.
+    if (overhead(type, e.points[0])) {
+      const set = POLE_SET[cls === 'arterial' ? 'main' : type === 'industrial' ? 'arms' : 'pin'];
+      const side = -lit;
+      const count = Math.max(1, Math.ceil((len - 14) / (36 + 8 * hash(seed, e.id, 32)) - 0.2));
+      const step = (len - 14) / count;
+      let last: Pole | null = null;
+      let first: Pole | null = null;
+      for (let k = 0; k <= count; k++) {
+        const q = at(dodge(7 + step * k, side, 2.5), off(side, behind(w(side))));
+        let model = pick(set.base, e.id, k, 33);
+        if (k % 4 === 2) model = pick(set.can, e.id, k, 34);
+        else if (k % 4 === 0 && cls === 'local' && hash(seed, e.id, k, 35) < 0.5) model = set.light;
+        else if (gone(k)) model = pick(set.old, e.id, k, 36);
+        const pole: Pole = { model, kind: 'pole', x: q.x, y: q.y, h: q.h, yaw: along(side > 0 ? right(q.t) : rev(right(q.t))), edge: e.id, taps: POLE_TAPS[model], fallback: POLE_TAPS[set.comm] };
+        if (!dry(q) || underDeck(q.x, q.y) || !put(pole, 1.6)) {
+          last = null;
+          continue;
+        }
+        if (last) stringWires(last, pole);
+        first ??= pole;
+        last = pole;
+      }
+      const [a, b] = [at(0, 0), at(len, 0)];
+      if (first && Math.hypot(first.x - a.x, first.y - a.y) < 25) lineEnds.push({ node: e.a, pole: first, out: a.t, linked: false });
+      if (last && Math.hypot(last.x - b.x, last.y - b.y) < 25) lineEnds.push({ node: e.b, pole: last, out: rev(b.t), linked: false });
+    }
+
+    // Hydrants: one a little way past the corner, then at intervals.
+    const hydrantSide = lit;
+    if (w(hydrantSide) >= 0.9 || w(-hydrantSide) >= 0.9) {
+      const side = w(hydrantSide) >= 0.9 ? hydrantSide : -hydrantSide;
+      const gap = cls === 'arterial' ? 110 : cls === 'collector' ? 120 : 150;
+      for (let d = 6 + 6 * hash(seed, e.id, 41); d < len - 5; d += gap * (0.9 + 0.2 * hash(seed, e.id, d, 42))) {
+        const q = at(dodge(d, side, 5.5), off(side, 0.6));
+        if (!dry(q)) continue;
+        const model = gone(d) ? pick(OLD_HYDRANTS, e.id, d, 43) : pick(HYDRANTS[type] ?? HYDRANTS.residential, e.id, 44);
+        put({ model, kind: 'hydrant', x: q.x, y: q.y, h: q.h, yaw: facing(rev(away(q, side))), edge: e.id }, 1.4);
+      }
+    }
+
+    const busy = type === 'downtown' || type === 'midtown' || type === 'oldtown' || type === 'beach';
+    /** Stands something `back` behind the kerb where the pavement leaves room to walk past it. */
+    const stand = (kind: FurnitureKind, model: string, d: number, side: number, deep: number | [number, number], yaw: (q: { t: Vec2 }) => number, clear: number, pad = false): boolean => {
+      // What it takes towards the road and away from it.
+      const [front, rear] = typeof deep === 'number' ? [deep / 2, deep / 2] : deep;
+      if (d < 5 || d > len - 5) return false;
+      const v = verge(side, d);
+      // Behind a planted verge it stands at the near edge of the paving, unless the verge is paved over there.
+      const lawn = v >= 0.8 && !pad;
+      const back = kerb(side) + (lawn ? v + 0.15 : 0.45) + front;
+      if (v + paved(side, d) < back - kerb(side) + rear + walkway) return false;
+      const q = at(d, off(side, back));
+      return dry(q) && put({ model, kind, x: q.x, y: q.y, h: q.h, yaw: yaw(q), edge: e.id }, clear);
+    };
+    const bin = (d: number, side: number, pad = false): boolean => {
+      const set = BINS[type] ?? BINS.midtown;
+      let model = pick(set, e.id, 45);
+      if (gone(d + 1)) model = FULL_BINS.find(([m]) => model.includes(m))?.[1] ?? model;
+      return stand('bin', model, d, side, 0.6, (q) => facing(away(q, side)), 1.3, pad);
+    };
+    const bench = (d: number, side: number, set: string[], pad = false): boolean => stand('bench', pick(set, e.id, 46), d, side, 0.6, (q) => facing(away(q, side)), 1.9, pad);
+
+    // Bus stops on the main streets, just past a junction: a shelter where the pavement is wide, else a sign and a bench.
+    if ((cls === 'arterial' || p.bus) && len > 70 && !e.bridge) {
+      for (const dir of [1, -1]) {
+        if (dir < 0 && p.oneWay) continue;
+        if (!p.bus && hash(seed, e.id, dir, 50) > len / 120) continue;
+        // At a bus bay the stop is the bay. Elsewhere it slides along until the kerb is clear of poles for the length of a bus.
+        const bay = bayOn(dir);
+        let d = bay ? bay.head : -1;
+        for (let from = 24; from <= 48 && from < len - 30 && d < 0; from += 6) {
+          const dd = dir > 0 ? from : len - from;
+          let clear = true;
+          for (let u = -1.5; u <= 13.5 && clear; u += 1.5) {
+            const q = at(dd - dir * u, off(dir, 0.7));
+            clear = free(q.x, q.y, 1.1);
+          }
+          if (clear) d = dd;
+        }
+        if (d < 0) continue;
+        const head = at(d, off(dir, 0.6));
+        const t = dir > 0 ? head.t : rev(head.t);
+        // Stops for the same direction along the same street are a few minutes' walk apart.
+        const near = (o: { x: number; y: number; t: Vec2 }): boolean => {
+          const [dx, dy] = [head.x - o.x, head.y - o.y];
+          const l = Math.hypot(dx, dy);
+          return l < 30 || (l < 280 && o.t.x * t.x + o.t.y * t.y > 0.3 && Math.abs(dx * o.t.y - dy * o.t.x) < 60);
+        };
+        if (!bay && stops.some(near)) continue;
+        // The sign stands at the head of the stop, facing the traffic that comes up to it.
+        if (!dry(head) || !put({ model: hash(seed, e.id, dir, 51) < 0.12 ? 'sign/bus-stop-old' : pick(['sign/bus-stop', 'sign/bus-stop-no-parking', 'sign/bus-stop-flag'], e.id, 52), kind: 'busstop', x: head.x, y: head.y, h: head.h, yaw: facing(rev(t)), edge: e.id }, 1)) continue;
+        if (!bay) stops.push({ x: head.x, y: head.y, t });
+        zones.push({ side: dir, from: Math.min(d + dir * 1.5, d - dir * 12), to: Math.max(d + dir * 1.5, d - dir * 12) });
+        // Where there is a verge, it is paved over for the length of a bus, so that people step off onto a hard surface.
+        const v = verge(dir, d);
+        if (v >= 0.8) {
+          const tex = flank(dir).walk?.tex ?? 'concrete/walk-square';
+          const b = builder(head.x, head.y);
+          const edge = (dd: number, back: number): V3 => {
+            const q = at(dd, off(dir, back));
+            return [q.x, q.h + 0.025, q.y];
+          };
+          for (let k = 0; k < 7; k++) {
+            const [d0, d1] = [d + dir * (1.5 - k * 2), d + dir * (1.5 - (k + 1) * 2)];
+            const quad: [V3, V3, V3, V3] = [edge(d0, kerb(dir)), edge(d1, kerb(dir)), edge(d1, kerb(dir) + v + 0.05), edge(d0, kerb(dir) + v + 0.05)];
+            b.quadUp(tex, ...quad);
+          }
+        }
+        const pad = v >= 0.8;
+        const back = d - dir * 5.5;
+        const roofed = (cls === 'arterial' || busy) && stand('shelter', hash(seed, e.id, dir, 53) < 0.25 ? pick(OTHER_SHELTERS, e.id, dir, 54) : pick(SHELTERS[type] ?? OTHER_SHELTERS, e.id, 55), back, dir, 1.8, (q) => facing(rev(away(q, dir))), 3.2, pad);
+        if (!roofed) bench(back, dir, BENCHES[type] ?? ['furniture/bench-ad-blank', 'furniture/bench-metal-mesh', 'furniture/bench-flat-weathered'], pad);
+        bin(d - dir * 10, dir, pad);
+      }
+    }
+
+    if (busy && cls !== 'local') {
+      // A bin at each corner, and on the main streets benches and bins between them.
+      bin(7, 1);
+      bin(len - 7, -1);
+      if (cls === 'arterial' || type !== 'midtown') {
+        const gap = 60 + 20 * hash(seed, e.id, 60);
+        for (let d = 18 + gap * hash(seed, e.id, 61), k = 0; d < len - 18; d += gap, k++) {
+          const side = k % 2 ? 1 : -1;
+          bench(d, side, BENCHES[type] ?? BENCHES.midtown);
+          if (cls === 'arterial') bin(d + 2.2, side);
+        }
+      }
+      // Bicycle racks and newspaper boxes where there are shops and offices.
+      if ((type === 'downtown' || type === 'midtown') && len > 60) {
+        if (hash(seed, e.id, 62) < 0.6) {
+          // The bicycles stand across the pavement; where they would not fit the rack is an empty one.
+          const rack = (model: string): boolean => stand('rack', model, len * 0.42, lit, footprint(model), (q) => facing(away(q, lit)), 2.6);
+          if (!rack(pick(['furniture/rack-u-row', 'furniture/rack-u-row-bikes', 'furniture/rack-wave-bikes', 'furniture/rack-grid-bikes', 'furniture/rack-u-bike'], e.id, 63))) rack('furniture/rack-u-row');
+        }
+        if (hash(seed, e.id, 64) < (type === 'downtown' ? 0.6 : 0.3)) stand('news', pick(NEWS, e.id, 65), 9.5, -1, 0.45, (q) => facing(away(q, -1)), 1.8);
+      }
+    }
+    // Parking meters along a parking lane in the centre and by the beach.
+    if (type === 'downtown' || type === 'midtown' || type === 'beach') {
+      for (const side of [1, -1]) {
+        if (!lay.lanes.some((ln) => ln.lane.kind === 'parking' && (ln.x0 + ln.x1) * side > 0)) continue;
+        if (hash(seed, e.id, side, 66) < 0.35) {
+          stand('meter', pick(['furniture/meter-paystation', 'furniture/meter-paystation-green', 'furniture/meter-paystation-solar'], e.id, 67), len / 2, side, 0.4, (q) => facing(away(q, side)), 1);
+          continue;
+        }
+        const model = pick(['furniture/meter-dial', 'furniture/meter-digital', 'furniture/meter-twin', 'furniture/meter-twin-digital'], e.id, side, 68);
+        const twin = model.includes('twin');
+        for (let d = 14; d < len - 12; d += twin ? 12.4 : 6.2) {
+          const q = at(d, off(side, 0.5));
+          if (w(side) >= 2.2 && dry(q) && !zones.some((z) => z.side === side && d > z.from - 1 && d < z.to + 1)) put({ model: gone(d + 2) ? pick(['furniture/meter-expired', 'furniture/meter-old', 'furniture/meter-bagged'], e.id, d, 69) : model, kind: 'meter', x: q.x, y: q.y, h: q.h, yaw: facing(rev(away(q, side))), edge: e.id }, 1.05);
+        }
+      }
+    }
+    // A mail box at a corner now and then.
+    if (cls !== 'local' && type !== 'industrial' && type !== 'hills' && hash(seed, e.id, 70) < len / (cls === 'arterial' ? 600 : 800)) {
+      const q = at(len - 11, off(1, 0.7));
+      if (!mails.some((o) => Math.hypot(o.x - q.x, o.y - q.y) < 250) && stand('mail', hash(seed, e.id, 71) < 0.2 ? pick(['furniture/mail-box-old', 'furniture/mail-box-tagged', 'furniture/mail-relay'], e.id, 72) : pick(['furniture/mail-box', 'furniture/mail-box', 'furniture/mail-box-pair'], e.id, 73), len - 11, 1, 0.6, (q2) => facing(rev(away(q2, 1))), 1.3)) mails.push(q);
+    }
+    // Where the wires are underground, their transformers and telephone cabinets stand at the back of the kerb zone.
+    if (!overhead(type, e.points[0]) && type !== 'hills' && hash(seed, e.id, 74) < len / 350) {
+      const side = -lit;
+      stand('box', pick(['furniture/misc-transformer', 'furniture/misc-transformer', 'furniture/misc-transformer-tagged', 'furniture/misc-cabinet-telecom', 'furniture/misc-cabinet-green', 'furniture/misc-cabinet-tagged'], e.id, 75), len * (0.3 + 0.4 * hash(seed, e.id, 76)), side, 1.4, (q) => facing(rev(away(q, side))), 2.4, verge(side) >= 1.7);
+    }
+  });
+
+  // Across a junction the line carries on to the street most nearly straight ahead; what is left ties in to the nearest pole.
+  // Nodes merged into one junction share it.
+  const hub = new Map<number, number>();
+  for (const j of roads.junctions) for (const n of j.nodes) hub.set(n, j.nodes[0]);
+  const byNode = new Map<number, typeof lineEnds>();
+  for (const le of lineEnds) {
+    const n = hub.get(le.node) ?? le.node;
+    byNode.set(n, [...(byNode.get(n) ?? []), le]);
+  }
+  for (const list of byNode.values()) {
+    const pairs: [number, number, number][] = [];
+    for (let i = 0; i < list.length; i++) for (let k = i + 1; k < list.length; k++) pairs.push([list[i].out.x * list[k].out.x + list[i].out.y * list[k].out.y, i, k]);
+    pairs.sort((u, v) => u[0] - v[0]);
+    for (const [dot, i, k] of pairs) {
+      if (dot > -0.5 || list[i].linked || list[k].linked || Math.hypot(list[i].pole.x - list[k].pole.x, list[i].pole.y - list[k].pole.y) > 70) continue;
+      list[i].linked = list[k].linked = true;
+      stringWires(list[i].pole, list[k].pole, true);
+    }
+    for (const le of list) {
+      if (le.linked) continue;
+      let best: (typeof list)[number] | null = null;
+      for (const o of list) if (o !== le && (!best || Math.hypot(o.pole.x - le.pole.x, o.pole.y - le.pole.y) < Math.hypot(best.pole.x - le.pole.x, best.pole.y - le.pole.y))) best = o;
+      if (best && Math.hypot(best.pole.x - le.pole.x, best.pole.y - le.pole.y) < 45) stringWires(le.pole, best.pole, true);
+      le.linked = true;
+    }
+  }
+
+  // Street trees and planting come last, into the room that everything else has left.
+  const spanCells = new Map<number, StreetFurniture['spans']>();
+  for (const sp of spans) {
+    const n = Math.max(1, Math.ceil(Math.hypot(sp.b.x - sp.a.x, sp.b.y - sp.a.y) / 10));
+    const seen = new Set<number>();
+    for (let k = 0; k <= n; k++) {
+      const kk = laneKey(sp.a.x + ((sp.b.x - sp.a.x) * k) / n, sp.a.y + ((sp.b.y - sp.a.y) * k) / n);
+      if (seen.has(kk)) continue;
+      seen.add(kk);
+      spanCells.set(kk, [...(spanCells.get(kk) ?? []), sp]);
+    }
+  }
+  /** How low the wires hang within `r` of a point; Infinity where there are none. */
+  const underWires = (x: number, y: number, r: number): number => {
+    let low = Infinity;
+    for (let dx = -1; dx <= 1; dx++)
+      for (let dy = -1; dy <= 1; dy++)
+        for (const sp of spanCells.get(laneKey(x + dx * LANE, y + dy * LANE)) ?? []) {
+          const [vx, vy] = [sp.b.x - sp.a.x, sp.b.y - sp.a.y];
+          const u = Math.min(1, Math.max(0, ((x - sp.a.x) * vx + (y - sp.a.y) * vy) / (vx * vx + vy * vy || 1)));
+          if (Math.hypot(sp.a.x + vx * u - x, sp.a.y + vy * u - y) < r) low = Math.min(low, sp.low);
+        }
+    return low;
+  };
+  const tops = new Map<string, number>();
+  const topOf = (id: string): number => {
+    let h = tops.get(id);
+    if (h === undefined) tops.set(id, (h = MODELS.find((m) => m.id === id)!.build().max[1]));
+    return h;
+  };
+  /** Whether a tree has its room at a point: clear of what stands there, and not in front of a signal or a sign for those who drive along `t`. */
+  const roomFor = (x: number, y: number, t: Vec2, r = 1): boolean => {
+    const reach = 4;
+    for (let dx = -reach; dx <= reach; dx++)
+      for (let dy = -reach; dy <= reach; dy++)
+        for (const o of grid.get(key(x + dx * CELL, y + dy * CELL)) ?? []) {
+          const [ox, oy] = [o.x - x, o.y - y];
+          if (Math.hypot(ox, oy) < (TREE_CLEAR[o.kind] ?? 1.6) * r) return false;
+          const ahead = TREE_AHEAD[o.kind];
+          if (!ahead) continue;
+          const u = ox * t.x + oy * t.y;
+          if (u > 0 && u < ahead && Math.abs(oy * t.x - ox * t.y) < 3.5) return false;
+        }
+    return true;
+  };
+  graph.edges.forEach((e) => {
+    const cls: RoadClass = e.cls;
+    if ((cls !== 'arterial' && cls !== 'collector' && cls !== 'local') || e.bridge) return;
+    const tr = track(e.id);
+    if (!tr || tr.len < 36) return;
+    const { len, lay, at } = tr;
+    const type = profiles[e.id].type as string;
+    const sec = roads.sections[e.id];
+    const set = STREET_TREES[type]?.[cls === 'arterial' ? 0 : 1] ?? [];
+    if (!set.length) return;
+    // A street keeps to one kind of tree, or two in turn, and to one spacing.
+    const mid = e.points[Math.floor(e.points.length / 2)];
+    const here = [Math.floor(mid.x / 320), Math.floor(mid.y / 320), cls === 'arterial' ? 0 : cls === 'collector' ? 1 : 2];
+    const first = pick(set, ...here, 80);
+    const second = hash(seed, ...here, 81) < 0.3 ? pick(set, ...here, 82) : first;
+    const corner = cls === 'arterial' ? 15 : cls === 'collector' ? 12 : 10;
+    const walkway = type === 'downtown' ? 2.4 : 1.5;
+    const zones = busZones.get(e.id) ?? [];
+    const grade = (d: number): number => (at(Math.min(len, d + 1), 0).h - at(Math.max(0, d - 1), 0).h) / (Math.min(len, d + 1) - Math.max(0, d - 1));
+    /** Whether a length of kerb is the buses'. */
+    const kept = (d: number, side: number): boolean =>
+      zones.some((z) => z.side === side && d > z.from - 3 && d < z.to + 3) || roads.bays.some((bay) => bay.edge === e.id && bay.side === side && d > bay.from - 2 && d < bay.to + 2);
+    /** Plants one tree, moved a little along the street if its place is taken. */
+    const plant = (d0: number, x: number, side: number, model: string, v: number[], lift = 0, pit?: string): boolean => {
+      for (const shift of [0, 2, -2, 3.5, -3.5]) {
+        const d = d0 + shift;
+        if (d < corner || d > len - corner || kept(d, side)) continue;
+        const q = at(d, x);
+        const it: Placed = { model, kind: 'tree', x: q.x, y: q.y, h: q.h + lift, yaw: hash(seed, e.id, ...v, 83) * 6.283, edge: e.id };
+        if (!ground(it, x > lay.road[0] && x < lay.road[1] ? e.id : undefined) || !roomFor(q.x, q.y, side > 0 ? q.t : rev(q.t))) continue;
+        if ([[0, 0], [4, 0], [-4, 0], [0, 4], [0, -4]].some(([ax, ay]) => underDeck(q.x + ax, q.y + ay))) continue;
+        // Under the wires only what stays small, kept cut below the lowest of them.
+        const wire = underWires(q.x, q.y, 3);
+        if (wire < Infinity) {
+          if (PALM.test(model)) continue;
+          if (!SMALL.test(model)) it.model = pick(LOW_TREES, ...here, 84);
+          const most = (wire - WIRE_GAP) / topOf(it.model);
+          if (most < 0.55) continue;
+          it.scale = Math.min(most, 0.85 + 0.15 * hash(seed, e.id, ...v, 85));
+        } else if (!model.includes('planter')) it.scale = 0.85 + 0.3 * hash(seed, e.id, ...v, 85);
+        if (pit) add({ model: pit, kind: 'pit', x: q.x, y: q.y, h: q.h, yaw: along(q.t), slopeX: grade(d), edge: e.id });
+        add(it);
+        return true;
+      }
+      return false;
+    };
+    /** The tree of a place in the row: now and then a sapling that replaced one, or a dead one. */
+    const kind = (k: number, side: number, young: string): string => {
+      const r = hash(seed, e.id, k, side, 86);
+      return r < 0.065 ? young : r < 0.08 ? pick(['plant/tree-dead', 'plant/street-sparse'], e.id, k, 87) : k % 2 ? second : first;
+    };
+
+    for (const side of [1, -1]) {
+      const fl = side > 0 ? sec.right : sec.left;
+      const edge = side > 0 ? lay.road[1] : -lay.road[0];
+      if (!fl.curb) {
+        // No kerb: trees as they grew, off the edge of the road.
+        if (type !== 'hills') continue;
+        for (let d = corner + 30 * hash(seed, e.id, side, 88), k = 0; d < len - corner; d += 16 + 34 * hash(seed, e.id, side, k, 89), k++) {
+          plant(d, side * (edge + sideWidth(fl) + 1.2 + 2.5 * hash(seed, e.id, side, k, 90)), side, pick(set, e.id, side, k, 91), [k, side]);
+        }
+        continue;
+      }
+      const v = fl.verge && !fl.verge.tex.includes('gravel') ? fl.verge.w : 0;
+      const paved = fl.walk?.w ?? 0;
+      // In the verge where there is one; else in a pit in the paving, where that leaves room to walk past.
+      const grass = v >= 1;
+      if (!grass && paved < TREE_PIT + 0.25 + walkway) continue;
+      if (grass && !fl.walk && cls !== 'local') continue;
+      const x = side * (edge + 0.15 + (grass ? v / 2 : (fl.verge?.w ?? 0) + 0.25 + TREE_PIT / 2));
+      const step0 = cls === 'arterial' ? 9 + 3 * hash(seed, ...here, 92) : cls === 'collector' ? 11 + 3 * hash(seed, ...here, 92) : 17 + 6 * hash(seed, ...here, 92);
+      const count = Math.floor((len - 2 * corner) / step0);
+      if (count < 1) continue;
+      const step = (len - 2 * corner) / count;
+      const smart = type === 'downtown' || type === 'midtown';
+      const grate = type === 'downtown' ? 'furniture/planter-grate-square' : 'furniture/planter-grate-round';
+      for (let k = 0; k < count; k++) {
+        // One to a lot on the quiet streets, so not quite in step.
+        const d = corner + step * (k + 0.5) + (cls === 'local' ? (hash(seed, e.id, k, side, 93) - 0.5) * 5 : 0);
+        if (hash(seed, e.id, k, side, 94) < 0.1) {
+          // A tree that went and was not replaced leaves its pit.
+          if (!grass && !kept(d, side)) {
+            const q = at(d, x);
+            if (roomFor(q.x, q.y, q.t) && ground({ model: '', kind: 'pit', x: q.x, y: q.y, h: q.h, yaw: 0 })) add({ model: 'furniture/planter-pit', kind: 'pit', x: q.x, y: q.y, h: q.h, yaw: along(q.t), slopeX: grade(d), edge: e.id });
+          }
+          continue;
+        }
+        if (grass) plant(d, x, side, kind(k, side, 'plant/street-sapling'), [k, side]);
+        else {
+          const model = kind(k, side, smart ? 'furniture/planter-grate-tree' : 'furniture/planter-pit-tree');
+          const own = model.includes('planter');
+          plant(d, x, side, model, [k, side], 0, own ? undefined : smart ? (hash(seed, e.id, k, side, 95) < 0.15 ? 'furniture/planter-grate-guard' : grate) : 'furniture/planter-pit');
+        }
+      }
+    }
+
+    // A planted median carries a row of its own, with low planting between the trees.
+    for (const ln of lay.lanes) {
+      if (ln.lane.kind !== 'median' || ln.lane.median !== 'planted' || ln.x1 - ln.x0 < 2 || len < 80) continue;
+      const x = (ln.x0 + ln.x1) / 2;
+      const count = Math.floor((len - 50) / (13 + 3 * hash(seed, ...here, 96)));
+      const step = (len - 50) / Math.max(1, count);
+      const filler = pick(MEDIAN_PLANTS, ...here, 97);
+      for (let k = 0; k < count; k++) {
+        const d = 25 + step * (k + 0.5);
+        if (hash(seed, e.id, k, 98) >= 0.1) plant(d, x, 0, kind(k, 0, 'plant/street-sapling'), [k, 0], MEDIAN_H);
+        if (!filler || k === count - 1) continue;
+        const q = at(d + step / 2, x);
+        const it: Placed = { model: filler, kind: 'plant', x: q.x, y: q.y, h: q.h + MEDIAN_H, yaw: along(q.t), edge: e.id };
+        if (ground(it, e.id) && free(q.x, q.y, 2)) add(it);
+      }
+    }
+
+    // Planters at the kerb of the busy streets, between the trees.
+    if ((type === 'downtown' || type === 'midtown' || type === 'beach') && cls !== 'local') {
+      const models = PLANTERS[type];
+      for (const side of [1, -1]) {
+        const fl = side > 0 ? sec.right : sec.left;
+        if (!fl.curb || fl.verge || (fl.walk?.w ?? 0) < 0.45 + 1.1 + walkway) continue;
+        for (let d = corner + 6 + 40 * hash(seed, e.id, side, 99), k = 0; d < len - corner; d += 30 + 40 * hash(seed, e.id, side, k, 100), k++) {
+          if (kept(d, side)) continue;
+          const q = at(d, side * ((side > 0 ? lay.road[1] : -lay.road[0]) + 0.15 + 0.45 + 0.55));
+          const it: Placed = { model: pick(models, e.id, side, k, 101), kind: 'plant', x: q.x, y: q.y, h: q.h, yaw: along(q.t), edge: e.id };
+          if (ground(it) && roomFor(q.x, q.y, q.t, 0.6) && free(q.x, q.y, 2.2)) add(it);
+        }
+      }
+    }
+  });
+
+  return { items, tiles: [...wires.values()].map((b) => b.build()), spans, stats };
 }
