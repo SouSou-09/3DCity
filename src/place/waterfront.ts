@@ -623,7 +623,7 @@ export function placeWaterfront(site: Site): Waterfront {
         const corner = (p: Vec2, sd: number, h: number): V3 => [p.x + at.ny * sd * 4, h, p.y - at.nx * sd * 4];
         b.quadUp('paving/boardwalk', corner(a, -1, deck), corner(a, 1, deck), corner(c, 1, g), corner(c, -1, g), 0, [[0, 0], [8, 0], [8, foot - 6], [0, foot - 6]]);
         for (const sd of [-1, 1]) b.quadFacing('paving/boardwalk', corner(a, sd, deck), corner(c, sd, g), corner(c, sd, g - 1.5), corner(a, sd, deck - 2.5), [at.ny * sd, 0, -at.nx * sd], [[0, 0], [foot - 6, 0], [foot - 6, 1.5], [0, 2.5]]);
-        if (back > foot + 2) {
+        if (back > foot) {
           const pts: Vec2[] = [];
           for (let d = foot; d <= back + 1; d += 2) pts.push(P(at, 0, d));
           site.ribbon(b, 'paving/boardwalk', pts, 8, 0.1);
