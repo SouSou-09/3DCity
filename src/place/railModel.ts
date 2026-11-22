@@ -2,11 +2,12 @@
 import '../assets/mesh/registry';
 import { MeshBuilder, ModelData, V3 } from '../assets/mesh/builder';
 import { box, move, stand, turn } from '../assets/mesh/kit';
-import { BED, Curve, G, STYLES, TOP, TrackStyle, Way, bed, poseAt, pt, rail, sideWay, stain, sweep } from '../assets/mesh/railkit';
+import { BED, Curve, G, STYLES, TOP, TrackStyle, Way, bed, poseAt, pt, rail, sideWay, stain, sweep, turnout } from '../assets/mesh/railkit';
 import { tvm } from '../assets/mesh/railparts';
 import { layout } from '../assets/mesh/section';
 import { EDGE, HIGH, LOW, canopy, footbridge, furnish, platform, podium, stairs, stationHouse } from '../assets/mesh/stations';
 import { bufferStop, viaduct } from '../assets/mesh/tracks';
+import { pointSeg } from '../core/geom';
 import { Vec2, clamp } from '../core/vec2';
 import { City } from '../gen/city';
 import { districtAt } from '../gen/districts';
@@ -18,6 +19,8 @@ const TILE = 800;
 /** Length of the instanced runs of sleepers and of a fence panel. */
 const LADDER = 10;
 const PANEL = 12;
+/** How much wider the deck of a viaduct is on the side a branch leaves on, metres. */
+const TURNOUT_DECK = 4;
 /** Track centres of a double and a single line. */
 const LATS: Record<number, number[]> = { 1: [0], 2: [-2, 2] };
 
@@ -64,7 +67,7 @@ export interface RailModel {
   looks: CrossingLook[];
   stations: BuiltStation[];
   /** Metres of track (centre line) on each kind of structure. */
-  stats: { ground: number; elevated: number; bridge: number; tunnel: number; piers: number; buffers: number; triangles: number };
+  stats: { ground: number; elevated: number; bridge: number; tunnel: number; piers: number; buffers: number; turnouts: number; triangles: number };
   /** Roads that cross track on the ground without a crossing of their own (see RailProfile.unbuilt). */
   unbuilt: number;
 }
@@ -221,7 +224,7 @@ export function buildRailModel(city: City, roads: RoadModel): RailModel {
   const profile = roads.rail;
   const items: RailItem[] = [];
   const stations: BuiltStation[] = [];
-  const stats = { ground: 0, elevated: 0, bridge: 0, tunnel: 0, piers: 0, buffers: 0, triangles: 0 };
+  const stats = { ground: 0, elevated: 0, bridge: 0, tunnel: 0, piers: 0, buffers: 0, turnouts: 0, triangles: 0 };
   const builders = new Map<number, MeshBuilder>();
   const tile = (x: number, y: number): MeshBuilder => {
     const key = clamp(Math.floor(x / TILE), 0, 63) * 64 + clamp(Math.floor(y / TILE), 0, 63);
@@ -300,6 +303,60 @@ export function buildRailModel(city: City, roads: RoadModel): RailModel {
     }
     const inStation = (s: number, pad: number): boolean => plans.some((p) => s > p.s0 - pad && s < p.s1 + pad);
 
+    // --- Turnouts: where a branch leaves this line, the track on its side carries the points. ---
+    const points: { lat: number; s0: number; s1: number }[] = [];
+    for (const br of profile.lines) {
+      if (br.line === tr.line || br.kind !== 'freight' || tr.kind !== 'main') continue;
+      const [p0, p1] = [br.pts[0], br.pts[1]];
+      let [sm, near] = [0, Infinity];
+      for (let i = 0; i + 1 < n; i++) {
+        const q = pointSeg(p0.x, p0.y, tr.pts[i], tr.pts[i + 1]);
+        if (q.d < near) [near, sm] = [q.d, tr.s[i] + q.t * (tr.s[i + 1] - tr.s[i])];
+      }
+      if (near > 12) continue;
+      const f = poseAt(probe, sm);
+      const across = (p0.x - f.o[0]) * f.x[0] + (p0.y - f.o[2]) * f.x[2];
+      const side = across >= 0 ? 1 : -1;
+      const lat = side * Math.max(...lats);
+      // The branch starts where the turnout ends: this far off the track it leaves, and turned this far from it.
+      const y0 = Math.abs(across) - Math.abs(lat);
+      const d = Math.hypot(p1.x - p0.x, p1.y - p0.y) || 1;
+      const h = [(p1.x - p0.x) / d, (p1.y - p0.y) / d];
+      const along = h[0] * f.z[0] + h[1] * f.z[2];
+      const a = Math.atan2((h[0] * f.x[0] + h[1] * f.x[2]) * side, Math.abs(along));
+      if (y0 < 1 || a < 0.05) continue;
+      // The curve that leaves the track as a tangent and reaches that point at that angle (measured half a step on).
+      const k = 0.5 * d * a + y0;
+      const R = (k + Math.sqrt(Math.max(0, k * k - 0.25 * d * d * a * a))) / (a * a);
+      const lead = a * R - d / 2;
+      const toe = 3;
+      const sense = along >= 0 ? 1 : -1;
+      const from = sm - sense * (lead + toe);
+      if (lead < 15 || lead > 80 || from < 0 || from > tr.s[n - 1]) continue;
+      const [A, B] = [pt(probe, lat, 0, from), pt(probe, lat, 0, sm)];
+      const l = Math.hypot(B[0] - A[0], B[1] - A[1], B[2] - A[2]) || 1;
+      const z: V3 = [(B[0] - A[0]) / l, (B[1] - A[1]) / l, (B[2] - A[2]) / l];
+      const xl = Math.hypot(z[0], z[2]) || 1;
+      const x: V3 = [z[2] / xl, 0, -z[0] / xl];
+      const y: V3 = [z[1] * x[2] - z[2] * x[1], z[2] * x[0] - z[0] * x[2], z[0] * x[1] - z[1] * x[0]];
+      const dir = (x[0] * f.x[0] + x[2] * f.x[2]) * side >= 0 ? 1 : -1;
+      turnout(tile(A[0], A[2]), { o: A, x, y, z }, { dir, len: lead + toe, R, toe, style, lever: 'machine' });
+      const [s0, s1] = [Math.min(from, sm), Math.max(from, sm)];
+      points.push({ lat, s0, s1 });
+      // On a viaduct the deck is wider on the side the branch leaves on, as far as where it has its own.
+      for (let i = 0; i < n - 1; i++) if (tr.structure[i] !== 'ground' && !wide[i] && tr.s[i + 1] > s0 - 5 && tr.s[i] < s1 + 15) wide[i] = side > 0 ? 2 : 3;
+      stats.turnouts++;
+    }
+    /** The parts of s0..s1 where the track at `lat` is plain: not inside a turnout. */
+    const plain = (lat: number, s0: number, s1: number): [number, number][] => {
+      let runs: [number, number][] = [[s0, s1]];
+      for (const p of points) {
+        if (p.lat !== lat) continue;
+        runs = runs.flatMap(([a, b]): [number, number][] => (b <= p.s0 || a >= p.s1 ? [[a, b]] : [[a, Math.min(b, p.s0)], [Math.max(a, p.s1), b]]));
+      }
+      return runs.filter(([a, b]) => b - a > 0.05);
+    };
+
     // --- Track, structure by structure. ---
     const segKind = (i: number): SegKind => {
       const [a, b] = [tr.structure[i], tr.structure[i + 1]];
@@ -309,8 +366,10 @@ export function buildRailModel(city: City, roads: RoadModel): RailModel {
       bed(w, s0, s1, { mat: style.ballast, l: -Math.min(...lats) + 1.75, r: Math.max(...lats) + 1.75, caps: false });
       for (const d of lats) {
         const side = sideWay(w, d);
-        stain(side, s0, s1, style.stain);
-        for (const g of [-G, G]) rail(side, s0, s1, g, { head: style.head, side: style.side, caps: false });
+        for (const [a, b] of plain(d, s0, s1)) {
+          stain(side, a, b, style.stain);
+          for (const g of [-G, G]) rail(side, a, b, g, { head: style.head, side: style.side, caps: false });
+        }
       }
     };
     const pier = (b: MeshBuilder, s: number, half: number, mat: string): void => {
@@ -345,12 +404,13 @@ export function buildRailModel(city: City, roads: RoadModel): RailModel {
         // Formation: the shoulder of earth and gravel the ballast lies on, wide enough to meet the graded ground.
         if (kind === 'ground') sweep(w, 'ground/gravel-dirt', s0, s1, [[-reach - 2.6, -1], [-reach - 0.7, 0], [reach + 0.7, 0], [reach + 2.6, -1]], { uv: 'across' });
       } else {
-        const half = w0 ? 9.4 : tr.tracks > 1 ? 4.7 : 3;
+        const plainHalf = tr.tracks > 1 ? 4.7 : 3;
+        const half = w0 === 1 ? 9.4 : w0 ? plainHalf + TURNOUT_DECK / 2 : plainHalf;
         const steel = kind === 'bridge';
-        viaduct(w, s0, s1, 0, half, [], steel ? { wall: 'structure/steel-green-rusty' } : {});
+        viaduct(w0 > 1 ? sideWay(w, (w0 === 2 ? 1 : -1) * TURNOUT_DECK / 2) : w, s0, s1, 0, half, [], steel ? { wall: 'structure/steel-green-rusty' } : {});
         const first = i === 0 || segKind(i - 1) !== kind;
         const span = steel ? 24 : 20;
-        for (let s = Math.ceil((s0 - (first ? span / 2 : 0)) / span) * span + (first ? span / 2 : 0); s < s1; s += span) if (s >= s0) pier(b, s, w0 ? 6.5 : half, steel ? 'structure/stone-ashlar' : 'structure/pier-formwork');
+        for (let s = Math.ceil((s0 - (first ? span / 2 : 0)) / span) * span + (first ? span / 2 : 0); s < s1; s += span) if (s >= s0) pier(b, s, w0 === 1 ? 6.5 : plainHalf, steel ? 'structure/stone-ashlar' : 'structure/pier-formwork');
         // Abutments where the deck meets the embankment.
         for (const [s, other] of [[s0, i > 0 ? segKind(i - 1) : kind], [s1, j < n - 1 ? segKind(j) : kind]] as [number, SegKind][]) {
           if (other !== 'ground') continue;
@@ -381,6 +441,7 @@ export function buildRailModel(city: City, roads: RoadModel): RailModel {
           const s = tr.s[i] + (k + 0.5) * step;
           const g = gradeAt(s);
           for (const d of lats) {
+            if (points.some((p) => p.lat === d && s > p.s0 && s < p.s1)) continue;
             const f = poseAt(probe, s, d);
             items.push({ model: ties, kind: 'ties', x: f.o[0], y: f.o[2], h: f.o[1], yaw: facing({ x: f.z[0], y: f.z[2] }), slopeZ: g, line: tr.line });
           }
