@@ -3,7 +3,7 @@ import { SegmentIndex, pointSeg, segSeg } from '../src/core/geom';
 import { angleDiff, clamp, dist, mix } from '../src/core/vec2';
 import { City, DEFAULT_CONFIG, generateCity } from '../src/gen/city';
 import { LAND_USES, LandUse, Site, useWeights } from '../src/gen/landuse';
-import { STREET_CLEARANCE } from '../src/gen/roadHeights';
+import { STREET_CLEARANCE, roadLevels } from '../src/gen/roadHeights';
 import { profileWidth } from '../src/gen/roadSections';
 import { layout } from '../src/assets/mesh/section';
 import { MODELS } from '../src/assets/mesh/registry';
@@ -458,6 +458,23 @@ describe('roads in 3D', () => {
       }
     }
     expect(steep).toBeLessThan(0.004 * all);
+  });
+
+  it('does not hold a ramp up for a railway it only runs beside', () => {
+    // Seed 30 ends two ramps next to the main line without crossing it.
+    const c = generateCity({ ...DEFAULT_CONFIG, seed: 30 });
+    const levels = roadLevels(c.graph, c.terrain, c.rail);
+    let ramps = 0;
+    for (const e of c.graph.edges) {
+      const lv = levels.edges[e.id];
+      if (e.cls !== 'ramp' || !lv) continue;
+      ramps++;
+      for (let i = 1; i < lv.h.length; i++) {
+        const run = lv.s[i] - lv.s[i - 1];
+        if (run > 0.5) expect(Math.abs(lv.h[i] - lv.h[i - 1]) / run, `ramp ${e.id}`).toBeLessThan(0.08);
+      }
+    }
+    expect(ramps).toBeGreaterThan(4);
   });
 
   it.each(MODEL_SEEDS)('seed %i: ramps come down gently and roads do not kink where they leave a junction', (seed) => {

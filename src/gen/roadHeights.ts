@@ -92,9 +92,6 @@ export function roadLevels(graph: RoadGraph, t: Terrain, rail: Rail): RoadLevels
       if (line.structure[i] === 'elevated') bumps.push({ x: p.x, y: p.y, h: line.level[i] + RAIL_CLEARANCE });
     });
   }
-  // Track in the open: a ramp stays at deck height until it is past it.
-  const tracks = rail.lines.flatMap((line) => line.points.filter((_, i) => line.structure[i] !== 'tunnel'));
-  const railNear = (p: Vec2): boolean => tracks.some((q) => Math.hypot(q.x - p.x, q.y - p.y) < 14);
   const railIndex = new RailIndex(rail);
   const overRail = (x: number, y: number, h: number): number => {
     for (const b of bumps) {
@@ -344,8 +341,11 @@ export function roadLevels(graph: RoadGraph, t: Terrain, rail: Rail): RoadLevels
         for (let j = 1; j < n; j++) if (Math.hypot(lv.pts[at(j)].x - c.x, lv.pts[at(j)].y - c.y) < Math.hypot(lv.pts[at(k)].x - c.x, lv.pts[at(k)].y - c.y)) k = j;
         sep = Math.max(sep, Math.min(n - 3, k + 3));
       }
-      // And past any railway on the ground below it.
-      for (let k = 1; k < n; k++) if (railNear(lv.pts[at(k)])) sep = Math.max(sep, Math.min(n - 3, k + 3));
+      // And past any railway in the open that it crosses.
+      for (let k = 1; k < n; k++) {
+        const over = railIndex.crossings(lv.pts[at(k - 1)], lv.pts[at(k)]).some((c) => rail.lines[c.line].structure[c.seg] !== 'tunnel');
+        if (over) sep = Math.max(sep, Math.min(n - 3, k + 3));
+      }
       const s0 = Math.abs(lv.s[at(sep)] - lv.s[at(0)]);
       const hs = deck(lv.pts[at(Math.min(sep, n - 1))]).h;
       for (let k = 0; k < n; k++) {
