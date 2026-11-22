@@ -823,9 +823,11 @@ describe('street furniture', () => {
       // Past the junction, not in it.
       const line = m.lines[e.id]!;
       for (const end of [line[0], line[line.length - 1]]) expect(Math.hypot(end[0] - s.x, end[2] - s.y)).toBeGreaterThan(15);
-      // Stops for the same direction are a few minutes' walk apart.
+      // Stops for the same direction along the same street are a few minutes' walk apart.
       for (const o of stops) {
         if (o === s || Math.abs(angleDiff(o.yaw, s.yaw)) > 1.2) continue;
+        // The signs face back along the street; two streets that fork are not the same street.
+        if ([s, o].some((q) => Math.abs((o.x - s.x) * Math.cos(q.yaw) + (o.y - s.y) * Math.sin(q.yaw)) > 50)) continue;
         expect(Math.hypot(o.x - s.x, o.y - s.y), `stops at ${s.x.toFixed(0)}, ${s.y.toFixed(0)} and ${o.x.toFixed(0)}, ${o.y.toFixed(0)}`).toBeGreaterThan(200);
       }
     }
@@ -833,7 +835,7 @@ describe('street furniture', () => {
       if (it.kind === 'shelter') {
         expect(stops.some((s) => Math.hypot(s.x - it.x, s.y - it.y) < 9), 'a shelter belongs to a stop').toBe(true);
         // Nothing tall stands where people board.
-        for (const o of f.items) if (o !== it && (o.kind === 'pole' || o.kind === 'light' || o.kind === 'signal') && o.edge === it.edge) expect(Math.hypot(o.x - it.x, o.y - it.y)).toBeGreaterThan(2.5);
+        for (const o of f.items) if (o !== it && (o.kind === 'pole' || o.kind === 'light' || o.kind === 'signal' || o.kind === 'hydrant') && o.edge === it.edge) expect(Math.hypot(o.x - it.x, o.y - it.y)).toBeGreaterThan(2.5);
       }
     }
     const near = new Map<number, typeof f.items>();

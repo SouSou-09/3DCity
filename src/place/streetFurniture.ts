@@ -752,13 +752,13 @@ export function placeStreetFurniture(city: City, roads: RoadModel): StreetFurnit
     if ((cls === 'arterial' || p.bus) && len > 70 && !e.bridge) {
       for (const dir of [1, -1]) {
         if (dir < 0 && p.oneWay) continue;
-        if (!p.bus && hash(seed, e.id, dir, 50) > len / 400) continue;
+        if (!p.bus && hash(seed, e.id, dir, 50) > len / 120) continue;
         // The stop slides along until the kerb is clear of poles for the length of a bus.
         let d = -1;
         for (let from = 24; from <= 48 && from < len - 30 && d < 0; from += 6) {
           const dd = dir > 0 ? from : len - from;
           let clear = true;
-          for (let u = -1.5; u <= 12 && clear; u += 1.5) {
+          for (let u = -1.5; u <= 13.5 && clear; u += 1.5) {
             const q = at(dd - dir * u, off(dir, 0.7));
             clear = free(q.x, q.y, 1.1);
           }
@@ -767,7 +767,13 @@ export function placeStreetFurniture(city: City, roads: RoadModel): StreetFurnit
         if (d < 0) continue;
         const head = at(d, off(dir, 0.6));
         const t = dir > 0 ? head.t : rev(head.t);
-        if (stops.some((o) => Math.hypot(o.x - head.x, o.y - head.y) < (o.t.x * t.x + o.t.y * t.y > 0.3 ? 260 : 30))) continue;
+        // Stops for the same direction along the same street are a few minutes' walk apart.
+        const near = (o: { x: number; y: number; t: Vec2 }): boolean => {
+          const [dx, dy] = [head.x - o.x, head.y - o.y];
+          const l = Math.hypot(dx, dy);
+          return l < 30 || (l < 280 && o.t.x * t.x + o.t.y * t.y > 0.3 && Math.abs(dx * o.t.y - dy * o.t.x) < 60);
+        };
+        if (stops.some(near)) continue;
         // The sign stands at the head of the stop, facing the traffic that comes up to it.
         if (!dry(head) || !put({ model: hash(seed, e.id, dir, 51) < 0.12 ? 'sign/bus-stop-old' : pick(['sign/bus-stop', 'sign/bus-stop-no-parking', 'sign/bus-stop-flag'], e.id, 52), kind: 'busstop', x: head.x, y: head.y, h: head.h, yaw: facing(rev(t)), edge: e.id }, 1)) continue;
         stops.push({ x: head.x, y: head.y, t });
