@@ -283,6 +283,9 @@ export function addTracks(): void {
 
   for (const k of Object.keys(S) as StyleName[]) T(`straight-${k}`, `直線 ${NAMES[k]}`, (b) => track(start(b), 0, L, S[k]));
   T('straight-short', '直線 短尺 10m', (b) => track(start(b, 10), 0, 10, S.wood));
+  // Sleepers alone, without fastenings: laid end to end by the hundred under rails and ballast that are swept along a route.
+  for (const k of ['concrete', 'concrete-stained', 'wood', 'wood-old'] as StyleName[])
+    T(`ties-${k}`, `枕木のみ 10m ${NAMES[k]}`, (b) => sleepers(start(b, 10), 0, 10, { mat: S[k].tie, spacing: S[k].spacing, fasten: 'none', loose: S[k].loose, len: S[k].tieLen }));
   T('straight-third-rail', '直線 第三軌条', (b) => {
     track(start(b), 0, L, S['concrete-stained']);
     thirdRail(start(b), 0, L, 1);

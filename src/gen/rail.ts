@@ -453,9 +453,8 @@ export function railCrossings(index: RailIndex, graph: RoadGraph): RailCrossing[
         const structure = line.structure[h.seg];
         let kind: RailCrossing['kind'] = 'level';
         if (structure !== 'ground') kind = 'road-under';
+        // Freeways pass above track on the ground; every street crosses it on the level.
         else if (e.cls === 'highway' || e.cls === 'ramp') kind = 'road-over';
-        // Main roads duck under the main line; the freight branch has level crossings throughout.
-        else if (e.cls === 'arterial' && line.kind === 'main') kind = 'road-under';
         out.push({ x: h.x, y: h.y, line: h.line, edge: e.id, kind });
       }
     }

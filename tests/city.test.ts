@@ -8,6 +8,8 @@ import { profileWidth } from '../src/gen/roadSections';
 import { layout } from '../src/assets/mesh/section';
 import { MODELS } from '../src/assets/mesh/registry';
 import { EDGE_STUB, RoadModel, buildRoadModel } from '../src/place/roadModel';
+import { RailModel, buildRailModel } from '../src/place/railModel';
+import { roadAt, trackAt } from '../src/place/railProfile';
 import { placeStreetFurniture } from '../src/place/streetFurniture';
 import { RAIL_MAX_GRADE, RAIL_MIN_RADIUS, RAIL_STEP, RailIndex, sharpestRailTurn } from '../src/gen/rail';
 import { isStreet } from '../src/gen/streamlines';
@@ -675,5 +677,154 @@ describe('street furniture', () => {
       else cells.set(k2(it.x, it.y), [it]);
     }
     expect(close).toBe(0);
+  });
+});
+
+const rails = new Map<number, RailModel>();
+const railModel = (seed: number): RailModel => {
+  let r = rails.get(seed);
+  if (!r) rails.set(seed, (r = buildRailModel(city(seed), model(seed))));
+  return r;
+};
+
+describe('railway in 3D', () => {
+  it('is the same every time and only uses models of the catalogue', () => {
+    const a = buildRailModel(city(1), model(1));
+    const b = buildRailModel(city(1), model(1));
+    expect(b.items).toEqual(a.items);
+    expect(b.stations).toEqual(a.stations);
+    expect(b.stats).toEqual(a.stats);
+    const ids = new Set(MODELS.map((m) => m.id));
+    for (const it of a.items) expect(ids.has(it.model), it.model).toBe(true);
+  });
+
+  it.each(MODEL_SEEDS)('seed %i: track is laid along every line, double on the main line and single on the branch', (seed) => {
+    const c = city(seed);
+    const m = model(seed);
+    const r = railModel(seed);
+    const total = c.rail.lines.reduce((sum, l) => sum + l.length, 0);
+    expect(r.stats.ground + r.stats.elevated + r.stats.bridge + r.stats.tunnel).toBeCloseTo(total, 0);
+    expect(r.stats.triangles).toBeGreaterThan(20000);
+    for (const tr of m.rail.lines) {
+      // Sleepers are laid everywhere but deep inside a tunnel.
+      let open = 0;
+      for (let i = 0; i + 1 < tr.pts.length; ) {
+        let j = i;
+        const tunnel = (k: number): boolean => tr.structure[k] === 'tunnel' || tr.structure[k + 1] === 'tunnel';
+        while (j + 1 < tr.pts.length && tunnel(j) === tunnel(i)) j++;
+        if (!tunnel(i) || j - i < 6) open += tr.s[j] - tr.s[i];
+        i = j;
+      }
+      const ties = r.items.filter((it) => it.kind === 'ties' && it.line === tr.line);
+      expect(tr.tracks).toBe(tr.kind === 'main' ? 2 : 1);
+      expect(ties.length / (open / 10) / tr.tracks, `${tr.kind} line`).toBeGreaterThan(0.93);
+      expect(ties.length / (open / 10) / tr.tracks, `${tr.kind} line`).toBeLessThan(1.07);
+      // Each run of sleepers lies on its own track: 2 m either side of the centre line, or on it.
+      for (const it of ties) {
+        const d = Math.min(...tr.pts.map((p) => Math.hypot(p.x - it.x, p.y - it.y)));
+        expect(d, `sleepers at ${it.x.toFixed(0)}, ${it.y.toFixed(0)}`).toBeLessThan(tr.tracks > 1 ? 5.6 : 5.1);
+      }
+      // The rails never climb much more steeply than the route was planned for.
+      for (let i = 1; i < tr.level.length; i++) expect(Math.abs(tr.level[i] - tr.level[i - 1]) / (tr.s[i] - tr.s[i - 1]), `${tr.kind} at ${tr.s[i].toFixed(0)} m`).toBeLessThan(RAIL_MAX_GRADE + 0.012);
+    }
+  });
+
+  it.each(MODEL_SEEDS)('seed %i: viaducts and bridges stand on piers and tunnels have mouths', (seed) => {
+    const m = model(seed);
+    const r = railModel(seed);
+    if (r.stats.elevated + r.stats.bridge > 150) expect(r.stats.piers).toBeGreaterThan(0);
+    let mouths = 0;
+    for (const tr of m.rail.lines) {
+      const tunnel = (k: number): boolean => tr.structure[k] === 'tunnel' || tr.structure[k + 1] === 'tunnel';
+      for (let i = 0; i + 1 < tr.pts.length; i++) {
+        if (!tunnel(i)) continue;
+        if (i > 0 && !tunnel(i - 1)) mouths++;
+        if (i + 2 < tr.pts.length && !tunnel(i + 1)) mouths++;
+      }
+    }
+    const portals = r.items.filter((it) => it.kind === 'portal');
+    expect(portals.length).toBe(mouths);
+    for (const p of portals) expect(p.model).toBe(m.rail.lines[p.line].tracks > 1 ? 'infra/tunnel-portal-rail-double' : 'infra/tunnel-portal-rail');
+  });
+
+  it.each(MODEL_SEEDS)('seed %i: level crossings are where a street meets track on the ground, at the height of both, and guarded', (seed) => {
+    const c = city(seed);
+    const m = model(seed);
+    const r = railModel(seed);
+    expect(r.crossings.length).toBeGreaterThan(0);
+    r.crossings.forEach((x, id) => {
+      const e = c.graph.edges[x.edge];
+      const tr = m.rail.lines[x.line];
+      const where = `crossing of edge ${x.edge} at ${x.x.toFixed(0)}, ${x.y.toFixed(0)}`;
+      expect(e.cls === 'highway' || e.cls === 'ramp', where).toBe(false);
+      expect(c.railCrossings.some((k) => k.kind === 'level' && k.edge === x.edge && k.line === x.line && Math.hypot(k.x - x.x, k.y - x.y) < 0.01), where).toBe(true);
+      expect(tr.structure[x.index], where).toBe('ground');
+      // The rails are level with the crossing's deck, which is just above the road.
+      expect(trackAt(tr, x.s).h, where).toBeCloseTo(x.h, 2);
+      const road = roadAt(m.lines[x.edge]!, x.x, x.y);
+      expect(x.h - road.h, where).toBeGreaterThan(0);
+      expect(x.h - road.h, where).toBeLessThan(x.table + 1);
+      const guards = r.items.filter((it) => it.crossing === id && it.kind === 'gate');
+      expect(guards.length, where).toBeGreaterThan(0);
+      const want = e.cls === 'arterial' ? 'signal/rail-cantilever-gate' : e.cls === 'collector' ? 'signal/rail-gate-up' : e.cls === 'local' ? 'signal/rail-flashers-both' : 'signal/rail-crossbuck';
+      for (const g of guards) {
+        expect(g.model, where).toBe(want);
+        // Beside the road, not in it, and clear of the rails.
+        expect(roadAt(m.lines[x.edge]!, g.x, g.y).d, where).toBeGreaterThan(x.half);
+        expect(Math.min(...tr.pts.map((p) => Math.hypot(p.x - g.x, p.y - g.y))), where).toBeGreaterThan(tr.tracks * 2 + 1.2);
+      }
+    });
+  });
+
+  it.each(MODEL_SEEDS)('seed %i: stations have platforms on open track between the crossings', (seed) => {
+    const c = city(seed);
+    const m = model(seed);
+    const r = railModel(seed);
+    expect(r.stations.length).toBeGreaterThanOrEqual(Math.min(2, c.stations.length));
+    expect(r.stations.some((s) => s.kind === 'central')).toBe(c.stations.some((s) => s.kind === 'central'));
+    for (const st of r.stations) {
+      const planned = c.stations.find((s) => s.id === st.id)!;
+      const tr = m.rail.lines[planned.line];
+      expect(st.s1 - st.s0, `station ${st.id}`).toBeGreaterThanOrEqual(60);
+      expect(Math.hypot(st.x - planned.x, st.y - planned.y), `station ${st.id}`).toBeLessThan(260);
+      const kind = tr.structure[trackAt(tr, (st.s0 + st.s1) / 2).i];
+      expect(kind === 'ground' || kind === 'elevated', `station ${st.id}`).toBe(true);
+      for (let s = st.s0; s <= st.s1; s += 10) expect(tr.structure[trackAt(tr, Math.min(s, st.s1 - 0.01)).i], `station ${st.id} at ${s.toFixed(0)} m`).toBe(kind);
+      for (const x of r.crossings) if (x.line === planned.line) expect(x.s < st.s0 - 10 || x.s > st.s1 + 10, `station ${st.id}`).toBe(true);
+    }
+  });
+
+  it.each(MODEL_SEEDS)('seed %i: fences and signals stand on dry land off the roads and the tracks, and no street furniture stands on the tracks', (seed) => {
+    const c = city(seed);
+    const m = model(seed);
+    const r = railModel(seed);
+    const index = new SegmentIndex(60);
+    m.lines.forEach((line, id) => {
+      if (line && c.graph.edges[id].cls !== 'highway' && c.graph.edges[id].cls !== 'ramp') index.addLine(id, line.map((p) => ({ x: p[0], y: p[2] })));
+    });
+    const half = c.graph.edges.map((e) => {
+      const lay = layout(m.sections[e.id]);
+      return Math.max(-lay.road[0], lay.road[1]);
+    });
+    const fences = r.items.filter((it) => it.kind === 'fence');
+    expect(fences.length).toBeGreaterThan(100);
+    for (const it of r.items) {
+      if (it.kind !== 'fence' && it.kind !== 'signal') continue;
+      const where = `${it.model} at ${it.x.toFixed(0)}, ${it.y.toFixed(0)}`;
+      expect(isWater(c.terrain, it.x, it.y), where).toBe(false);
+      index.query(it.x - 30, it.y - 30, it.x + 30, it.y + 30, (s) => {
+        expect(pointSeg(it.x, it.y, s.a, s.b).d, where).toBeGreaterThan(half[s.line]);
+      });
+      const tr = m.rail.lines[it.line];
+      // Fences stand outside the formation; signals at the foot of the ballast, clear of a passing train.
+      expect(Math.min(...tr.pts.map((p) => Math.hypot(p.x - it.x, p.y - it.y))), where).toBeGreaterThan((tr.tracks > 1 ? 2 : 0) + (it.kind === 'fence' ? 3.75 : 2.4));
+    }
+    const tracks = new RailIndex(c.rail);
+    for (const it of placeStreetFurniture(c, m).items) {
+      const hit = tracks.nearest(it.x, it.y, 8);
+      if (!hit) continue;
+      const tr = m.rail.lines[hit.line];
+      if (Math.abs(tr.level[hit.seg] - it.h) < 3) expect(hit.d, `${it.model} at ${it.x.toFixed(0)}, ${it.y.toFixed(0)}`).toBeGreaterThanOrEqual(tr.tracks * 2 + 2.8);
+    }
   });
 });

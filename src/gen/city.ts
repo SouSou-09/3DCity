@@ -43,7 +43,7 @@ export interface City {
   districts: Districts;
   field: TensorField;
   highways: Highways;
-  /** Railway centre lines; stations and trackside objects are not placed yet. */
+  /** Railway centre lines; the tracks, crossings and stations are built from them by buildRailModel. */
   rail: Rail;
   /** Where roads and tracks cross. */
   railCrossings: RailCrossing[];
