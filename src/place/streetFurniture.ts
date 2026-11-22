@@ -89,7 +89,7 @@ const BUS = 13.5;
 
 /** Deterministic value in [0, 1) from a few integers. */
 /** Street trees by district: for the main roads, and for the collectors and local streets (docs/placement-plan.md §19.1). */
-const STREET_TREES: Record<string, [string[], string[]]> = {
+export const STREET_TREES: Record<string, [string[], string[]]> = {
   downtown: [['plant/street-plane', 'plant/street-ficus'], ['plant/street-pear', 'plant/street-ficus-small']],
   midtown: [['plant/street-ficus', 'plant/palm-queen'], ['plant/street-jacaranda', 'plant/street-elm']],
   oldtown: [['plant/street-plane-large', 'plant/street-elm'], ['plant/street-magnolia']],
@@ -100,14 +100,16 @@ const STREET_TREES: Record<string, [string[], string[]]> = {
   industrial: [[], []],
 };
 /** Trees that stay under the wires. */
-const LOW_TREES = ['plant/street-olive', 'plant/street-cherry', 'plant/street-magnolia', 'plant/street-ficus-small'];
+export const LOW_TREES = ['plant/street-olive', 'plant/street-cherry', 'plant/street-magnolia', 'plant/street-ficus-small'];
 const PALM = /palm-/;
 /** Trees that are small as they are. */
-const SMALL = /sapling|planter|olive|cherry|magnolia|ficus-small/;
+const SMALL = /sapling|planter|olive|cherry|magnolia|ficus-small|tree-dead/;
 /** Side of the square a tree in the paving has to itself. */
 const TREE_PIT = 1.2;
 /** Height of a raised median above the road. */
 const MEDIAN_H = 0.15;
+/** How far the crown of a tree stays below the wires over it. */
+const WIRE_GAP = 0.35;
 /** How far a tree keeps from what stands on the pavement, and how far ahead of it a signal or a sign must stay in view. */
 const TREE_CLEAR: Partial<Record<FurnitureKind, number>> = { light: 5, signal: 6, ped: 3, pole: 3, hydrant: 2, busstop: 6, shelter: 6, tree: 5, pit: 5, meter: 1, plant: 2 };
 const TREE_AHEAD: Partial<Record<FurnitureKind, number>> = { signal: 15, stop: 8, speed: 8, warning: 8, oneway: 8, guide: 8, street: 8 };
@@ -999,16 +1001,23 @@ export function placeStreetFurniture(city: City, roads: RoadModel): StreetFurnit
       spanCells.set(kk, [...(spanCells.get(kk) ?? []), sp]);
     }
   }
-  /** Whether wires hang within `r` of a point. */
-  const underWires = (x: number, y: number, r: number): boolean => {
+  /** How low the wires hang within `r` of a point; Infinity where there are none. */
+  const underWires = (x: number, y: number, r: number): number => {
+    let low = Infinity;
     for (let dx = -1; dx <= 1; dx++)
       for (let dy = -1; dy <= 1; dy++)
         for (const sp of spanCells.get(laneKey(x + dx * LANE, y + dy * LANE)) ?? []) {
           const [vx, vy] = [sp.b.x - sp.a.x, sp.b.y - sp.a.y];
           const u = Math.min(1, Math.max(0, ((x - sp.a.x) * vx + (y - sp.a.y) * vy) / (vx * vx + vy * vy || 1)));
-          if (Math.hypot(sp.a.x + vx * u - x, sp.a.y + vy * u - y) < r) return true;
+          if (Math.hypot(sp.a.x + vx * u - x, sp.a.y + vy * u - y) < r) low = Math.min(low, sp.low);
         }
-    return false;
+    return low;
+  };
+  const tops = new Map<string, number>();
+  const topOf = (id: string): number => {
+    let h = tops.get(id);
+    if (h === undefined) tops.set(id, (h = MODELS.find((m) => m.id === id)!.build().max[1]));
+    return h;
   };
   /** Whether a tree has its room at a point: clear of what stands there, and not in front of a signal or a sign for those who drive along `t`. */
   const roomFor = (x: number, y: number, t: Vec2, r = 1): boolean => {
@@ -1056,11 +1065,14 @@ export function placeStreetFurniture(city: City, roads: RoadModel): StreetFurnit
         const it: Placed = { model, kind: 'tree', x: q.x, y: q.y, h: q.h + lift, yaw: hash(seed, e.id, ...v, 83) * 6.283, edge: e.id };
         if (!ground(it, x > lay.road[0] && x < lay.road[1] ? e.id : undefined) || !roomFor(q.x, q.y, side > 0 ? q.t : rev(q.t))) continue;
         if ([[0, 0], [4, 0], [-4, 0], [0, 4], [0, -4]].some(([ax, ay]) => underDeck(q.x + ax, q.y + ay))) continue;
-        // Under the wires only what stays small.
-        if (underWires(q.x, q.y, 3)) {
+        // Under the wires only what stays small, kept cut below the lowest of them.
+        const wire = underWires(q.x, q.y, 3);
+        if (wire < Infinity) {
           if (PALM.test(model)) continue;
           if (!SMALL.test(model)) it.model = pick(LOW_TREES, ...here, 84);
-          it.scale = 0.85 + 0.15 * hash(seed, e.id, ...v, 85);
+          const most = (wire - WIRE_GAP) / topOf(it.model);
+          if (most < 0.55) continue;
+          it.scale = Math.min(most, 0.85 + 0.15 * hash(seed, e.id, ...v, 85));
         } else if (!model.includes('planter')) it.scale = 0.85 + 0.3 * hash(seed, e.id, ...v, 85);
         if (pit) add({ model: pit, kind: 'pit', x: q.x, y: q.y, h: q.h, yaw: along(q.t), slopeX: grade(d), edge: e.id });
         add(it);
@@ -1071,7 +1083,7 @@ export function placeStreetFurniture(city: City, roads: RoadModel): StreetFurnit
     /** The tree of a place in the row: now and then a sapling that replaced one, or a dead one. */
     const kind = (k: number, side: number, young: string): string => {
       const r = hash(seed, e.id, k, side, 86);
-      return r < 0.065 ? young : r < 0.08 ? pick(['plant/tree-dead', 'plant/tree-bare'], e.id, k, 87) : k % 2 ? second : first;
+      return r < 0.065 ? young : r < 0.08 ? pick(['plant/tree-dead', 'plant/street-sparse'], e.id, k, 87) : k % 2 ? second : first;
     };
 
     for (const side of [1, -1]) {
