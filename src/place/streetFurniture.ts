@@ -734,7 +734,7 @@ export function placeStreetFurniture(city: City, roads: RoadModel): StreetFurnit
       // Behind a planted verge it stands at the near edge of the paving, unless the verge is paved over there.
       const lawn = v >= 0.8 && !pad;
       const back = kerb(side) + (lawn ? v + 0.15 : 0.45) + depth / 2;
-      if ((lawn ? 0 : v) + paved(side) < back - kerb(side) + depth / 2 + walkway) return false;
+      if (v + paved(side) < back - kerb(side) + depth / 2 + walkway) return false;
       const q = at(d, off(side, back));
       return dry(q) && put({ model, kind, x: q.x, y: q.y, h: q.h, yaw: yaw(q), edge: e.id }, clear);
     };
