@@ -390,15 +390,13 @@ export function placeParks(site: Site): { parks: ParkPlan[]; tiles: ModelData[] 
       const towards = (r: Rect, x: number, y: number): Rect => {
         const d = { x: x - r.x, y: y - r.y };
         let best = r.yaw;
-        for (let q = 0; q < 4; q++) {
+        // An oblong only turns about: what stands on it is laid out for its own length and width.
+        const step = Math.abs(r.hx - r.hz) < 1e-6 ? 1 : 2;
+        for (let q = step; q < 4; q += step) {
           const yaw = r.yaw + (q * Math.PI) / 2;
           if (-Math.sin(yaw) * d.x + Math.cos(yaw) * d.y > -Math.sin(best) * d.x + Math.cos(best) * d.y) best = yaw;
         }
-        return q4(r, best);
-      };
-      const q4 = (r: Rect, yaw: number): Rect => {
-        const quarter = Math.round((yaw - r.yaw) / (Math.PI / 2));
-        return quarter % 2 ? { ...r, yaw, hx: r.hz, hz: r.hx } : { ...r, yaw };
+        return { ...r, yaw: best };
       };
       /** Where paths reach a feature: just outside the middle of its front. */
       const access: Vec2[] = [];
