@@ -3,7 +3,7 @@ import { polyLength } from '../core/geom';
 import { Vec2, clamp, dist } from '../core/vec2';
 import { Districts, districtAt } from './districts';
 import { Highways, addRamps, generateHighways } from './highways';
-import { Rail, RailIndex, generateRail } from './rail';
+import { Rail, RailIndex, generateRail, separateGrades } from './rail';
 import { BRIDGE_APPROACH, EndReason, RoadBuilder, RoadLine } from './streamlines';
 import { TensorField, buildField, fieldAngle, sepAt } from './tensorField';
 import { Terrain, gradient, heightAt, hillAt, inBounds, isWater, riverBankAt, seaDistAt } from './terrain';
@@ -22,7 +22,7 @@ function familyAlong(field: TensorField, p: Vec2, angle: number): number {
 }
 
 /** A boulevard that ignores the grid and cuts diagonally through downtown. */
-function traceAvenue(builder: RoadBuilder, start: Vec2, angle: number, maxLen: number, rng: Rng): { pts: Vec2[]; reason: EndReason } {
+function traceAvenue(builder: RoadBuilder, start: Vec2, angle: number, maxLen: number, rng: Rng, rail: RailIndex): { pts: Vec2[]; reason: EndReason; along: boolean } {
   const t = builder.terrain;
   const pts: Vec2[] = [];
   let { x, y } = start;
@@ -37,24 +37,26 @@ function traceAvenue(builder: RoadBuilder, start: Vec2, angle: number, maxLen: n
     let ny = y + dy * 6;
     if (!inBounds(t, nx, ny)) {
       pts.push({ x: nx, y: ny });
-      return { pts, reason: 'bounds' };
+      return { pts, reason: 'bounds', along: false };
     }
+    // It may cross the railway, but not at so flat an angle that it runs along it.
+    if (rail.blocks(nx, ny, false, dx, dy)) return { pts, reason: 'steep', along: true };
     if (isWater(t, nx, ny)) {
       const landing = seaDistAt(t, nx, ny) > 40 ? builder.findLanding(nx, ny, dx, dy) : null;
-      if (!landing) return { pts, reason: 'water' };
+      if (!landing) return { pts, reason: 'water', along: false };
       nx = landing.x;
       ny = landing.y;
     } else {
       const nh = heightAt(t, nx, ny);
       const approach = riverBankAt(t, nx, ny) < BRIDGE_APPROACH;
-      if ((!approach && Math.abs(nh - h) / 6 > 0.12) || hillAt(t, nx, ny) > 0.5) return { pts, reason: 'steep' };
+      if ((!approach && Math.abs(nh - h) / 6 > 0.12) || hillAt(t, nx, ny) > 0.5) return { pts, reason: 'steep', along: false };
     }
     h = heightAt(t, nx, ny);
     pts.push({ x: nx, y: ny });
     x = nx;
     y = ny;
   }
-  return { pts, reason: 'length' };
+  return { pts, reason: 'length', along: false };
 }
 
 export function generateRoads(t: Terrain, districts: Districts, rng: Rng): RoadLines {
@@ -65,7 +67,8 @@ export function generateRoads(t: Terrain, districts: Districts, rng: Rng): RoadL
   const rail = generateRail(t, districts, hwLines, rng.fork('rail'));
   const field = buildField(t, districts, [...hwLines, ...rail.lines.map((l) => l.points)], rng.fork('field'));
   const builder = new RoadBuilder(t, field);
-  builder.setRail(new RailIndex(rail));
+  const railIndex = new RailIndex(rail);
+  builder.setRail(railIndex);
   const style = (x: number, y: number) => districtAt(t, districts, x, y).style;
 
   const hwIds = [builder.addLine({ points: highways.main, cls: 'highway', family: -1, ends: ['bounds', 'bounds'] })];
@@ -76,9 +79,15 @@ export function generateRoads(t: Terrain, districts: Districts, rng: Rng): RoadL
   // Diagonal avenue through downtown.
   const dt = districts.downtown;
   const aRng = rng.fork('avenue');
-  const avAngle = dt.angle + aRng.sign() * aRng.range(0.6, 0.95);
-  const fwd = traceAvenue(builder, dt.center, avAngle, aRng.range(0.3, 0.55) * S, aRng);
-  const bwd = traceAvenue(builder, dt.center, avAngle + Math.PI, aRng.range(0.3, 0.55) * S, aRng);
+  let fwd: ReturnType<typeof traceAvenue>;
+  let bwd: ReturnType<typeof traceAvenue>;
+  // Turned, if need be, until it meets the railway squarely enough.
+  for (let k = 0; ; k++) {
+    const avAngle = dt.angle + aRng.sign() * aRng.range(0.6, 0.95);
+    fwd = traceAvenue(builder, dt.center, avAngle, aRng.range(0.3, 0.55) * S, aRng, railIndex);
+    bwd = traceAvenue(builder, dt.center, avAngle + Math.PI, aRng.range(0.3, 0.55) * S, aRng, railIndex);
+    if ((!fwd.along && !bwd.along) || k === 5) break;
+  }
   const avenue = builder.addLine({
     points: [...bwd.pts.reverse(), dt.center, ...fwd.pts],
     cls: 'arterial',
@@ -130,6 +139,11 @@ export function generateRoads(t: Terrain, districts: Districts, rng: Rng): RoadL
     rng.fork('arterial'),
   );
   builder.joinEnds([avenue], () => 420, () => 0, aRng);
+
+  // The main streets are in place: the railway passes over them, and everything smaller stops at it or goes under.
+  separateGrades(rail, t, districts, builder.lines.filter((l) => l.cls === 'arterial').map((l) => l.points), hwLines, rng.fork('rail-grades'));
+  // The branch may have been cut short: the streets that follow are kept off the tracks as they are now.
+  builder.setRail(new RailIndex(rail));
 
   const forbidden: { line: number; s: number }[] = [];
   if (branchId >= 0) forbidden.push({ line: hwIds[0], s: highways.branchS }, { line: branchId, s: 0 });

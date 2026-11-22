@@ -375,7 +375,7 @@ function buildable(g: Builder, ctx: Ctx, a: Vec2, b: Vec2, cls: RoadClass, ignor
     const x = a.x + ((b.x - a.x) * s) / d;
     const y = a.y + ((b.y - a.y) * s) / d;
     if (seaDistAt(t, x, y) < 12) return { ok: false, water };
-    if (ctx.rail?.blocks(x, y, cls === 'local', (b.x - a.x) / d, (b.y - a.y) / d)) return { ok: false, water };
+    if (ctx.rail?.blocks(x, y, cls !== 'arterial', (b.x - a.x) / d, (b.y - a.y) / d) || (cls === 'arterial' && ctx.rail?.atGrade(x, y))) return { ok: false, water };
     const bank = riverBankAt(t, x, y);
     if (bank < 0) {
       if (ctx.bridges.some((q) => Math.hypot(q.x - x, q.y - y) < BRIDGE_SPACING)) return { ok: false, water };
@@ -450,6 +450,8 @@ function extendDeadEnds(g: Builder, ctx: Ctx): number {
     const en = g.nodes[end];
     if (!roomAt(g, end, Math.atan2(node.y - en.y, node.x - en.x))) continue;
     const p = { x: en.x, y: en.y };
+    // Near a junction the street runs to the junction instead: that is another line, with its own obstacles.
+    if (dist(p, hit.p) > 1 && !buildable(g, ctx, from, p, e.cls, new Set([eid, ...en.edges])).ok) continue;
     if (check.water) ctx.bridges.push(...waterCrossings(ctx.t, resample([from, p], 6)));
     node.edges.delete(eid);
     node.alive = false;

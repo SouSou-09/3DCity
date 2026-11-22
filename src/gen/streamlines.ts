@@ -111,7 +111,7 @@ export class RoadBuilder {
 
   rail: RailIndex | null = null;
   /** Track samples per street family, so that streets parallel to the railway keep a row of lots away from it. */
-  private readonly railSide = [new SampleHash(40), new SampleHash(40)];
+  private railSide = [new SampleHash(40), new SampleHash(40)];
 
   constructor(
     readonly terrain: Terrain,
@@ -120,6 +120,7 @@ export class RoadBuilder {
 
   setRail(rail: RailIndex): void {
     this.rail = rail;
+    this.railSide = [new SampleHash(40), new SampleHash(40)];
     for (const line of rail.rail.lines) {
       for (let i = 0; i + 1 < line.points.length; i++) {
         if (line.structure[i] === 'tunnel') continue;
@@ -149,7 +150,7 @@ export class RoadBuilder {
   /** Freeways and ramps are grade separated: small streets cannot run through them. */
   blocked(x: number, y: number, cls: RoadClass, dx?: number, dy?: number): boolean {
     if (!isStreet(cls)) return false;
-    if (this.rail?.blocks(x, y, cls === 'local', dx, dy)) return true;
+    if (this.rail?.blocks(x, y, cls !== 'arterial', dx, dy)) return true;
     if (cls === 'arterial') return false;
     let hit = false;
     this.barriers.query(x - FREEWAY_CLEARANCE, y - FREEWAY_CLEARANCE, x + FREEWAY_CLEARANCE, y + FREEWAY_CLEARANCE, (r) => {

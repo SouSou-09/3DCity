@@ -1,6 +1,6 @@
 import { Heap } from '../core/heap';
 import { Rng } from '../core/rng';
-import { SegmentIndex, pointSeg, polyLength, resample, segSeg } from '../core/geom';
+import { SegmentIndex, pointSeg, polyLength, resample, segSeg, simplify } from '../core/geom';
 import { Vec2, angleDiff, clamp, dist } from '../core/vec2';
 import { DistrictType, Districts, districtAt } from './districts';
 import type { RoadGraph } from './roadGraph';
@@ -17,21 +17,27 @@ export interface RailLine {
   structure: RailStructure[];
   /** Height of the rails at each point, metres. */
   level: number[];
-  /** Whether a local street may cross here (a level crossing, or under a viaduct). Bigger streets always cross. */
+  /** Whether a street may cross here (a level crossing, or under a viaduct). Arterial roads always cross: over them the main line is on a viaduct. */
   crossable: boolean[];
   length: number;
 }
 
 export interface Rail {
   lines: RailLine[];
+  /** Where a main street crosses the tracks on the level: no other street joins it close to the gates. */
+  gates: Vec2[];
 }
 
 export const RAIL_STEP = 10;
 /** Tightest curve of the main line / the freight branch, metres. */
 export const RAIL_MIN_RADIUS = { main: 300, freight: 160 };
+/** The curves that the lines are laid out with where there is room. */
+const RAIL_CURVE = { main: 480, freight: 220 };
 export const RAIL_MAX_GRADE = 0.03;
 /** Streets keep this far from tracks they do not cross. */
 export const RAIL_CLEARANCE = 16;
+/** No street runs along track on the ground closer than this: room for a row of lots, and for cars to wait at a crossing. */
+export const RAIL_SIDE = 45;
 /** Ground above the rails at a tunnel mouth, the least that the deepest part of a tunnel lies under, and its shortest length in points. */
 const PORTAL_COVER = 9;
 const TUNNEL_COVER = 12;
@@ -39,6 +45,28 @@ const TUNNEL_MIN = 8;
 /** Furthest above or below the ground that track can be for a local street to cross it on the level. */
 const CROSSING_REACH = 2;
 const VIADUCT_HEIGHT = 7.5;
+/** Level crossings: the length of track that streets may cross at one, and the track between two of them, metres. */
+const CROSSING_WINDOW = 50;
+const CROSSING_GAP = { main: [260, 420], freight: [150, 260] };
+/** A viaduct does not come down between two places that need it if they are closer than this, metres. */
+const VIADUCT_GAP = 650;
+/** Least track between two level crossings, and between two of main streets, metres. */
+const CROSSING_APART = 150;
+const GATED_APART = 280;
+/** No smaller street joins a main one this close to its level crossing: the queue at the gates needs the room. */
+export const GATE_CLEAR = 55;
+/** Fewest points of a branch worth building, and how many before a main street it ends if it cannot cross it. */
+const BRANCH_MIN = 30;
+const BRANCH_SHORT = 6;
+/** Within this distance of the centre of downtown the main line has no level crossing on a main street. */
+const INNER_RADIUS = 1300;
+/** A level crossing of a main street is no further than this from square, radians, and this far from its junctions, metres. */
+const MAX_SKEW = 0.6;
+const JUNCTION_CLEAR = 70;
+/** Track is lifted this far to both sides of a main street that it passes over. */
+const VIADUCT_REACH = 90;
+/** Longest freight branch, metres: a spur to works that the main line passes, not a second line across town. */
+const FREIGHT_MAX = 1500;
 const GRID = 40;
 
 /** How much the railway avoids each kind of district; it prefers the seams between them. */
@@ -54,16 +82,21 @@ const DISTRICT_COST: Record<DistrictType, number> = {
 };
 
 const DIRS: [number, number][] = [[1, 0], [1, 1], [0, 1], [-1, 1], [-1, 0], [-1, -1], [0, -1], [1, -1]];
-const TURN_COST = 2.2;
+const TURN_COST = 4;
 
 interface Grid {
   n: number;
   cost: Float32Array;
+  /** Cells of industrial land. */
+  works: Uint8Array;
+  /** The freeways. */
+  hw: SegmentIndex;
 }
 
 function buildCost(t: Terrain, districts: Districts, highways: Vec2[][]): Grid {
   const n = Math.round(t.size / GRID);
   const cost = new Float32Array(n * n);
+  const works = new Uint8Array(n * n);
   const hw = new SegmentIndex(120);
   highways.forEach((pts, i) => hw.addLine(i, pts));
   for (let j = 0; j < n; j++) {
@@ -76,6 +109,7 @@ function buildCost(t: Terrain, districts: Districts, highways: Vec2[][]): Grid {
         continue;
       }
       const d = districtAt(t, districts, x, y);
+      if (d.type === 'industrial') works[j * n + i] = 1;
       let c = DISTRICT_COST[d.type];
       // Tracks tend to run where one district ends and the next begins.
       for (const [ox, oy] of [[70, 0], [-70, 0], [0, 70], [0, -70]]) {
@@ -91,16 +125,20 @@ function buildCost(t: Terrain, districts: Districts, highways: Vec2[][]): Grid {
       const rb = riverBankAt(t, x, y);
       if (rb < 0) c = 9;
       else if (rb < 60) c *= 1.5;
-      if (sd < 140) c *= 2.2;
-      if (districts.parks.some((p) => dist(p.center, { x, y }) < p.radius + 25)) c *= 5;
-      const hd = hw.nearest(x, y, 140);
-      if (hd < 45) c *= 2.2;
-      else if (hd > 60 && hd < 140) c *= 0.65;
+      // The shore belongs to the beach and the promenade; only the port has track near the water.
+      const port = d.type === 'industrial';
+      if (sd < 110) c *= port ? 1.6 : 4;
+      else if (sd < 230) c *= port ? 1 : 1.8;
+      if (districts.parks.some((p) => dist(p.center, { x, y }) < p.radius + 40)) c *= 8;
+      // A freeway is crossed once, quickly and squarely, and never followed: its ramps need the land beside it.
+      const hd = hw.nearest(x, y, 280);
+      if (hd < 130) c *= 4.5;
+      else if (hd < 280) c *= 1.7;
       if (i < 2 || j < 2 || i > n - 3 || j > n - 3) c *= 2.5;
       cost[j * n + i] = c;
     }
   }
-  return { n, cost };
+  return { n, cost, works, hw };
 }
 
 /** Cheapest path over the grid that never turns more than 45 degrees per cell. Returns cell indices from start to goal. */
@@ -145,6 +183,36 @@ function route(grid: Grid, start: number, startDirs: number[], goal: (cell: numb
 }
 
 const cellPoint = (n: number, cell: number): Vec2 => ({ x: ((cell % n) + 0.5) * GRID, y: (Math.floor(cell / n) + 0.5) * GRID });
+
+/** Cost of running along a polyline, sampled every 20 m; Infinity if it leaves the land the railway may use. */
+function runCost(grid: Grid, pts: Vec2[]): number {
+  let sum = 0;
+  for (let i = 1; i < pts.length; i++) {
+    const steps = Math.max(1, Math.ceil(dist(pts[i - 1], pts[i]) / 20));
+    for (let k = 0; k < steps; k++) {
+      const x = pts[i - 1].x + ((pts[i].x - pts[i - 1].x) * (k + 0.5)) / steps;
+      const y = pts[i - 1].y + ((pts[i].y - pts[i - 1].y) * (k + 0.5)) / steps;
+      const [ci, cj] = [clamp(Math.floor(x / GRID), 0, grid.n - 1), clamp(Math.floor(y / GRID), 0, grid.n - 1)];
+      sum += (grid.cost[cj * grid.n + ci] * dist(pts[i - 1], pts[i])) / steps / GRID;
+    }
+  }
+  return sum;
+}
+
+/**
+ * A railway is long straights joined by wide curves, not the staircase a grid search leaves: drop as many of the
+ * path's corners as can go without taking it over much worse ground. The first `pin` points stay.
+ */
+function straighten(grid: Grid, pts: Vec2[], pin = 0): Vec2[] {
+  const head = pts.slice(0, pin);
+  const rest = pts.slice(Math.max(0, pin - 1));
+  const base = runCost(grid, rest);
+  for (const tol of [90, 65, 45, 28]) {
+    const out = simplify(rest, tol);
+    if (runCost(grid, out) <= base * 1.12) return [...head, ...out.slice(pin > 0 ? 1 : 0)];
+  }
+  return pts;
+}
 
 /** Rounds a polyline until no curve is tighter than `radius`; the first `pin` points and the last one stay put. */
 function relax(pts: Vec2[], radius: number, pin = 1): Vec2[] {
@@ -194,17 +262,25 @@ function valid(t: Terrain, pts: Vec2[]): boolean {
   return true;
 }
 
-function finish(t: Terrain, districts: Districts, kind: 'main' | 'freight', points: Vec2[], rng: Rng, startLevel?: number): RailLine {
+/** Where the main line runs on a viaduct whatever it crosses: through the dense districts. */
+function denseRun(t: Terrain, districts: Districts, kind: 'main' | 'freight', points: Vec2[]): boolean[] {
+  return points.map((p) => {
+    const type = districtAt(t, districts, p.x, p.y).type;
+    return kind === 'main' && (type === 'downtown' || type === 'midtown' || type === 'oldtown');
+  });
+}
+
+/**
+ * Works out the level and structure of a line. `lifted` marks the track that goes on a viaduct; `gated` lists the
+ * points where a main street crosses on the level, which the crossings of smaller streets keep away from.
+ */
+function finish(t: Terrain, kind: 'main' | 'freight', points: Vec2[], lifted: boolean[], rng: Rng, startLevel?: number, gated: number[] = []): RailLine {
   const n = points.length;
   const ground = points.map((p) => heightAt(t, p.x, p.y));
   const wet = points.map((p) => isWater(t, p.x, p.y));
-  // Rail level: follows the ground, lifted onto a viaduct through the dense districts, spans water bank to bank.
+  // Rail level: follows the ground, lifted onto a viaduct where `lifted` says so, spans water bank to bank.
   const target: number[] = new Array(n);
-  for (let i = 0; i < n; i++) {
-    const type = districtAt(t, districts, points[i].x, points[i].y).type;
-    const lift = kind === 'main' && (type === 'downtown' || type === 'midtown' || type === 'oldtown') ? VIADUCT_HEIGHT : 0;
-    target[i] = wet[i] ? NaN : ground[i] + lift;
-  }
+  for (let i = 0; i < n; i++) target[i] = wet[i] ? NaN : ground[i] + (lifted[i] ? VIADUCT_HEIGHT : 0);
   for (let i = 0; i < n; i++) {
     if (!Number.isNaN(target[i])) continue;
     let a = i - 1;
@@ -215,9 +291,17 @@ function finish(t: Terrain, districts: Districts, kind: 'main' | 'freight', poin
     for (let k = i; k < b; k++) target[k] = Math.max(2.5, va + ((vb - va) * (k - a)) / (b - a));
     i = b;
   }
+  // A viaduct is at its full height over everything it is there to clear: its ramps lie outside that.
+  const limit = RAIL_MAX_GRADE * 0.95 * RAIL_STEP;
+  for (const dir of [1, -1]) {
+    let carry = -Infinity;
+    for (let i = dir > 0 ? 0 : n - 1; i >= 0 && i < n; i += dir) {
+      carry = lifted[i] ? Math.max(target[i], carry - limit) : carry - limit;
+      target[i] = Math.max(target[i], carry);
+    }
+  }
   if (startLevel !== undefined) target[0] = startLevel;
   // Limit the grade from both ends, then round the profile off; neither step can steepen it again.
-  const limit = RAIL_MAX_GRADE * 0.95 * RAIL_STEP;
   const fwd = target.slice();
   for (let i = 1; i < n; i++) fwd[i] = clamp(fwd[i], fwd[i - 1] - limit, fwd[i - 1] + limit);
   let level = fwd;
@@ -270,18 +354,24 @@ function finish(t: Terrain, districts: Districts, kind: 'main' | 'freight', poin
     }
     i = j;
   }
-  // Where the tracks are on the ground, most local streets end at the fence; a share get a level crossing.
-  const open = kind === 'main' ? 0.4 : 0.65;
-  const zone = Math.round(130 / RAIL_STEP);
-  const zones: boolean[] = [];
-  const crossable = structure.map((s, i) => {
-    if (s !== 'ground') return true;
-    // No level crossing in a cutting or on a bank: a street cannot get down or up to the rails there.
-    if (Math.abs(level[i] - ground[i]) > CROSSING_REACH) return false;
-    const z = Math.floor(i / zone);
-    while (zones.length <= z) zones.push(rng.chance(open));
-    return zones[z];
-  });
+  // Where the tracks are on the ground, streets end at the fence. Level crossings are few and well apart: one short
+  // window every few hundred metres, only where the rails lie at the level of the ground.
+  const [gap0, gap1] = kind === 'main' ? CROSSING_GAP.main : CROSSING_GAP.freight;
+  const crossable = structure.map((s) => s !== 'ground');
+  for (let i = Math.round(rng.range(0.3, 1) * gap0 / RAIL_STEP); i < n; ) {
+    const w = Math.round(CROSSING_WINDOW / RAIL_STEP);
+    let ok = i + w < n;
+    // Clear of the ramps of a viaduct: the rails have to be able to meet the street exactly.
+    for (let k = i - 6; ok && k <= i + w + 6; k++) ok = k >= 0 && k < n && structure[k] === 'ground' && Math.abs(level[k] - ground[k]) <= CROSSING_REACH;
+    const apart = Math.round(CROSSING_APART / RAIL_STEP);
+    ok &&= !gated.some((g) => g > i - apart && g < i + w + apart);
+    if (!ok) {
+      i += 2;
+      continue;
+    }
+    for (let k = i; k <= i + w; k++) crossable[k] = true;
+    i += w + Math.round(rng.range(gap0, gap1) / RAIL_STEP);
+  }
   return { kind, tracks: kind === 'main' ? 2 : 1, points, structure, level, crossable, length: polyLength(points) };
 }
 
@@ -334,8 +424,10 @@ function mainLine(t: Terrain, districts: Districts, grid: Grid, rng: Rng): Vec2[
     const pts = cells.map((cell) => cellPoint(n, cell));
     pts.unshift(edgePoint(pts[0], pts[1]));
     pts.push(edgePoint(pts[pts.length - 1], pts[pts.length - 2]));
-    const line = relax(pts, RAIL_MIN_RADIUS.main);
-    if (valid(t, line)) return line;
+    for (const radius of [RAIL_CURVE.main, RAIL_MIN_RADIUS.main]) {
+      const line = relax(straighten(grid, pts), radius);
+      if (valid(t, line)) return line;
+    }
   }
   return null;
 }
@@ -361,8 +453,9 @@ function freightLine(t: Terrain, districts: Districts, grid: Grid, main: RailLin
   for (const target of targets.slice(0, 3)) {
     const start = Math.floor(target.center.y / GRID) * n + Math.floor(target.center.x / GRID);
     if (cost[start] === Infinity) continue;
-    const path = route(grid, start, [0, 1, 2, 3, 4, 5, 6, 7], (cell) => mainCells.has(cell));
-    if (!path || path.length < 8) continue;
+    // A spur is short and keeps to the works it serves: every cell of other land costs it extra.
+    const path = route(grid, start, [0, 1, 2, 3, 4, 5, 6, 7], (cell) => mainCells.has(cell), (cell) => (grid.works[cell] ? 0 : 2.5));
+    if (!path || path.length < 8 || path.length * GRID > FREIGHT_MAX) continue;
     path.reverse();
     const at = mainCells.get(path[0])!;
     const out = path.slice(2).map((cell) => cellPoint(n, cell));
@@ -375,12 +468,16 @@ function freightLine(t: Terrain, districts: Districts, grid: Grid, main: RailLin
       const i = at - sense * k;
       if (i >= 0 && i < main.points.length) lead.push(main.points[i]);
     }
-    const line = relax([...lead, ...out], RAIL_MIN_RADIUS.freight, lead.length);
+    const line = relax(straighten(grid, [...lead, ...out], lead.length), RAIL_CURVE.freight, lead.length);
     // Drop the part that still runs on the main line.
     let first = lead.length - 1;
     while (first + 1 < line.length && near(line[first + 1]) < 2.5) first++;
     const branch = line.slice(first);
-    if (branch.length < 30 || !valid(t, branch)) continue;
+    // It ends in a yard back from the quay, not at the water's edge.
+    while (branch.length > 1 && seaDistAt(t, branch[branch.length - 1].x, branch[branch.length - 1].y) < 90) branch.pop();
+    if (branch.length < 30 || branch.length * RAIL_STEP > FREIGHT_MAX || !valid(t, branch)) continue;
+    // A spur is not worth a bridge under or over a freeway and its ramps.
+    if (branch.some((p) => grid.hw.nearest(p.x, p.y, 70) < 70)) continue;
     return branch;
   }
   return null;
@@ -391,7 +488,7 @@ export function generateRail(t: Terrain, districts: Districts, highways: Vec2[][
   const lines: RailLine[] = [];
   const mainPts = mainLine(t, districts, grid, rng.fork('main'));
   if (mainPts) {
-    const main = finish(t, districts, 'main', mainPts, rng.fork('main-profile'));
+    const main = finish(t, 'main', mainPts, denseRun(t, districts, 'main', mainPts), rng.fork('main-profile'));
     lines.push(main);
     const freightPts = freightLine(t, districts, grid, main);
     if (freightPts) {
@@ -399,24 +496,29 @@ export function generateRail(t: Terrain, districts: Districts, highways: Vec2[][
       main.points.forEach((p, i) => {
         if (dist(p, freightPts[0]) < dist(main.points[at], freightPts[0])) at = i;
       });
-      const branch = finish(t, districts, 'freight', freightPts, rng.fork('freight-profile'), main.level[at]);
-      // The branch ends in a yard on open ground: not inside a hill, in a cutting or up on a viaduct.
-      let end = branch.points.length - 1;
-      const open = (i: number): boolean => {
-        const p = branch.points[i];
-        return branch.structure[i] === 'ground' && Math.abs(branch.level[i] - heightAt(t, p.x, p.y)) <= 1.5;
-      };
-      while (end > 0 && !(open(end) && open(Math.max(0, end - 2)) && open(Math.max(0, end - 4)))) end--;
-      if (end >= 30) {
-        if (end < branch.points.length - 1) {
-          branch.points.length = branch.structure.length = branch.level.length = branch.crossable.length = end + 1;
-          branch.length = polyLength(branch.points);
-        }
-        lines.push(branch);
-      }
+      const branch = finish(t, 'freight', freightPts, freightPts.map(() => false), rng.fork('freight-profile'), main.level[at]);
+      if (endBranch(t, branch, branch.points.length - 1)) lines.push(branch);
     }
   }
-  return { lines };
+  return { lines, gates: [] };
+}
+
+/**
+ * Ends the branch at or before point `end`, in a yard on open ground: not inside a hill, in a cutting or up on a
+ * viaduct. False if that leaves too little of it to be worth building.
+ */
+function endBranch(t: Terrain, branch: RailLine, end: number): boolean {
+  const open = (i: number): boolean => {
+    const p = branch.points[i];
+    return branch.structure[i] === 'ground' && Math.abs(branch.level[i] - heightAt(t, p.x, p.y)) <= 1.5;
+  };
+  while (end > 0 && !(open(end) && open(Math.max(0, end - 2)) && open(Math.max(0, end - 4)))) end--;
+  if (end < BRANCH_MIN) return false;
+  if (end < branch.points.length - 1) {
+    branch.points.length = branch.structure.length = branch.level.length = branch.crossable.length = end + 1;
+    branch.length = polyLength(branch.points);
+  }
+  return true;
 }
 
 export interface RailHit {
@@ -426,6 +528,107 @@ export interface RailHit {
   seg: number;
   /** Unit direction of the track there. */
   tan: Vec2;
+}
+
+/**
+ * Settles how the lines meet the main streets, once those are known. Trains on the main line are frequent: in and
+ * around the centre it passes over every main street on a viaduct, and stays up as long as the next one is near.
+ * Further out a main street may cross on the level, behind gates, where the crossing is a simple one. The branch
+ * has no viaducts: it ends before a main street that it cannot cross simply. Called before the smaller streets
+ * are traced, which then end at the tracks, cross in the gaps left for them or pass under the viaduct.
+ */
+export function separateGrades(rail: Rail, t: Terrain, districts: Districts, arterials: Vec2[][], highways: Vec2[][], rng: Rng): void {
+  const li = rail.lines.findIndex((l) => l.kind === 'main');
+  if (li < 0) return;
+  const main = rail.lines[li];
+  const n = main.points.length;
+  type Hit = { seg: number; line: number; skew: number; x: number; y: number };
+  const hits = (track: Vec2[], lines: Vec2[][]): Hit[] => {
+    const index = new SegmentIndex(60);
+    index.addLine(0, track);
+    const out: Hit[] = [];
+    lines.forEach((pts, line) => {
+      for (let i = 1; i < pts.length; i++) {
+        const [a, b] = [pts[i - 1], pts[i]];
+        index.query(Math.min(a.x, b.x), Math.min(a.y, b.y), Math.max(a.x, b.x), Math.max(a.y, b.y), (r) => {
+          const hit = segSeg(a, b, r.a, r.b);
+          if (!hit) return;
+          const turn = angleDiff(Math.atan2(b.y - a.y, b.x - a.x), Math.atan2(r.b.y - r.a.y, r.b.x - r.a.x));
+          out.push({ seg: r.seg, line, skew: Math.abs(Math.PI / 2 - Math.min(turn, Math.PI - turn)), x: hit.x, y: hit.y });
+        });
+      }
+    });
+    return out.sort((p, q) => p.seg - q.seg);
+  };
+  const roads = new SegmentIndex(80);
+  arterials.forEach((pts, i) => roads.addLine(i, pts));
+  /** Another main street meets the one of this crossing close to the tracks. */
+  const atJunction = (c: Hit): boolean => {
+    let found = false;
+    roads.query(c.x - JUNCTION_CLEAR, c.y - JUNCTION_CLEAR, c.x + JUNCTION_CLEAR, c.y + JUNCTION_CLEAR, (r) => {
+      if (r.line !== c.line && pointSeg(c.x, c.y, r.a, r.b).d < JUNCTION_CLEAR) found = true;
+    });
+    return found;
+  };
+  const lifted = denseRun(t, districts, 'main', main.points);
+  const reach = Math.round(VIADUCT_REACH / RAIL_STEP);
+  const lift = (seg: number) => {
+    for (let k = Math.max(0, seg - reach); k <= Math.min(n - 1, seg + 1 + reach); k++) lifted[k] = true;
+  };
+  // In and around the centre every main street is passed over. Further out they are fewer and quieter, and the
+  // line stays on the ground with a gated level crossing - but only a simple one: square to the street, clear of
+  // its junctions and of the next crossing.
+  const centre = districts.downtown.center;
+  const over = hits(main.points, arterials);
+  const apart = Math.round(GATED_APART / RAIL_STEP);
+  for (const c of over) {
+    const simple = c.skew < MAX_SKEW && !atJunction(c) && !over.some((o) => o !== c && Math.abs(o.seg - c.seg) < apart);
+    if (dist(main.points[c.seg], centre) <= INNER_RADIUS || !simple) lift(c.seg);
+  }
+  // Stay up between two viaducts that are close; under a freeway the line comes down sooner, so that the freeway
+  // does not have to climb over it. A main street that would cross on a viaduct's ramp is passed over as well.
+  const under = hits(main.points, highways);
+  const ramp = Math.round(VIADUCT_HEIGHT / RAIL_MAX_GRADE / RAIL_STEP) + 8;
+  for (let again = true; again; ) {
+    again = false;
+    for (let i = 0; i < n; ) {
+      if (lifted[i]) {
+        i++;
+        continue;
+      }
+      let j = i;
+      while (j < n && !lifted[j]) j++;
+      const limit = under.some((c) => c.seg >= i - 1 && c.seg <= j) ? 0.65 * VIADUCT_GAP : VIADUCT_GAP;
+      if (i > 0 && j < n && (j - i) * RAIL_STEP < limit) for (let k = i; k < j; k++) lifted[k] = true;
+      i = j;
+    }
+    for (const c of over) {
+      if (lifted[c.seg]) continue;
+      let near = false;
+      for (let k = Math.max(0, c.seg - ramp); k <= Math.min(n - 1, c.seg + ramp); k++) near ||= lifted[k];
+      if (near) {
+        lift(c.seg);
+        again = true;
+      }
+    }
+  }
+  const gated = over.filter((c) => !lifted[c.seg]);
+  Object.assign(main, finish(t, 'main', main.points, lifted, rng.fork('main-profile'), undefined, gated.map((c) => c.seg)));
+  rail.gates = gated.map((c) => ({ x: c.x, y: c.y }));
+  for (const branch of rail.lines.filter((l) => l.kind === 'freight')) {
+    let at = 0;
+    main.points.forEach((p, i) => {
+      if (dist(p, branch.points[0]) < dist(main.points[at], branch.points[0])) at = i;
+    });
+    if (Math.abs(main.level[at] - branch.level[0]) > 0.05) Object.assign(branch, finish(t, 'freight', branch.points, branch.points.map(() => false), rng.fork('freight-profile'), main.level[at]));
+    // Under the ramp down from the main line's viaduct a street passes below.
+    const across = hits(branch.points, arterials).filter((c) => branch.structure[c.seg] === 'ground');
+    const close = Math.round(CROSSING_APART / RAIL_STEP);
+    const bad = across.find((c, k) => c.skew >= MAX_SKEW || atJunction(c) || (k > 0 && c.seg - across[k - 1].seg < close));
+    const end = bad ? bad.seg - BRANCH_SHORT : branch.points.length - 1;
+    if (endBranch(t, branch, end)) rail.gates.push(...across.filter((c) => c.seg < branch.points.length - 1).map((c) => ({ x: c.x, y: c.y })));
+    else rail.lines.splice(rail.lines.indexOf(branch), 1);
+  }
 }
 
 /** Spatial lookup of the tracks, used to keep streets off them. */
@@ -448,16 +651,27 @@ export class RailIndex {
   }
 
   /**
-   * True if a street may not be at (x, y): local streets stop at fenced track, and no street heading (dx, dy)
-   * may run along the tracks inside their clearance. Tunnels block nothing.
+   * True if a street may not be at (x, y): streets other than the main ones (`minor`) stop at fenced track, and no
+   * street heading (dx, dy) may run along the tracks inside their clearance. Tunnels block nothing.
    */
-  blocks(x: number, y: number, local: boolean, dx?: number, dy?: number): boolean {
+  blocks(x: number, y: number, minor: boolean, dx?: number, dy?: number): boolean {
+    // Beside track on the ground the land backs onto the fence: a street along it would meet every street that
+    // crosses within a few metres of the level crossing.
+    const side = dx !== undefined && dy !== undefined ? this.nearest(x, y, RAIL_SIDE) : null;
+    if (side && this.rail.lines[side.line].structure[side.seg] === 'ground' && Math.abs(dx! * side.tan.x + dy! * side.tan.y) > 0.8) return true;
+    if (minor && this.rail.gates.some((g) => Math.abs(g.x - x) < GATE_CLEAR && Math.hypot(g.x - x, g.y - y) < GATE_CLEAR)) return true;
     const hit = this.nearest(x, y, RAIL_CLEARANCE);
     if (!hit) return false;
     const line = this.rail.lines[hit.line];
     if (line.structure[hit.seg] === 'tunnel') return false;
     if (dx !== undefined && dy !== undefined && Math.abs(dx * hit.tan.x + dy * hit.tan.y) > 0.8) return true;
-    return local && !line.crossable[hit.seg];
+    return minor && !line.crossable[hit.seg];
+  }
+
+  /** True if (x, y) is on main-line track that lies on the ground, where no main street may cross. */
+  atGrade(x: number, y: number): boolean {
+    const hit = this.nearest(x, y, RAIL_CLEARANCE);
+    return !!hit && this.rail.lines[hit.line].kind === 'main' && this.rail.lines[hit.line].structure[hit.seg] === 'ground';
   }
 
   /** Crossings of the segment a-b with track that is not in a tunnel. */
