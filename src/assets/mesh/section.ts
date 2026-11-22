@@ -1,4 +1,4 @@
-import { Frame, MeshBuilder, Path, Strip, endCap, frameAt, offset, pathLength, slicePath, sweep, v3 } from './builder';
+import { Frame, MeshBuilder, Path, Strip, V3, endCap, frameAt, offset, pathLength, slicePath, sweep, v3 } from './builder';
 
 export type LaneKind = 'drive' | 'bus' | 'bike' | 'parking' | 'turn' | 'shoulder' | 'median';
 export type MedianKind = 'raised' | 'planted' | 'barrier' | 'painted' | 'pavers' | 'guardrail';
@@ -105,6 +105,106 @@ export interface SweepOpts {
   noRight?: boolean;
   /** No symbols in the lanes. */
   noSymbols?: boolean;
+  /** Bus bays cut into the sides. */
+  bays?: Bay[];
+}
+
+/** A bus bay: for a stretch of the road the kerb steps back into the side, which may widen outwards to keep its walk. */
+export interface Bay {
+  side: 1 | -1;
+  /** Along the path, tapers included. */
+  from: number;
+  to: number;
+  /** How far the kerb steps back, and how far the outer edge of the side moves out. */
+  depth: number;
+  bulge: number;
+  /** Lengths over which the kerb leaves its line after `from` and returns to it before `to`. */
+  taper: [number, number];
+  /** Surface of the bay and its kerb. */
+  tex?: string;
+  curb?: string;
+}
+const smooth = (q: number): number => {
+  const c = Math.min(1, Math.max(0, q));
+  return c * c * (3 - 2 * c);
+};
+/** How much of its depth a bay has at a distance along the path: 0 outside it, 1 where the bus stands. */
+export const bayReach = (bay: { from: number; to: number; taper: [number, number] }, s: number): number => Math.min(smooth((s - bay.from) / bay.taper[0]), smooth((bay.to - s) / bay.taper[1]));
+
+/** A side of the road with bus bays: the plain strips between them, and through each bay a side whose kerb steps back. */
+function sweepBays(b: MeshBuilder, path: Path, side: Side, x: number, dir: 1 | -1, plain: Strip[], bays: Bay[]): void {
+  const end = path[path.length - 1].s;
+  let s = path[0].s;
+  for (const bay of [...bays].sort((p, q) => p.from - q.from)) {
+    if (bay.from > s + 0.01) sweep(b, slicePath(path, s, bay.from), plain);
+    baySide(b, path, side, x, dir, bay);
+    s = bay.to;
+  }
+  if (s < end - 0.01) sweep(b, slicePath(path, s, end), plain);
+}
+
+function baySide(b: MeshBuilder, path: Path, side: Side, x: number, dir: 1 | -1, bay: Bay): void {
+  const h = side.curb ? (side.curbH ?? 0.15) : 0;
+  const run = side.rolled ? 0.3 : 0.02;
+  const kw = Math.max(CURB_W, run + 0.05);
+  const g = side.gutter ? GUTTER_W : 0;
+  const v = side.verge?.w ?? 0;
+  const behind = v + (side.walk?.w ?? 0) + (side.ground?.w ?? 0);
+  const walk = side.walk?.tex ?? 'concrete/walk-square';
+  interface Row { material: string; uv: 'along' | 'tile'; pts: [number, number][]; c: number[]; layer?: number }
+  /** The side at a distance along the path, as distances outwards from the edge of the lanes. */
+  const rows = (s: number): Row[] => {
+    const k = bayReach(bay, s);
+    const sh = bay.depth * k;
+    const out: Row[] = [{ material: bay.tex ?? 'concrete/road-tined', uv: 'tile', pts: [[0, 0], [sh, 0]], c: [0, sh] }];
+    let u = sh;
+    if (g) out.push({ material: 'concrete/gutter', uv: 'along', pts: [[u, 0], [u + g, 0]], c: [0, g] });
+    u += g;
+    out.push({ material: bay.curb ?? side.curb ?? 'curb/plain', uv: 'along', pts: [[u, 0], [u + run, h], [u + kw, h]], c: [0, 0.25, 0.5] });
+    u += kw;
+    // The verge gives way first, then the walk; what is left of the walk is made up at its outer edge.
+    const vw = Math.max(0, v - sh);
+    const far = g + kw + behind + bay.bulge * k;
+    out.push({ material: side.verge?.tex ?? walk, uv: 'tile', pts: [[u, h], [u + vw, h]], c: [0, vw] });
+    out.push({ material: walk, uv: 'tile', pts: [[u + vw, h], [far, h]], c: [0, far - u - vw] });
+    // Where people wait: a warning strip along the kerb.
+    out.push({ material: 'paving/tactile-dome-yellow', layer: 1, uv: 'tile', pts: [[u + 0.1, h], [u + 0.1 + 0.6 * smooth((k - 0.96) / 0.04), h]], c: [0, 0.6] });
+    out.push({ material: 'ground/dirt', uv: 'along', pts: [[far, h], [far, -0.4]], c: [0, h + 0.4] });
+    return out;
+  };
+  const at = new Set<number>([bay.from, bay.to]);
+  for (const f of path) if (f.s > bay.from + 0.05 && f.s < bay.to - 0.05) at.add(f.s);
+  const n = Math.max(1, Math.ceil((bay.to - bay.from) / 1.5));
+  for (let i = 1; i < n; i++) at.add(bay.from + ((bay.to - bay.from) * i) / n);
+  const stations = [...at].sort((p, q) => p - q).map((s) => ({ f: frameAt(path, s), rows: rows(s) }));
+  for (let j = 0; j + 1 < stations.length; j++) {
+    const [a, c] = [stations[j], stations[j + 1]];
+    a.rows.forEach((ra, r) => {
+      const rc = c.rows[r];
+      const lift = (ra.layer ?? 0) * 0.006;
+      for (let i = 0; i + 1 < ra.pts.length; i++) {
+        const span = (row: Row): number => Math.hypot(row.pts[i + 1][0] - row.pts[i][0], row.pts[i + 1][1] - row.pts[i][1]);
+        if (span(ra) < 1e-4 && span(rc) < 1e-4) continue;
+        // Outwards is to the right on the right side; on the left the strip is taken from its outer edge inwards.
+        const [i0, i1] = dir === 1 ? [i, i + 1] : [i + 1, i];
+        const corner = (st: typeof a, row: Row, q: number): V3 => offset(st.f, x + dir * row.pts[q][0], row.pts[q][1] + lift);
+        const uv = (st: typeof a, row: Row, q: number): [number, number] => (row.uv === 'along' ? [st.f.s, row.c[q]] : [row.c[q], st.f.s]);
+        const normal = (st: typeof a, row: Row): V3 => {
+          const l = span(row);
+          const [nx, ny] = [(-(row.pts[i + 1][1] - row.pts[i][1]) / l) * dir, (row.pts[i + 1][0] - row.pts[i][0]) / l];
+          return v3.add(v3.scale(st.f.r, nx), v3.scale(st.f.u, ny));
+        };
+        b.quad(
+          ra.material,
+          corner(a, ra, i0), corner(a, ra, i1), corner(c, rc, i1), corner(c, rc, i0),
+          [uv(a, ra, i0), uv(a, ra, i1), uv(c, rc, i1), uv(c, rc, i0)],
+          ra.layer ?? 0,
+          // A strip that starts from nothing faces the way it does where it has its width.
+          [normal(a, span(ra) < 1e-4 ? rc : ra), normal(a, span(ra) < 1e-4 ? rc : ra), normal(c, span(rc) < 1e-4 ? ra : rc), normal(c, span(rc) < 1e-4 ? ra : rc)],
+        );
+      }
+    });
+  }
 }
 
 function sideStrips(side: Side, x: number, dir: 1 | -1, strips: Strip[], top: [number, number][]): { x: number; y: number } {
@@ -205,7 +305,10 @@ export function sweepSection(b: MeshBuilder, path: Path, sec: Section, opts: Swe
   // Left side, built outwards then reversed so that the outline runs left to right.
   const leftTop: [number, number][] = [];
   let lo = { x: lay.lanes[0].x0, y: 0 };
-  if (!opts.noLeft) lo = sideStrips(sec.left, lay.lanes[0].x0, -1, strips, leftTop);
+  const bays = (dir: 1 | -1): Bay[] => (opts.bays ?? []).filter((bay) => bay.side === dir);
+  // A side with bus bays is built stretch by stretch, the others with the lanes.
+  const leftStrips: Strip[] = bays(-1).length ? [] : strips;
+  if (!opts.noLeft) lo = sideStrips(sec.left, lay.lanes[0].x0, -1, leftStrips, leftTop);
   top.push(...leftTop.reverse(), [lay.lanes[0].x0, 0]);
 
   for (const { x0, x1, lane } of lay.lanes) {
@@ -248,9 +351,13 @@ export function sweepSection(b: MeshBuilder, path: Path, sec: Section, opts: Swe
     }
   }
   let ro = { x: lay.lanes[lay.lanes.length - 1].x1, y: 0 };
-  if (!opts.noRight) ro = sideStrips(sec.right, ro.x, 1, strips, top);
+  const rightStrips: Strip[] = bays(1).length ? [] : strips;
+  const laneEdge = ro.x;
+  if (!opts.noRight) ro = sideStrips(sec.right, ro.x, 1, rightStrips, top);
 
   sweep(b, path, strips);
+  if (leftStrips !== strips) sweepBays(b, path, sec.left, lay.lanes[0].x0, -1, leftStrips, bays(-1));
+  if (rightStrips !== strips) sweepBays(b, path, sec.right, laneEdge, 1, rightStrips, bays(1));
 
   // Lane lines.
   const linePath = from > 0 || to < L ? slicePath(path, from, to) : path;
