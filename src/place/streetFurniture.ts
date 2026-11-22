@@ -1,5 +1,5 @@
 // The registry comes first: the kit modules below register their models with it as they load.
-import '../assets/mesh/registry';
+import { MODELS } from '../assets/mesh/registry';
 import { MeshBuilder, ModelData, V3 } from '../assets/mesh/builder';
 import { CABLE, POLE_TAPS, Taps } from '../assets/mesh/furniture';
 import { catenary, pipe } from '../assets/mesh/kit';
@@ -95,6 +95,16 @@ function hash(...v: number[]): number {
 const right = (t: Vec2): Vec2 => ({ x: -t.y, y: t.x });
 /** Yaw that turns a model's +x axis along `d`. */
 const along = (d: Vec2): number => Math.atan2(d.y, d.x);
+const footprints = new Map<string, [number, number]>();
+/** How far a model reaches in front of its origin and behind it. */
+function footprint(id: string): [number, number] {
+  let f = footprints.get(id);
+  if (!f) {
+    const { min, max } = MODELS.find((m) => m.id === id)!.build();
+    footprints.set(id, (f = [-min[2], max[2]]));
+  }
+  return f;
+}
 /** Yaw that turns a model's front (+z) towards `d`. */
 const facing = (d: Vec2): number => Math.atan2(-d.x, d.y);
 
@@ -728,13 +738,15 @@ export function placeStreetFurniture(city: City, roads: RoadModel): StreetFurnit
 
     const busy = type === 'downtown' || type === 'midtown' || type === 'oldtown' || type === 'beach';
     /** Stands something `back` behind the kerb where the pavement leaves room to walk past it. */
-    const stand = (kind: FurnitureKind, model: string, d: number, side: number, depth: number, yaw: (q: { t: Vec2 }) => number, clear: number, pad = false): boolean => {
+    const stand = (kind: FurnitureKind, model: string, d: number, side: number, deep: number | [number, number], yaw: (q: { t: Vec2 }) => number, clear: number, pad = false): boolean => {
+      // What it takes towards the road and away from it.
+      const [front, rear] = typeof deep === 'number' ? [deep / 2, deep / 2] : deep;
       if (d < 5 || d > len - 5) return false;
       const v = verge(side);
       // Behind a planted verge it stands at the near edge of the paving, unless the verge is paved over there.
       const lawn = v >= 0.8 && !pad;
-      const back = kerb(side) + (lawn ? v + 0.15 : 0.45) + depth / 2;
-      if (v + paved(side) < back - kerb(side) + depth / 2 + walkway) return false;
+      const back = kerb(side) + (lawn ? v + 0.15 : 0.45) + front;
+      if (v + paved(side) < back - kerb(side) + rear + walkway) return false;
       const q = at(d, off(side, back));
       return dry(q) && put({ model, kind, x: q.x, y: q.y, h: q.h, yaw: yaw(q), edge: e.id }, clear);
     };
@@ -813,7 +825,11 @@ export function placeStreetFurniture(city: City, roads: RoadModel): StreetFurnit
       }
       // Bicycle racks and newspaper boxes where there are shops and offices.
       if ((type === 'downtown' || type === 'midtown') && len > 60) {
-        if (hash(seed, e.id, 62) < 0.6) stand('rack', pick(['furniture/rack-u-row', 'furniture/rack-u-row-bikes', 'furniture/rack-wave-bikes', 'furniture/rack-grid-bikes', 'furniture/rack-u-bike'], e.id, 63), len * 0.42, lit, 0.8, (q) => along(q.t), 2.6);
+        if (hash(seed, e.id, 62) < 0.6) {
+          // The bicycles stand across the pavement; where they would not fit the rack is an empty one.
+          const rack = (model: string): boolean => stand('rack', model, len * 0.42, lit, footprint(model), (q) => facing(away(q, lit)), 2.6);
+          if (!rack(pick(['furniture/rack-u-row', 'furniture/rack-u-row-bikes', 'furniture/rack-wave-bikes', 'furniture/rack-grid-bikes', 'furniture/rack-u-bike'], e.id, 63))) rack('furniture/rack-u-row');
+        }
         if (hash(seed, e.id, 64) < (type === 'downtown' ? 0.6 : 0.3)) stand('news', pick(NEWS, e.id, 65), 9.5, -1, 0.45, (q) => facing(away(q, -1)), 1.8);
       }
     }

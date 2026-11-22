@@ -857,8 +857,10 @@ describe('street furniture', () => {
     const DEPTH: Record<string, number> = { bench: 0.6, bin: 0.6, shelter: 1.8, news: 0.45, rack: 0.8, mail: 0.6 };
     let n = 0;
     for (const it of f.items) {
-      const depth = DEPTH[it.kind];
-      if (depth === undefined) continue;
+      if (DEPTH[it.kind] === undefined) continue;
+      // The bicycles of a rack reach further than the rack: towards the road and away from it.
+      const { min, max } = it.kind === 'rack' ? MODELS.find((s) => s.id === it.model)!.build() : { min: [0, 0, -DEPTH[it.kind] / 2], max: [0, 0, DEPTH[it.kind] / 2] };
+      const [front, rear] = [-min[2], max[2]];
       n++;
       const line = m.lines[it.edge!]!;
       const lay = layout(m.sections[it.edge!]);
@@ -878,8 +880,8 @@ describe('street furniture', () => {
       const outer = off > 0 ? lay.outer[1] : -lay.outer[0];
       const kerb = off > 0 ? lay.road[1] : -lay.road[0];
       const where = `${it.model} at ${it.x.toFixed(0)}, ${it.y.toFixed(0)}`;
-      expect(Math.abs(off) - depth / 2, where).toBeGreaterThan(kerb + 0.4);
-      expect(outer - (Math.abs(inner) + depth / 2), where).toBeGreaterThan(c.profiles[it.edge!].type === 'downtown' ? 2.35 : 1.45);
+      expect(Math.abs(off) - front, where).toBeGreaterThan(kerb + 0.4);
+      expect(outer - (Math.abs(inner) + rear), where).toBeGreaterThan(c.profiles[it.edge!].type === 'downtown' ? 2.35 : 1.45);
     }
     expect(n).toBeGreaterThan(100);
   });
