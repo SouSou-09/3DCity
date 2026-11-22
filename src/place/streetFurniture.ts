@@ -708,11 +708,9 @@ export function placeStreetFurniture(city: City, roads: RoadModel): StreetFurnit
         first ??= pole;
         last = pole;
       }
-      if (first && last) {
-        const [a, b] = [at(0, 0), at(len, 0)];
-        if (Math.hypot(first.x - a.x, first.y - a.y) < 25) lineEnds.push({ node: e.a, pole: first, out: a.t, linked: false });
-        if (Math.hypot(last.x - b.x, last.y - b.y) < 25) lineEnds.push({ node: e.b, pole: last, out: rev(b.t), linked: false });
-      }
+      const [a, b] = [at(0, 0), at(len, 0)];
+      if (first && Math.hypot(first.x - a.x, first.y - a.y) < 25) lineEnds.push({ node: e.a, pole: first, out: a.t, linked: false });
+      if (last && Math.hypot(last.x - b.x, last.y - b.y) < 25) lineEnds.push({ node: e.b, pole: last, out: rev(b.t), linked: false });
     }
 
     // Hydrants: one a little way past the corner, then at intervals.
