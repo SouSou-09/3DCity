@@ -743,7 +743,8 @@ export function placeParks(site: Site): { parks: ParkPlan[]; tiles: ModelData[] 
 
       // --- Paths ---
       const pass = (k: number): boolean => occ[k] === LAWN || occ[k] === PATH || occ[k] === APRON || occ[k] === OPEN;
-      const dist = new Float32Array(w * w);
+      // As precise as the costs on the heap, or a live entry would look stale.
+      const dist = new Float64Array(w * w);
       const from = new Int32Array(w * w);
       /** Cheapest way over the grass from a point to the first cell that `goal` accepts. */
       const route = (start: Vec2, goal: (k: number) => boolean, cost: (k: number) => number): Vec2[] | null => {
