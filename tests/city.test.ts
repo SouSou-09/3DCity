@@ -1377,6 +1377,18 @@ describe('parks, waterfront and boundaries', () => {
         expect(p.entrances.length, at).toBeGreaterThan(0);
         expect(p.paths.length, at).toBeGreaterThan(0);
       }
+      // Every further way in leads on into the park, not to a stub at the gate.
+      p.entrances.forEach((e, i) => {
+        if (!i) return;
+        const from = e.from ?? { x: e.x - e.nx * 1.4, y: e.y - e.ny * 1.4 };
+        const path = p.paths.find((q) => Math.hypot(q.pts[0].x - from.x, q.pts[0].y - from.y) < 0.5);
+        expect(path, `${at}: entrance ${i}`).toBeDefined();
+        let len = 0;
+        for (let q = 1; q < path!.pts.length; q++) len += Math.hypot(path!.pts[q].x - path!.pts[q - 1].x, path!.pts[q].y - path!.pts[q - 1].y);
+        expect(len, `${at}: entrance ${i}`).toBeGreaterThan(3.7);
+      });
+      // A pitch lies along the plot booked for it.
+      for (const f of p.features) if (f.type === 'soccer') expect([f.hx, f.hz], at).toEqual([20, 28]);
       for (let i = 0; i < p.play.length; i++)
         for (let j = i + 1; j < p.play.length; j++) {
           const [a, b] = [p.play[i], p.play[j]];
