@@ -955,16 +955,21 @@ export function placeParks(site: Site): { parks: ParkPlan[]; tiles: ModelData[] 
         }
 
       // --- Where the grass has given out: goal mouths, the middle of the open lawns, the lines people cut to them ---
-      const worn = (x: number, y: number, r: number, yaw: number): void => {
-        site.decal(b, 'site/lawn-worn', x, y, yaw, r, r * (0.7 + hash(seed, pi, Math.round(x), Math.round(y), 40) * 0.3));
+      const worn = (x: number, y: number, r: number, yaw: number, surface?: (x: number, y: number) => number): void => {
+        site.decal(b, 'site/lawn-worn', x, y, yaw, r, r * (0.7 + hash(seed, pi, Math.round(x), Math.round(y), 40) * 0.3), 0.04, surface);
         plan.worn.push({ x, y, r });
       };
       for (const f of plan.features)
-        if (f.type === 'soccer')
+        if (f.type === 'soccer') {
+          // The pitch is turf laid on a plane above the ground: the goal mouths wear on the turf, not under it.
+          const fit = site.plane(f.x, f.y, f.yaw, f.hx, f.hz);
+          const [c, s] = [Math.cos(f.yaw), Math.sin(f.yaw)];
+          const turf = (x: number, y: number): number => fit.h + fit.over + fit.gx * (c * (x - f.x) + s * (y - f.y)) + fit.gz * (c * (y - f.y) - s * (x - f.x)) + 0.05;
           for (const sd of [-1, 1]) {
             const p = Site.local(f.x, f.y, f.yaw, 0, sd * (f.hz - 3));
-            worn(p.x, p.y, 3.2, f.yaw);
+            worn(p.x, p.y, 3.2, f.yaw, turf);
           }
+        }
       plan.lawns.forEach((lawn, li) => {
         for (let q = 0; q < 1 + Math.floor(lawn.r / 9); q++) {
           const [a, d] = [rnd(90, li, q) * 6.3, rnd(91, li, q) * lawn.r * 0.6];

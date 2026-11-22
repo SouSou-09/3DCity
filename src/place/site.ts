@@ -334,13 +334,13 @@ export class Site {
       }
   }
 
-  /** Lays one copy of a mark (a worn patch, fallen leaves) over the ground, stretched to the rectangle. */
-  decal(b: MeshBuilder, tex: string, cx: number, cy: number, yaw: number, hx: number, hz: number, lift = 0.04): void {
+  /** Lays one copy of a mark (a worn patch, fallen leaves) over the ground, or over `surface` where something is laid above the ground, stretched to the rectangle. */
+  decal(b: MeshBuilder, tex: string, cx: number, cy: number, yaw: number, hx: number, hz: number, lift = 0.04, surface?: (x: number, y: number) => number): void {
     const { mw, mh } = b.part(tex);
     const [nx, nz] = [Math.max(1, Math.round(hx / 1.5)), Math.max(1, Math.round(hz / 1.5))];
     const at = (a: number, c: number): V3 => {
       const p = Site.local(cx, cy, yaw, (a / nx) * hx, (c / nz) * hz);
-      return [p.x, this.heightAt(p.x, p.y) + lift, p.y];
+      return [p.x, (surface ? surface(p.x, p.y) : this.heightAt(p.x, p.y)) + lift, p.y];
     };
     const uv = (a: number, c: number): [number, number] => [((a / nx + 1) / 2) * mw, ((c / nz + 1) / 2) * mh];
     for (let a = -nx; a < nx; a++)
