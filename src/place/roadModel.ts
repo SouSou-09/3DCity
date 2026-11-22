@@ -35,6 +35,10 @@ export interface JunctionArm {
   dir: Vec2;
   /** Distance from the centre at which the edge's own road starts. */
   reach: number;
+  /** How traffic coming in on this arm is held, whether it has a crosswalk, and the length of the approach that carries them. */
+  control: Control;
+  crosswalk: boolean;
+  approach: number;
 }
 export interface Junction {
   nodes: number[];
@@ -52,6 +56,10 @@ export interface RoadModel {
   junctions: Junction[];
   /** Centre line of each edge's road as built ([x, height, y]); null where a junction swallowed the edge. */
   lines: (V3[] | null)[];
+  /** Cross slope (rise per metre to the right) at each point of `lines`. */
+  cross: (number[] | null)[];
+  /** Cross-section of each edge as built, in the edge's direction. */
+  sections: Section[];
   /** Where a freeway is cut off outside the map. */
   cuts: { x: number; y: number; h: number; edge: number }[];
   /** stats.folds: roads whose edges fold back over themselves somewhere along a curve too tight for their width. */
@@ -247,6 +255,11 @@ export function buildRoadModel(city: City): RoadModel {
       }
       approach.push(tight[e.id] ? 0.4 : crosswalk[i] ? 7.6 : control[i] !== 'none' ? 2.6 : rank[i] === 0 ? 0.4 : 0.6);
     });
+    c.arms.forEach((a, i) => {
+      a.control = control[i];
+      a.crosswalk = !!crosswalk[i];
+      a.approach = approach[i];
+    });
     c.radius = c.arms.some((a) => tight[a.edge]) ? 1.5 : top >= 3 ? 5 : top >= 2 ? 4 : top >= 1 ? 3 : 2;
     const arms = (): Arm[] =>
       c.arms.map((a, i) => ({
@@ -371,8 +384,8 @@ export function buildRoadModel(city: City): RoadModel {
       for (const id of n.edges) {
         if (swallowed[id]) continue;
         const e = graph.edges[id];
-        if (e.a === i) c.arms.push({ edge: id, end: 0, dir: { x: 1, y: 0 }, reach: 0 });
-        if (e.b === i) c.arms.push({ edge: id, end: 1, dir: { x: 1, y: 0 }, reach: 0 });
+        if (e.a === i) c.arms.push({ edge: id, end: 0, dir: { x: 1, y: 0 }, reach: 0, control: 'none', crosswalk: false, approach: 0 });
+        if (e.b === i) c.arms.push({ edge: id, end: 1, dir: { x: 1, y: 0 }, reach: 0, control: 'none', crosswalk: false, approach: 0 });
       }
     });
     clusters = [];
@@ -482,6 +495,7 @@ export function buildRoadModel(city: City): RoadModel {
   const railPts = city.rail.lines.flatMap((l) => resample(l.points, 5));
   const segs: Seg[] = [];
   const lines: (V3[] | null)[] = graph.edges.map(() => null);
+  const crossOf: (number[] | null)[] = graph.edges.map(() => null);
   const cuts: RoadModel['cuts'] = [];
 
   // --- Roads between the junctions. Ramps and branches first, so that the freeway knows its openings. ---
@@ -725,6 +739,7 @@ export function buildRoadModel(city: City): RoadModel {
     };
     const path = frames(line, keep.map((k) => cross[k]), sp.p0 ? a!.dir : through(e.a, 0), sp.p1 ? { x: -b!.dir.x, y: -b!.dir.y } : through(e.b, 1));
     lines[id] = line;
+    crossOf[id] = keep.map((k) => cross[k]);
     const L = pathLength(path);
     const b3 = tile(pts[pts.length >> 1].x, pts[pts.length >> 1].y);
     const crossings = crossingsOf.get(id) ?? [];
@@ -896,7 +911,7 @@ export function buildRoadModel(city: City): RoadModel {
   for (const fn of standing) fn();
   const tiles = [...builders.values()].map((b) => b.build());
   stats.triangles = tiles.reduce((s, m) => s + m.triangles, 0);
-  return { tiles, ground, levels, junctions: clusters.map(({ nodes, x, y, plane, arms, signal }) => ({ nodes, x, y, plane, arms, signal })), lines, cuts, stats };
+  return { tiles, ground, levels, junctions: clusters.map(({ nodes, x, y, plane, arms, signal }) => ({ nodes, x, y, plane, arms, signal })), lines, cross: crossOf, sections: secs, cuts, stats };
 }
 
 /** Terrain with the ground under and beside every at-grade road brought to the road's level. */

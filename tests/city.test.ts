@@ -5,7 +5,10 @@ import { City, DEFAULT_CONFIG, generateCity } from '../src/gen/city';
 import { LAND_USES, LandUse, Site, useWeights } from '../src/gen/landuse';
 import { STREET_CLEARANCE } from '../src/gen/roadHeights';
 import { profileWidth } from '../src/gen/roadSections';
+import { layout } from '../src/assets/mesh/section';
+import { MODELS } from '../src/assets/mesh/registry';
 import { EDGE_STUB, RoadModel, buildRoadModel } from '../src/place/roadModel';
+import { placeStreetFurniture } from '../src/place/streetFurniture';
 import { RAIL_MAX_GRADE, RAIL_MIN_RADIUS, RAIL_STEP, RailIndex, sharpestRailTurn } from '../src/gen/rail';
 import { isStreet } from '../src/gen/streamlines';
 import { REF_SIZE, inBounds, isWater, seaDistAt, waterDistAt } from '../src/gen/terrain';
@@ -565,5 +568,112 @@ describe('roads in 3D', () => {
       expect(outside).toBeGreaterThan(EDGE_STUB * 0.5);
       expect(outside).toBeLessThanOrEqual(EDGE_STUB + 3);
     }
+  });
+});
+
+describe('street furniture', () => {
+  it('is the same every time and only uses models of the catalogue', () => {
+    const a = placeStreetFurniture(city(1), model(1));
+    const b = placeStreetFurniture(city(1), model(1));
+    expect(b.items).toEqual(a.items);
+    const ids = new Set(MODELS.map((m) => m.id));
+    for (const it of a.items) expect(ids.has(it.model), it.model).toBe(true);
+  });
+
+  it.each(MODEL_SEEDS)('seed %i: every signalled approach has a signal and every stop line a stop sign', (seed) => {
+    const c = city(seed);
+    const m = model(seed);
+    const f = placeStreetFurniture(c, m);
+    const served = new Set(f.items.filter((i) => i.kind === 'signal' || i.kind === 'stop').map((i) => `${i.kind}:${i.junction}:${i.arm}`));
+    let signals = 0;
+    let stops = 0;
+    m.junctions.forEach((j, ji) => {
+      const arms = j.arms.filter((a) => m.lines[a.edge] && Number.isFinite(a.reach));
+      if (arms.length < 3) return;
+      arms.forEach((a) => {
+        const ai = j.arms.indexOf(a);
+        const e = c.graph.edges[a.edge];
+        expect(f.items.every((i) => i.junction !== ji || i.arm !== ai || i.kind === 'signal' || i.edge === a.edge), `arm ${ai} of junction ${ji}`).toBe(true);
+        // Nobody drives into the junction from the start of a one-way street; ramps are checked by eye.
+        if (e.cls === 'ramp' || e.cls === 'highway' || (e.cls === 'local' && c.profiles[a.edge].oneWay && a.end === 0)) return;
+        if (a.control === 'signal') {
+          signals++;
+          expect(served.has(`signal:${ji}:${ai}`), `signal at junction ${ji} (${j.x.toFixed(0)}, ${j.y.toFixed(0)}) arm ${ai}`).toBe(true);
+        } else if (a.control === 'stop') {
+          stops++;
+          expect(served.has(`stop:${ji}:${ai}`), `stop sign at junction ${ji} (${j.x.toFixed(0)}, ${j.y.toFixed(0)}) arm ${ai}`).toBe(true);
+        }
+      });
+    });
+    expect(signals).toBeGreaterThan(100);
+    expect(stops).toBeGreaterThan(400);
+    expect(f.stats.light).toBeGreaterThan(1500);
+    expect(f.stats.cabinet).toBeGreaterThan(0.85 * m.stats.signals);
+  });
+
+  it.each(MODEL_SEEDS)('seed %i: nothing stands in a traffic lane, in the water or on top of something else', (seed) => {
+    const c = city(seed);
+    const m = model(seed);
+    const f = placeStreetFurniture(c, m);
+    // Segments of every built road with the half-width of its carriageway on either side.
+    const CELL = 40;
+    const grid = new Map<number, { ax: number; ay: number; ah: number; bx: number; by: number; bh: number; l: number; r: number; edge: number }[]>();
+    const key = (x: number, y: number): number => Math.floor(x / CELL) * 4096 + Math.floor(y / CELL);
+    c.graph.edges.forEach((e) => {
+      const line = m.lines[e.id];
+      if (!line || e.cls === 'path') return;
+      const lay = layout(m.sections[e.id]);
+      for (let i = 1; i < line.length; i++) {
+        const [p, q] = [line[i - 1], line[i]];
+        const seg = { ax: p[0], ay: p[2], ah: p[1], bx: q[0], by: q[2], bh: q[1], l: lay.road[0], r: lay.road[1], edge: e.id };
+        const seen = new Set<number>();
+        const n = Math.max(1, Math.ceil(Math.hypot(q[0] - p[0], q[2] - p[2]) / (CELL / 2)));
+        for (let k = 0; k <= n; k++) {
+          const kk = key(mix(p[0], q[0], k / n), mix(p[2], q[2], k / n));
+          if (seen.has(kk)) continue;
+          seen.add(kk);
+          const cell = grid.get(kk);
+          if (cell) cell.push(seg);
+          else grid.set(kk, [seg]);
+        }
+      }
+    });
+    let inLane = 0;
+    for (const it of f.items) {
+      expect(Number.isFinite(it.h) && Number.isFinite(it.yaw)).toBe(true);
+      if (it.edge === undefined || !c.graph.edges[it.edge].bridge) expect(isWater(c.terrain, it.x, it.y), `${it.model} in the water at ${it.x.toFixed(0)}, ${it.y.toFixed(0)}`).toBe(false);
+      // Lights on the freeway's median barrier and boards on its parapet are where they belong.
+      if (it.junction === undefined && it.edge !== undefined && (c.graph.edges[it.edge].cls === 'highway' || c.graph.edges[it.edge].cls === 'ramp')) continue;
+      let hit = false;
+      for (let dx = -1; dx <= 1 && !hit; dx++)
+        for (let dy = -1; dy <= 1 && !hit; dy++)
+          for (const s of grid.get(key(it.x + dx * CELL, it.y + dy * CELL)) ?? []) {
+            const [vx, vy] = [s.bx - s.ax, s.by - s.ay];
+            const l = Math.hypot(vx, vy) || 1;
+            const u = ((it.x - s.ax) * vx + (it.y - s.ay) * vy) / (l * l);
+            if (u < 0 || u > 1) continue;
+            if (Math.abs(mix(s.ah, s.bh, u) - it.h) > 2.5) continue;
+            // Offset to the right of the road's direction.
+            const off = ((it.x - s.ax) * -vy + (it.y - s.ay) * vx) / l;
+            if (off > s.l + 0.15 && off < s.r - 0.15) {
+              hit = true;
+              break;
+            }
+          }
+      if (hit) inLane++;
+    }
+    expect(inLane).toBe(0);
+    // Poles keep their distance from each other.
+    const cells = new Map<number, typeof f.items>();
+    const k2 = (x: number, y: number): number => Math.floor(x / 2) * 8192 + Math.floor(y / 2);
+    let close = 0;
+    for (const it of f.items) {
+      for (let dx = -1; dx <= 1; dx++)
+        for (let dy = -1; dy <= 1; dy++) for (const o of cells.get(k2(it.x + dx * 2, it.y + dy * 2)) ?? []) if (Math.hypot(o.x - it.x, o.y - it.y) < 0.6) close++;
+      const cell = cells.get(k2(it.x, it.y));
+      if (cell) cell.push(it);
+      else cells.set(k2(it.x, it.y), [it]);
+    }
+    expect(close).toBe(0);
   });
 });
