@@ -846,14 +846,20 @@ export function placeStreetFurniture(city: City, roads: RoadModel): StreetFurnit
   });
 
   // Across a junction the line carries on to the street most nearly straight ahead; what is left ties in to the nearest pole.
+  // Nodes merged into one junction share it.
+  const hub = new Map<number, number>();
+  for (const j of roads.junctions) for (const n of j.nodes) hub.set(n, j.nodes[0]);
   const byNode = new Map<number, typeof lineEnds>();
-  for (const le of lineEnds) byNode.set(le.node, [...(byNode.get(le.node) ?? []), le]);
+  for (const le of lineEnds) {
+    const n = hub.get(le.node) ?? le.node;
+    byNode.set(n, [...(byNode.get(n) ?? []), le]);
+  }
   for (const list of byNode.values()) {
     const pairs: [number, number, number][] = [];
     for (let i = 0; i < list.length; i++) for (let k = i + 1; k < list.length; k++) pairs.push([list[i].out.x * list[k].out.x + list[i].out.y * list[k].out.y, i, k]);
     pairs.sort((u, v) => u[0] - v[0]);
     for (const [dot, i, k] of pairs) {
-      if (dot > -0.5 || list[i].linked || list[k].linked) continue;
+      if (dot > -0.5 || list[i].linked || list[k].linked || Math.hypot(list[i].pole.x - list[k].pole.x, list[i].pole.y - list[k].pole.y) > 70) continue;
       list[i].linked = list[k].linked = true;
       stringWires(list[i].pole, list[k].pole, true);
     }
