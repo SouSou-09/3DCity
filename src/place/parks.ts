@@ -803,6 +803,8 @@ export function placeParks(site: Site): { parks: ParkPlan[]; tiles: ModelData[] 
         neighbourhood: ['concrete/walk-square', 'concrete/walk-square', 'ground/gravel-fine'],
         pocket: ['concrete/walk-square', 'concrete/walk-square', 'concrete/walk-square'],
       }[tier];
+      /** Cells a path really covers; the ground kept clear inside an entrance is `PATH` before any path is laid. */
+      const laid = new Uint8Array(w * w);
       const addPath = (cellsIn: Vec2[] | null, kind: ParkPath['kind']): void => {
         if (!cellsIn || cellsIn.length < 2) return;
         const rank = kind === 'main' ? 0 : kind === 'loop' ? 1 : 2;
@@ -813,7 +815,9 @@ export function placeParks(site: Site): { parks: ParkPlan[]; tiles: ModelData[] 
           for (let dy = -wd / 2 - 0.4; dy <= wd / 2 + 0.4; dy += 1)
             for (let dx = -wd / 2 - 0.4; dx <= wd / 2 + 0.4; dx += 1) {
               const k = cellOf(p.x + dx, p.y + dy);
-              if (k >= 0 && (occ[k] === LAWN || occ[k] === OPEN || occ[k] === APRON)) occ[k] = PATH;
+              if (k < 0) continue;
+              laid[k] = 1;
+              if (occ[k] === LAWN || occ[k] === OPEN || occ[k] === APRON) occ[k] = PATH;
             }
         plan.paths.push({ pts, w: wd, kind });
         site.ribbon(b, paving[rank], pts, wd, 0.065 - rank * 0.008);
@@ -824,7 +828,7 @@ export function placeParks(site: Site): { parks: ParkPlan[]; tiles: ModelData[] 
       plan.entrances.forEach((e, i) => {
         // The gateway itself: from the back of the pavement to the first of the grass.
         const stub = [e.from ?? { x: e.x - e.nx * 1.4, y: e.y - e.ny * 1.4 }, inside(e)];
-        const way = route(inside(e), i === 0 ? atMiddle : (k) => occ[k] === PATH || atMiddle(k), walk);
+        const way = route(inside(e), i === 0 ? atMiddle : (k) => laid[k] === 1 || atMiddle(k), walk);
         addPath(way ? [stub[0], ...way] : stub, i === 0 ? 'main' : 'link');
       });
       if ((tier === 'central' || tier === 'district') && plan.entrances.length >= 3) {
@@ -837,7 +841,7 @@ export function placeParks(site: Site): { parks: ParkPlan[]; tiles: ModelData[] 
           if (way && polyLength(way) < 700) addPath(way, 'loop');
         });
       }
-      for (const a of access) addPath(route(a, (k) => occ[k] === PATH, walk), 'link');
+      for (const a of access) addPath(route(a, (k) => laid[k] === 1, walk), 'link');
 
       // --- Along the paths: benches, lights, bins ---
       let count = 0;
