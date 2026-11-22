@@ -401,12 +401,15 @@ export function placeWaterfront(site: Site): Waterfront {
       // One pleasure pier on the longest beach, on a ramp of boardwalk up from the sand.
       if (resort && pier('waterfront/pier-boardwalk-wide', mid, 6, WATER_Y - 0.6, true, 1.6)) {
         const deck = WATER_Y - 0.6 + 2.2;
-        const [a, c] = [P(mid, 0, 6), P(mid, 0, 30)];
+        // The ramp comes down to the sand short of whatever street or lot backs the beach.
+        let back = 10;
+        while (back < 30 && site.all(P(mid, 0, back + 2).x, P(mid, 0, back + 2).y, 4.5, FREE, USED)) back += 2;
+        const [a, c] = [P(mid, 0, 6), P(mid, 0, back)];
         const g = site.heightAt(c.x, c.y) + 0.1;
         const corner = (p: Vec2, sd: number, h: number): V3 => [p.x + mid.ny * sd * 4, h, p.y - mid.nx * sd * 4];
-        b.quadUp('paving/boardwalk', corner(a, -1, deck), corner(a, 1, deck), corner(c, 1, g), corner(c, -1, g), 0, [[0, 0], [8, 0], [8, 24], [0, 24]]);
-        for (const sd of [-1, 1]) b.quadFacing('paving/boardwalk', corner(a, sd, deck), corner(c, sd, g), corner(c, sd, g - 1.5), corner(a, sd, deck - 2.5), [mid.ny * sd, 0, -mid.nx * sd], [[0, 0], [24, 0], [24, 1.5], [0, 2.5]]);
-        for (let d = 6; d <= 30; d += 2) site.stampDisc(P(mid, 0, d).x, P(mid, 0, d).y, 5, USED, FREE);
+        b.quadUp('paving/boardwalk', corner(a, -1, deck), corner(a, 1, deck), corner(c, 1, g), corner(c, -1, g), 0, [[0, 0], [8, 0], [8, back - 6], [0, back - 6]]);
+        for (const sd of [-1, 1]) b.quadFacing('paving/boardwalk', corner(a, sd, deck), corner(c, sd, g), corner(c, sd, g - 1.5), corner(a, sd, deck - 2.5), [mid.ny * sd, 0, -mid.nx * sd], [[0, 0], [back - 6, 0], [back - 6, 1.5], [0, 2.5]]);
+        for (let d = 6; d <= back; d += 2) site.stampDisc(P(mid, 0, d).x, P(mid, 0, d).y, 5, USED, FREE);
       }
     } else if (r.kind === 'port') {
       const top = r.top!;
@@ -610,7 +613,9 @@ export function placeWaterfront(site: Site): Waterfront {
       const town = type === 'downtown' || type === 'midtown' || type === 'oldtown' || type === 'residential';
       const yaw = facing({ x: -mx, y: -my });
       if (town) {
-        if (runType !== type || !free(q(1.6).x, q(1.6).y, 0.5)) flush();
+        const last = run[run.length - 1];
+        // A rail does not jump a bend of the river or the mouth of a stream.
+        if (runType !== type || !free(q(1.6).x, q(1.6).y, 0.5) || (last && Math.hypot(last.x - q(1.6).x, last.y - q(1.6).y) > 9)) flush();
         if (free(q(1.6).x, q(1.6).y, 0.5)) {
           runType = type;
           run.push(q(1.6));

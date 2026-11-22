@@ -13,6 +13,8 @@ import { EDGE_STUB, RoadModel, buildRoadModel } from '../src/place/roadModel';
 import { RailModel, buildRailModel, crossingLook } from '../src/place/railModel';
 import { roadAt, trackAt } from '../src/place/railProfile';
 import { LOW_TREES, STREET_TREES, placeStreetFurniture } from '../src/place/streetFurniture';
+import { OpenSpace, placeOpenSpace } from '../src/place/openSpace';
+import { RAIL as ON_RAIL, ROAD as ON_ROAD, bbox } from '../src/place/site';
 import { RAIL_MAX_GRADE, RAIL_MIN_RADIUS, RAIL_STEP, RailIndex, sharpestRailTurn } from '../src/gen/rail';
 import { STATION_HALF } from '../src/gen/stations';
 import { isStreet } from '../src/gen/streamlines';
@@ -1326,5 +1328,104 @@ describe('railway in 3D', () => {
       const tr = m.rail.lines[hit.line];
       if (Math.abs(tr.level[hit.seg] - it.h) < 3) expect(hit.d, `${it.model} at ${it.x.toFixed(0)}, ${it.y.toFixed(0)}`).toBeGreaterThanOrEqual(tr.tracks * 2 + 2.8);
     }
+  });
+});
+
+describe('parks, waterfront and boundaries', () => {
+  const OPEN_SEEDS = [1, 2, 3, 7, 16];
+  const opens = new Map<number, OpenSpace>();
+  const open = (seed: number): OpenSpace => {
+    let o = opens.get(seed);
+    if (!o) opens.set(seed, (o = placeOpenSpace(city(seed), buildRoadModel(city(seed)))));
+    return o;
+  };
+  /** Kinds that stand on the line of a road's edge or on the water by design. */
+  const EDGE = new Set(['fence', 'gate', 'guardrail', 'wall']);
+
+  it('places the same things for the same seed', () => {
+    const a = placeOpenSpace(city(1), buildRoadModel(city(1)));
+    expect(a.items).toEqual(open(1).items);
+    expect(a.shore.reaches).toEqual(open(1).shore.reaches);
+  });
+
+  it.each(OPEN_SEEDS)('seed %i: uses known models and keeps off roads, tracks and water', (seed) => {
+    const o = open(seed);
+    const t = city(seed).terrain;
+    expect(o.items.length).toBeGreaterThan(2000);
+    for (const it of o.items) {
+      const at = `${it.model} at ${it.x.toFixed(0)}, ${it.y.toFixed(0)}`;
+      expect(() => bbox(it.model), at).not.toThrow();
+      expect(Number.isFinite(it.h) && Number.isFinite(it.yaw), at).toBe(true);
+      if (it.afloat) continue;
+      // A quay stands a little out from the old shore line; a model's origin may lie a cell off the middle of what it shows.
+      // A guard rail stands on the edge of a road, which may be on fill out over the water's edge.
+      if (it.kind !== 'guardrail') expect(waterDistAt(t, it.x, it.y), at).toBeGreaterThan(-3);
+      expect(o.site.all(it.x, it.y, 2, ON_RAIL), at).toBe(false);
+      if (!EDGE.has(it.kind)) expect(o.site.all(it.x, it.y, 2, ON_ROAD), at).toBe(false);
+    }
+  });
+
+  it.each(OPEN_SEEDS)('seed %i: parks have ways in, paths and play areas clear of each other', (seed) => {
+    const o = open(seed);
+    expect(o.parks.length).toBeGreaterThan(3);
+    expect(o.parks.filter((p) => p.tier === 'central').length).toBeLessThanOrEqual(1);
+    expect(o.stats.play).toBeGreaterThan(20);
+    expect(o.stats.tree).toBeGreaterThan(300);
+    for (const p of o.parks) {
+      const at = `park ${p.park} (${p.tier}) at ${p.centre.x.toFixed(0)}, ${p.centre.y.toFixed(0)}`;
+      if (p.tier !== 'pocket') {
+        expect(p.entrances.length, at).toBeGreaterThan(0);
+        expect(p.paths.length, at).toBeGreaterThan(0);
+      }
+      for (let i = 0; i < p.play.length; i++)
+        for (let j = i + 1; j < p.play.length; j++) {
+          const [a, b] = [p.play[i], p.play[j]];
+          expect(Math.hypot(a.x - b.x, a.y - b.y), `${at}: ${a.model} / ${b.model}`).toBeGreaterThan((a.r + b.r) * 0.85);
+        }
+    }
+  });
+
+  it.each(OPEN_SEEDS)('seed %i: the shore has one lighthouse, spaced piers and towers, and nothing adrift on land', (seed) => {
+    const o = open(seed);
+    const t = city(seed).terrain;
+    expect(o.shore.reaches.length).toBeGreaterThan(1);
+    expect(o.items.filter((it) => it.kind === 'lighthouse').length).toBe(1);
+    expect(o.shore.lighthouse).not.toBeNull();
+    const pub = o.shore.piers.filter((p) => p.public);
+    for (let i = 0; i < pub.length; i++) for (let j = i + 1; j < pub.length; j++) expect(Math.hypot(pub[i].x - pub[j].x, pub[i].y - pub[j].y)).toBeGreaterThanOrEqual(600);
+    const tw = o.shore.towers;
+    for (let i = 0; i < tw.length; i++) for (let j = i + 1; j < tw.length; j++) expect(Math.hypot(tw[i].x - tw[j].x, tw[i].y - tw[j].y)).toBeGreaterThan(120);
+    // Boats and buoys float; piers start at the shore.
+    for (const it of o.items) {
+      if (it.kind === 'buoy') expect(waterDistAt(t, it.x, it.y), `${it.model} at ${it.x.toFixed(0)}, ${it.y.toFixed(0)}`).toBeLessThan(0);
+      if (it.kind === 'pier') expect(Math.abs(waterDistAt(t, it.x, it.y)), `${it.model} at ${it.x.toFixed(0)}, ${it.y.toFixed(0)}`).toBeLessThan(16);
+    }
+    for (const r of o.shore.reaches) if (r.top !== undefined) expect(r.top, `${r.kind} quay`).toBeLessThan(3);
+  });
+
+  it.each(OPEN_SEEDS)('seed %i: yards and car parks are fenced once, with a way in', (seed) => {
+    const o = open(seed);
+    const b = o.bounds;
+    expect(b.lots.length).toBeGreaterThan(100);
+    expect(b.shared).toBeGreaterThan(0);
+    for (const l of b.lots) if (l.gate) expect(l.gate.width, `lot ${l.lot}`).toBeGreaterThanOrEqual(5);
+    expect(b.lots.filter((l) => l.use === 'I1' || l.use === 'I2').every((l) => !l.gate || l.gate.model === 'boundary/gate-chainlink-sliding')).toBe(true);
+    // No two yard fences run on top of each other.
+    const YARD = /chainlink-(barbed|razor|slats-grey)|bars-razor/;
+    const cells = new Map<string, { x: number; y: number; yaw: number }[]>();
+    let doubled = 0;
+    for (const it of o.items) {
+      if (it.kind !== 'fence' || !YARD.test(it.model)) continue;
+      const [ci, cj] = [Math.floor(it.x / 4), Math.floor(it.y / 4)];
+      for (let dj = -1; dj <= 1; dj++)
+        for (let di = -1; di <= 1; di++)
+          for (const q of cells.get(`${ci + di},${cj + dj}`) ?? [])
+            if (Math.hypot(q.x - it.x, q.y - it.y) < 1.5 && Math.abs(Math.sin(q.yaw - it.yaw)) < 0.2) doubled++;
+      const key = `${ci},${cj}`;
+      cells.set(key, [...(cells.get(key) ?? []), it]);
+    }
+    expect(doubled).toBe(0);
+    expect(o.stats.guardrail).toBeGreaterThan(0);
+    for (const r of b.runs) expect(r.pts.length).toBeGreaterThanOrEqual(2);
   });
 });

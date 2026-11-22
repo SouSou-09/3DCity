@@ -1,5 +1,6 @@
 import { ModelData } from '../assets/mesh/builder';
 import { City } from '../gen/city';
+import { Boundaries, placeBoundaries } from './boundaries';
 import { ParkPlan, placeParks } from './parks';
 import { RoadModel } from './roadModel';
 import { PARK, SITE_KINDS, Site, SiteItem, SiteKind } from './site';
@@ -13,6 +14,7 @@ export interface OpenSpace {
   ground: Float32Array;
   parks: ParkPlan[];
   shore: Waterfront;
+  bounds: Boundaries;
   site: Site;
   stats: Record<SiteKind, number>;
   /** Whether a point is park land. */
@@ -25,7 +27,8 @@ export function placeOpenSpace(city: City, roads: RoadModel): OpenSpace {
   const { parks, tiles } = placeParks(site);
   const shore = placeWaterfront(site);
   tiles.push(...shore.tiles);
+  const bounds = placeBoundaries(site, shore);
   const stats = Object.fromEntries(SITE_KINDS.map((k) => [k, 0])) as Record<SiteKind, number>;
   for (const it of site.items) stats[it.kind]++;
-  return { items: site.items, tiles, ground: site.ground, parks, shore, site, stats, isPark: (x, y) => site.at(x, y) === PARK };
+  return { items: site.items, tiles, ground: site.ground, parks, shore, bounds, site, stats, isPark: (x, y) => site.at(x, y) === PARK };
 }

@@ -201,8 +201,11 @@ export class Site {
 
   /** Whether every cell within r of a point holds one of the given codes. */
   all(x: number, y: number, r: number, ...codes: number[]): boolean {
-    for (let dy = -r; dy <= r + 1e-6; dy += SITE_CELL)
-      for (let dx = -r; dx <= r + 1e-6; dx += SITE_CELL) {
+    // Samples a cell apart through the point itself, and on the rim of the circle along both axes.
+    const n = Math.ceil(r / SITE_CELL);
+    for (let j = -n; j <= n; j++)
+      for (let i = -n; i <= n; i++) {
+        const [dx, dy] = [Math.max(-r, Math.min(r, i * SITE_CELL)), Math.max(-r, Math.min(r, j * SITE_CELL))];
         if (dx * dx + dy * dy > r * r + 1e-6) continue;
         if (!codes.includes(this.at(x + dx, y + dy))) return false;
       }
