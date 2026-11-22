@@ -6,7 +6,9 @@ import { Lamp, PoleOpts, cabinet, fitting, luminaire, pole } from './signals';
 
 const ZINC = 'structure/steel-galvanized';
 const BLACK = 'structure/steel-black';
-const CABLE = 'furniture/cable';
+export const CABLE = 'furniture/cable';
+/** Wire attachment points of each utility pole of the catalogue, by model id. */
+export const POLE_TAPS: Record<string, Taps> = {};
 const O = stand();
 const F = (id: string): string => `furniture/${id}`;
 const P = (id: string): string => `signal/pole-${id}`;
@@ -258,7 +260,8 @@ interface UtilOpts {
   lean?: number;
   yaw?: number;
 }
-interface Taps {
+/** Where the wires are tied to a pole, in the pole's own frame: its crossarms lie along x and the line runs along z. */
+export interface Taps {
   power: V3[];
   low: V3[];
   comm: V3[];
@@ -1170,7 +1173,10 @@ export function addFurniture(): void {
     ['concrete-transformer', '電柱 コンクリート柱+変圧器', { tex: P('concrete'), steel: true, arms: 2, cans: 1, h: 12, comm: true }],
     ['steel', '電柱 鋼管柱', { tex: P('galvanized'), steel: true, arms: 2, h: 12, r0: 0.15 }],
   ];
-  for (const [id, label, o] of POLES) add(`pole-${id}`, label, (b) => void utilPole(b, O, o));
+  for (const [id, label, o] of POLES) {
+    add(`pole-${id}`, label, (b) => void utilPole(b, O, o));
+    POLE_TAPS[`furniture/pole-${id}`] = utilPole(new MeshBuilder(), O, o);
+  }
   add('pole-steel-line', '送電用鋼管柱 3相', (b) => void steelLine(b, O, 16));
   add('pole-span-2', '電柱2本+電線 30m', (b) => line(b, 2, 30, () => ({ pin: true, comm: true })));
   add('pole-span-3', '電柱3本+電線 変圧器・街灯', (b) => line(b, 3, 28, (i) => ({ arms: 2, h: 12, comm: true, cans: i === 1 ? 1 : 0, light: i === 0 ? 'cobra-on' : undefined })));

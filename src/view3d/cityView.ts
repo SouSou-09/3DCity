@@ -126,6 +126,7 @@ export class CityView {
     }
     this.furniture = placeStreetFurniture(city, roads);
     this.content.add(this.buildFurniture(this.furniture.items));
+    for (const tile of this.furniture.tiles) this.content.add(this.materials.group(tile));
     const rail = (this.rail = buildRailModel(city, roads));
     for (const tile of rail.tiles) this.content.add(this.materials.group(tile));
     this.content.add(this.buildFurniture(rail.items));

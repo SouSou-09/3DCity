@@ -1,5 +1,9 @@
-import { V3 } from '../assets/mesh/builder';
-import { Layout, layout, reversed } from '../assets/mesh/section';
+// The registry comes first: the kit modules below register their models with it as they load.
+import '../assets/mesh/registry';
+import { MeshBuilder, ModelData, V3 } from '../assets/mesh/builder';
+import { CABLE, POLE_TAPS, Taps } from '../assets/mesh/furniture';
+import { catenary, pipe } from '../assets/mesh/kit';
+import { Layout, Side, layout, reversed } from '../assets/mesh/section';
 import { Vec2 } from '../core/vec2';
 import { City } from '../gen/city';
 import { DistrictType } from '../gen/districts';
@@ -8,7 +12,9 @@ import { isWater } from '../gen/terrain';
 import { RoadClass } from '../gen/streamlines';
 import { Junction, JunctionArm, RoadModel } from './roadModel';
 
-export type FurnitureKind = 'signal' | 'ped' | 'cabinet' | 'stop' | 'street' | 'speed' | 'light' | 'oneway' | 'warning' | 'guide';
+export type FurnitureKind =
+  | 'signal' | 'ped' | 'cabinet' | 'stop' | 'street' | 'speed' | 'light' | 'oneway' | 'warning' | 'guide'
+  | 'pole' | 'hydrant' | 'bin' | 'bench' | 'busstop' | 'shelter' | 'mail' | 'news' | 'meter' | 'rack' | 'box';
 
 /** One catalogue model standing in the city. */
 export interface Placed {
@@ -29,6 +35,10 @@ export interface Placed {
 
 export interface StreetFurniture {
   items: Placed[];
+  /** The wires between the utility poles and the paving of the bus stops, in tiles. */
+  tiles: ModelData[];
+  /** Spans of wire from pole to pole: `low` is the least height of a wire above the line between the feet of the poles, `crossing` whether it passes over a carriageway. */
+  spans: { a: Vec2; b: Vec2; low: number; crossing: boolean }[];
   stats: Record<FurnitureKind, number>;
 }
 
@@ -95,7 +105,10 @@ const facing = (d: Vec2): number => Math.atan2(-d.x, d.y);
 export function placeStreetFurniture(city: City, roads: RoadModel): StreetFurniture {
   const { graph, profiles } = city;
   const items: Placed[] = [];
-  const stats: Record<FurnitureKind, number> = { signal: 0, ped: 0, cabinet: 0, stop: 0, street: 0, speed: 0, light: 0, oneway: 0, warning: 0, guide: 0 };
+  const stats: Record<FurnitureKind, number> = {
+    signal: 0, ped: 0, cabinet: 0, stop: 0, street: 0, speed: 0, light: 0, oneway: 0, warning: 0, guide: 0,
+    pole: 0, hydrant: 0, bin: 0, bench: 0, busstop: 0, shelter: 0, mail: 0, news: 0, meter: 0, rack: 0, box: 0,
+  };
   const seed = city.config.seed;
 
   // Poles keep clear of each other.
@@ -536,5 +549,318 @@ export function placeStreetFurniture(city: City, roads: RoadModel): StreetFurnit
     }
   });
 
-  return { items, stats };
+  // --- Sidewalk furniture: what stands in the furnishing zone behind the kerb. ---
+  const pick = <T>(list: T[], ...v: number[]): T => list[Math.floor(hash(seed, ...v) * list.length)];
+  /** Whether a freeway or a railway viaduct passes over a point. */
+  const underDeck = (x: number, y: number): boolean => {
+    const hit = railIndex.nearest(x, y, 9);
+    if (hit && roads.rail.lines[hit.line].structure[hit.seg] !== 'ground') return true;
+    for (let dx = -1; dx <= 1; dx++)
+      for (let dy = -1; dy <= 1; dy++)
+        for (const sg of lanes.get(laneKey(x + dx * LANE, y + dy * LANE)) ?? []) {
+          const c = graph.edges[sg.edge].cls;
+          if (c !== 'highway' && c !== 'ramp') continue;
+          const [vx, vy] = [sg.bx - sg.ax, sg.by - sg.ay];
+          const l = Math.hypot(vx, vy) || 1;
+          const u = ((x - sg.ax) * vx + (y - sg.ay) * vy) / (l * l);
+          const off = ((x - sg.ax) * -vy + (y - sg.ay) * vx) / l;
+          if (u >= -0.05 && u <= 1.05 && off > sg.l - 2 && off < sg.r + 2) return true;
+        }
+    return false;
+  };
+
+  type Pole = Placed & { taps: Taps; fallback: Taps };
+  /** The poles at the two ends of each street's line, and the way the line leaves the node there. */
+  const lineEnds: { node: number; pole: Pole; out: Vec2; linked: boolean }[] = [];
+  const wires = new Map<number, MeshBuilder>();
+  const WIRE_TILE = 800;
+  const spans: StreetFurniture['spans'] = [];
+  const builder = (x: number, y: number): MeshBuilder => {
+    const key = Math.floor(x / WIRE_TILE) * 64 + Math.floor(y / WIRE_TILE);
+    let b = wires.get(key);
+    if (!b) wires.set(key, (b = new MeshBuilder()));
+    return b;
+  };
+  const world = (p: Pole, t: V3): V3 => {
+    const [c, sn] = [Math.cos(p.yaw), Math.sin(p.yaw)];
+    return [p.x + t[0] * c - t[2] * sn, p.h + t[1], p.y + t[0] * sn + t[2] * c];
+  };
+  const stringWires = (a: Pole, c: Pole, across = false): void => {
+    const gap = Math.hypot(c.x - a.x, c.y - a.y);
+    if (gap < 8 || gap > 75) return;
+    for (let k = 1; k < 6; k++) if (underDeck(a.x + ((c.x - a.x) * k) / 6, a.y + ((c.y - a.y) * k) / 6)) return;
+    const b = builder((a.x + c.x) / 2, (a.y + c.y) / 2);
+    const n = { x: -(c.y - a.y) / gap, y: (c.x - a.x) / gap };
+    // Wires keep their place across the line from pole to pole.
+    const sorted = (p: Pole, list: V3[]): V3[] => list.map((t) => world(p, t)).sort((u, v) => (u[0] - p.x) * n.x + (u[2] - p.y) * n.y - ((v[0] - p.x) * n.x + (v[2] - p.y) * n.y));
+    // Over a carriageway the wires are pulled tight and the lowest cable is left out, to clear the lorries.
+    let crossing = across;
+    for (let k = 1; k < 10 && !crossing; k++) crossing = inLane(a.x + ((c.x - a.x) * k) / 10, a.y + ((c.y - a.y) * k) / 10, a.h + ((c.h - a.h) * k) / 10);
+    let low = Infinity;
+    for (const kind of ['power', 'low', 'comm'] as const) {
+      const from = sorted(a, kind === 'comm' && !a.taps.comm.length ? a.fallback.comm : a.taps[kind]);
+      const to = sorted(c, kind === 'comm' && !c.taps.comm.length ? c.fallback.comm : c.taps[kind]);
+      if (kind === 'comm') [from, to].forEach((l) => l.sort((u, v) => v[1] - u[1]));
+      for (let i = 0; i < Math.min(from.length, to.length, kind === 'comm' && crossing ? 1 : 9); i++) {
+        const sag = crossing ? Math.min(gap * 0.012, 0.5) : kind === 'comm' ? Math.min(gap * 0.035, 1.3) : gap * 0.03;
+        const pts = catenary(from[i], to[i], sag, 6);
+        pts.forEach((q, k) => (low = Math.min(low, q[1] - (a.h + ((c.h - a.h) * k) / (pts.length - 1)))));
+        pipe(b, CABLE, pts, kind === 'comm' ? (i ? 0.016 : 0.026) : 0.014, 3, false);
+      }
+    }
+    spans.push({ a: { x: a.x, y: a.y }, b: { x: c.x, y: c.y }, low, crossing });
+  };
+
+  /** Wooden poles carry the wires where they were never put underground. */
+  const POLE_SET: Record<string, { base: string[]; can: string[]; light: string; old: string[]; comm: string }> = {
+    pin: { base: ['furniture/pole-wood-comm', 'furniture/pole-wood-comm', 'furniture/pole-wood'], can: ['furniture/pole-wood-transformer'], light: 'furniture/pole-wood-light', old: ['furniture/pole-wood-transformer-old'], comm: 'furniture/pole-wood-comm' },
+    arms: { base: ['furniture/pole-wood-2arm'], can: ['furniture/pole-wood-transformer-2'], light: 'furniture/pole-wood-light-transformer', old: ['furniture/pole-wood-grey'], comm: 'furniture/pole-wood-light-transformer' },
+    main: { base: ['furniture/pole-steel'], can: ['furniture/pole-concrete-transformer'], light: 'furniture/pole-steel', old: ['furniture/pole-steel'], comm: 'furniture/pole-wood-light-transformer' },
+  };
+  /** Older parts of town still have their wires on poles; of the suburbs, the older half. */
+  const overhead = (type: string, at: Vec2): boolean => type === 'residential' || type === 'oldtown' || type === 'beach' || type === 'industrial' || (type === 'suburb' && hash(seed, Math.floor(at.x / 600), Math.floor(at.y / 600), 31) < 0.5);
+
+  const HYDRANTS: Record<string, string[]> = {
+    downtown: ['furniture/hydrant-yellow'],
+    midtown: ['furniture/hydrant-yellow', 'furniture/hydrant-yellow-green'],
+    oldtown: ['furniture/hydrant-red', 'furniture/hydrant-red-white'],
+    residential: ['furniture/hydrant-red', 'furniture/hydrant-yellow'],
+    suburb: ['furniture/hydrant-yellow', 'furniture/hydrant-yellow-blue'],
+    hills: ['furniture/hydrant-wet-yellow', 'furniture/hydrant-wet-red'],
+    beach: ['furniture/hydrant-white-red', 'furniture/hydrant-wet-white-blue'],
+    industrial: ['furniture/hydrant-silver', 'furniture/hydrant-silver-orange'],
+  };
+  const OLD_HYDRANTS = ['furniture/hydrant-red-old', 'furniture/hydrant-yellow-old', 'furniture/hydrant-black-old', 'furniture/hydrant-leaning', 'furniture/hydrant-wet-silver-old'];
+  const BINS: Record<string, string[]> = {
+    downtown: ['furniture/bin-solar', 'furniture/bin-slat', 'furniture/bin-pair', 'furniture/bin-solar-pair'],
+    midtown: ['furniture/bin-hood', 'furniture/bin-dome', 'furniture/bin-hood-green', 'furniture/bin-dome-burgundy'],
+    oldtown: ['furniture/bin-post', 'furniture/bin-concrete', 'furniture/bin-concrete-green'],
+    beach: ['furniture/bin-drum', 'furniture/bin-mesh', 'furniture/bin-drum-blue', 'furniture/bin-mesh-green'],
+    industrial: ['furniture/bin-drum'],
+  };
+  const FULL_BINS: [string, string][] = [['bin-mesh', 'furniture/bin-mesh-full'], ['bin-drum', 'furniture/bin-drum-full'], ['bin-concrete', 'furniture/bin-concrete-full'], ['bin-hood', 'furniture/bin-hood-full'], ['bin-dome', 'furniture/bin-dome-old'], ['bin-slat', 'furniture/bin-slat-weathered']];
+  const BENCHES: Record<string, string[]> = {
+    downtown: ['furniture/bench-metal', 'furniture/bench-flat', 'furniture/bench-metal-steel'],
+    midtown: ['furniture/bench-metal', 'furniture/bench-ad-lawyer', 'furniture/bench-ad-realtor', 'furniture/bench-ad-dentist', 'furniture/bench-metal-blue'],
+    oldtown: ['furniture/bench-park', 'furniture/bench-park-green', 'furniture/bench-park-weathered'],
+    beach: ['furniture/bench-park', 'furniture/bench-concrete', 'furniture/bench-concrete-wood'],
+  };
+  const SHELTERS: Record<string, string[]> = {
+    downtown: ['furniture/shelter-flat-sign', 'furniture/shelter-flat-long', 'furniture/shelter-tilt'],
+    midtown: ['furniture/shelter-flat', 'furniture/shelter-flat-sign', 'furniture/shelter-barrel'],
+    oldtown: ['furniture/shelter-barrel', 'furniture/shelter-faded-barrel'],
+    beach: ['furniture/shelter-tilt-open', 'furniture/shelter-barrel'],
+  };
+  const OTHER_SHELTERS = ['furniture/shelter-flat', 'furniture/shelter-flat-short', 'furniture/shelter-tagged', 'furniture/shelter-faded-barrel'];
+  const NEWS = ['furniture/news-red', 'furniture/news-blue', 'furniture/news-yellow', 'furniture/news-green', 'furniture/news-row-3', 'furniture/news-row-5', 'furniture/news-empty', 'furniture/news-fallen'];
+  const stops: { x: number; y: number; t: Vec2 }[] = [];
+  const mails: Vec2[] = [];
+
+  graph.edges.forEach((e) => {
+    const cls: RoadClass = e.cls;
+    if (cls !== 'arterial' && cls !== 'collector' && cls !== 'local') return;
+    const tr = track(e.id);
+    if (!tr || tr.len < 30) return;
+    const { len, lay, at } = tr;
+    const p = profiles[e.id];
+    const type = p.type as string;
+    const width = [lay.road[0] - lay.outer[0], lay.outer[1] - lay.road[1]];
+    /** Offset from the centre line of a point `back` behind the kerb on a side (-1 left, 1 right). */
+    const off = (side: number, back: number): number => (side > 0 ? lay.road[1] + back : lay.road[0] - back);
+    const w = (side: number): number => width[side > 0 ? 1 : 0];
+    const sec = roads.sections[e.id];
+    const flank = (side: number): Side => (side > 0 ? sec.right : sec.left);
+    const kerb = (side: number): number => (flank(side).curb ? 0.15 : 0);
+    const verge = (side: number): number => flank(side).verge?.w ?? 0;
+    const paved = (side: number): number => flank(side).walk?.w ?? 0;
+    /** Width that stays clear for people on foot. */
+    const walkway = p.type === 'downtown' ? 2.4 : 1.5;
+    /** Away from the road on a side. */
+    const away = (q: { t: Vec2 }, side: number): Vec2 => (side > 0 ? right(q.t) : rev(right(q.t)));
+    const dry = (q: Vec2): boolean => !e.bridge && !isWater(city.terrain, q.x, q.y);
+    // The side the lights of a local street stand on; the poles take the other.
+    const lit = hash(seed, e.id, 2) < 0.5 ? 1 : -1;
+    const gone = (v: number): boolean => hash(seed, e.id, v, 40) < 0.07;
+
+    /** Lengths of kerb kept for the buses. */
+    const zones: { side: number; from: number; to: number }[] = [];
+
+    // Utility poles down one side, with the wires from pole to pole.
+    if (overhead(type, e.points[0])) {
+      const set = POLE_SET[cls === 'arterial' ? 'main' : type === 'industrial' ? 'arms' : 'pin'];
+      const side = -lit;
+      const count = Math.max(1, Math.ceil((len - 14) / (36 + 8 * hash(seed, e.id, 32)) - 0.2));
+      const step = (len - 14) / count;
+      let last: Pole | null = null;
+      let first: Pole | null = null;
+      for (let k = 0; k <= count; k++) {
+        const q = at(7 + step * k, off(side, behind(w(side))));
+        let model = pick(set.base, e.id, k, 33);
+        if (k % 4 === 2) model = pick(set.can, e.id, k, 34);
+        else if (k % 4 === 0 && cls === 'local' && hash(seed, e.id, k, 35) < 0.5) model = set.light;
+        else if (gone(k)) model = pick(set.old, e.id, k, 36);
+        const pole: Pole = { model, kind: 'pole', x: q.x, y: q.y, h: q.h, yaw: along(side > 0 ? right(q.t) : rev(right(q.t))), edge: e.id, taps: POLE_TAPS[model], fallback: POLE_TAPS[set.comm] };
+        if (!dry(q) || underDeck(q.x, q.y) || !put(pole, 1.6)) {
+          last = null;
+          continue;
+        }
+        if (last) stringWires(last, pole);
+        first ??= pole;
+        last = pole;
+      }
+      if (first && last) {
+        const [a, b] = [at(0, 0), at(len, 0)];
+        if (Math.hypot(first.x - a.x, first.y - a.y) < 25) lineEnds.push({ node: e.a, pole: first, out: a.t, linked: false });
+        if (Math.hypot(last.x - b.x, last.y - b.y) < 25) lineEnds.push({ node: e.b, pole: last, out: rev(b.t), linked: false });
+      }
+    }
+
+    // Hydrants: one a little way past the corner, then at intervals.
+    const hydrantSide = lit;
+    if (w(hydrantSide) >= 0.9 || w(-hydrantSide) >= 0.9) {
+      const side = w(hydrantSide) >= 0.9 ? hydrantSide : -hydrantSide;
+      const gap = cls === 'arterial' ? 110 : cls === 'collector' ? 120 : 150;
+      for (let d = 6 + 6 * hash(seed, e.id, 41); d < len - 5; d += gap * (0.9 + 0.2 * hash(seed, e.id, d, 42))) {
+        const q = at(d, off(side, 0.6));
+        if (!dry(q)) continue;
+        const model = gone(d) ? pick(OLD_HYDRANTS, e.id, d, 43) : pick(HYDRANTS[type] ?? HYDRANTS.residential, e.id, 44);
+        put({ model, kind: 'hydrant', x: q.x, y: q.y, h: q.h, yaw: facing(rev(away(q, side))), edge: e.id }, 1.4);
+      }
+    }
+
+    const busy = type === 'downtown' || type === 'midtown' || type === 'oldtown' || type === 'beach';
+    /** Stands something `back` behind the kerb where the pavement leaves room to walk past it. */
+    const stand = (kind: FurnitureKind, model: string, d: number, side: number, depth: number, yaw: (q: { t: Vec2 }) => number, clear: number, pad = false): boolean => {
+      if (d < 5 || d > len - 5) return false;
+      const v = verge(side);
+      // Behind a planted verge it stands at the near edge of the paving, unless the verge is paved over there.
+      const lawn = v >= 0.8 && !pad;
+      const back = kerb(side) + (lawn ? v + 0.15 : 0.45) + depth / 2;
+      if ((lawn ? 0 : v) + paved(side) < back - kerb(side) + depth / 2 + walkway) return false;
+      const q = at(d, off(side, back));
+      return dry(q) && put({ model, kind, x: q.x, y: q.y, h: q.h, yaw: yaw(q), edge: e.id }, clear);
+    };
+    const bin = (d: number, side: number, pad = false): boolean => {
+      const set = BINS[type] ?? BINS.midtown;
+      let model = pick(set, e.id, 45);
+      if (gone(d + 1)) model = FULL_BINS.find(([m]) => model.includes(m))?.[1] ?? model;
+      return stand('bin', model, d, side, 0.6, (q) => facing(away(q, side)), 1.3, pad);
+    };
+    const bench = (d: number, side: number, set: string[], pad = false): boolean => stand('bench', pick(set, e.id, 46), d, side, 0.6, (q) => facing(away(q, side)), 1.9, pad);
+
+    // Bus stops on the main streets, just past a junction: a shelter where the pavement is wide, else a sign and a bench.
+    if ((cls === 'arterial' || p.bus) && len > 70 && !e.bridge) {
+      for (const dir of [1, -1]) {
+        if (dir < 0 && p.oneWay) continue;
+        if (!p.bus && hash(seed, e.id, dir, 50) > len / 400) continue;
+        // The stop slides along until the kerb is clear of poles for the length of a bus.
+        let d = -1;
+        for (let from = 24; from <= 48 && from < len - 30 && d < 0; from += 6) {
+          const dd = dir > 0 ? from : len - from;
+          let clear = true;
+          for (let u = -1.5; u <= 12 && clear; u += 1.5) {
+            const q = at(dd - dir * u, off(dir, 0.7));
+            clear = free(q.x, q.y, 1.1);
+          }
+          if (clear) d = dd;
+        }
+        if (d < 0) continue;
+        const head = at(d, off(dir, 0.6));
+        const t = dir > 0 ? head.t : rev(head.t);
+        if (stops.some((o) => Math.hypot(o.x - head.x, o.y - head.y) < (o.t.x * t.x + o.t.y * t.y > 0.3 ? 260 : 30))) continue;
+        // The sign stands at the head of the stop, facing the traffic that comes up to it.
+        if (!dry(head) || !put({ model: hash(seed, e.id, dir, 51) < 0.12 ? 'sign/bus-stop-old' : pick(['sign/bus-stop', 'sign/bus-stop-no-parking', 'sign/bus-stop-flag'], e.id, 52), kind: 'busstop', x: head.x, y: head.y, h: head.h, yaw: facing(rev(t)), edge: e.id }, 1)) continue;
+        stops.push({ x: head.x, y: head.y, t });
+        zones.push({ side: dir, from: Math.min(d + dir * 1.5, d - dir * 12), to: Math.max(d + dir * 1.5, d - dir * 12) });
+        // Where there is a verge, it is paved over for the length of a bus, so that people step off onto a hard surface.
+        const v = verge(dir);
+        if (v >= 0.8) {
+          const tex = flank(dir).walk?.tex ?? 'concrete/walk-square';
+          const b = builder(head.x, head.y);
+          const edge = (dd: number, back: number): V3 => {
+            const q = at(dd, off(dir, back));
+            return [q.x, q.h + 0.025, q.y];
+          };
+          for (let k = 0; k < 7; k++) {
+            const [d0, d1] = [d + dir * (1.5 - k * 2), d + dir * (1.5 - (k + 1) * 2)];
+            const quad: [V3, V3, V3, V3] = [edge(d0, kerb(dir)), edge(d1, kerb(dir)), edge(d1, kerb(dir) + v + 0.05), edge(d0, kerb(dir) + v + 0.05)];
+            b.quadUp(tex, ...quad);
+          }
+        }
+        const pad = v >= 0.8;
+        const back = d - dir * 5.5;
+        const roofed = (cls === 'arterial' || busy) && stand('shelter', hash(seed, e.id, dir, 53) < 0.25 ? pick(OTHER_SHELTERS, e.id, dir, 54) : pick(SHELTERS[type] ?? OTHER_SHELTERS, e.id, 55), back, dir, 1.8, (q) => facing(rev(away(q, dir))), 3.2, pad);
+        if (!roofed) bench(back, dir, BENCHES[type] ?? ['furniture/bench-ad-blank', 'furniture/bench-metal-mesh', 'furniture/bench-flat-weathered'], pad);
+        bin(d - dir * 10, dir, pad);
+      }
+    }
+
+    if (busy && cls !== 'local') {
+      // A bin at each corner, and on the main streets benches and bins between them.
+      bin(7, 1);
+      bin(len - 7, -1);
+      if (cls === 'arterial' || type !== 'midtown') {
+        const gap = 60 + 20 * hash(seed, e.id, 60);
+        for (let d = 18 + gap * hash(seed, e.id, 61), k = 0; d < len - 18; d += gap, k++) {
+          const side = k % 2 ? 1 : -1;
+          bench(d, side, BENCHES[type] ?? BENCHES.midtown);
+          if (cls === 'arterial') bin(d + 2.2, side);
+        }
+      }
+      // Bicycle racks and newspaper boxes where there are shops and offices.
+      if ((type === 'downtown' || type === 'midtown') && len > 60) {
+        if (hash(seed, e.id, 62) < 0.6) stand('rack', pick(['furniture/rack-u-row', 'furniture/rack-u-row-bikes', 'furniture/rack-wave-bikes', 'furniture/rack-grid-bikes', 'furniture/rack-u-bike'], e.id, 63), len * 0.42, lit, 0.8, (q) => along(q.t), 2.6);
+        if (hash(seed, e.id, 64) < (type === 'downtown' ? 0.6 : 0.3)) stand('news', pick(NEWS, e.id, 65), 9.5, -1, 0.45, (q) => facing(away(q, -1)), 1.8);
+      }
+    }
+    // Parking meters along a parking lane in the centre and by the beach.
+    if (type === 'downtown' || type === 'midtown' || type === 'beach') {
+      for (const side of [1, -1]) {
+        if (!lay.lanes.some((ln) => ln.lane.kind === 'parking' && (ln.x0 + ln.x1) * side > 0)) continue;
+        if (hash(seed, e.id, side, 66) < 0.35) {
+          stand('meter', pick(['furniture/meter-paystation', 'furniture/meter-paystation-green', 'furniture/meter-paystation-solar'], e.id, 67), len / 2, side, 0.4, (q) => facing(away(q, side)), 1);
+          continue;
+        }
+        const model = pick(['furniture/meter-dial', 'furniture/meter-digital', 'furniture/meter-twin', 'furniture/meter-twin-digital'], e.id, side, 68);
+        const twin = model.includes('twin');
+        for (let d = 14; d < len - 12; d += twin ? 12.4 : 6.2) {
+          const q = at(d, off(side, 0.5));
+          if (w(side) >= 2.2 && dry(q) && !zones.some((z) => z.side === side && d > z.from - 1 && d < z.to + 1)) put({ model: gone(d + 2) ? pick(['furniture/meter-expired', 'furniture/meter-old', 'furniture/meter-bagged'], e.id, d, 69) : model, kind: 'meter', x: q.x, y: q.y, h: q.h, yaw: facing(rev(away(q, side))), edge: e.id }, 1.05);
+        }
+      }
+    }
+    // A mail box at a corner now and then.
+    if (cls !== 'local' && type !== 'industrial' && type !== 'hills' && hash(seed, e.id, 70) < len / (cls === 'arterial' ? 600 : 800)) {
+      const q = at(len - 11, off(1, 0.7));
+      if (!mails.some((o) => Math.hypot(o.x - q.x, o.y - q.y) < 250) && stand('mail', hash(seed, e.id, 71) < 0.2 ? pick(['furniture/mail-box-old', 'furniture/mail-box-tagged', 'furniture/mail-relay'], e.id, 72) : pick(['furniture/mail-box', 'furniture/mail-box', 'furniture/mail-box-pair'], e.id, 73), len - 11, 1, 0.6, (q2) => facing(rev(away(q2, 1))), 1.3)) mails.push(q);
+    }
+    // Where the wires are underground, their transformers and telephone cabinets stand at the back of the kerb zone.
+    if (!overhead(type, e.points[0]) && type !== 'hills' && hash(seed, e.id, 74) < len / 350) {
+      const side = -lit;
+      stand('box', pick(['furniture/misc-transformer', 'furniture/misc-transformer', 'furniture/misc-transformer-tagged', 'furniture/misc-cabinet-telecom', 'furniture/misc-cabinet-green', 'furniture/misc-cabinet-tagged'], e.id, 75), len * (0.3 + 0.4 * hash(seed, e.id, 76)), side, 1.4, (q) => facing(rev(away(q, side))), 2.4, verge(side) >= 1.7);
+    }
+  });
+
+  // Across a junction the line carries on to the street most nearly straight ahead; what is left ties in to the nearest pole.
+  const byNode = new Map<number, typeof lineEnds>();
+  for (const le of lineEnds) byNode.set(le.node, [...(byNode.get(le.node) ?? []), le]);
+  for (const list of byNode.values()) {
+    const pairs: [number, number, number][] = [];
+    for (let i = 0; i < list.length; i++) for (let k = i + 1; k < list.length; k++) pairs.push([list[i].out.x * list[k].out.x + list[i].out.y * list[k].out.y, i, k]);
+    pairs.sort((u, v) => u[0] - v[0]);
+    for (const [dot, i, k] of pairs) {
+      if (dot > -0.5 || list[i].linked || list[k].linked) continue;
+      list[i].linked = list[k].linked = true;
+      stringWires(list[i].pole, list[k].pole, true);
+    }
+    for (const le of list) {
+      if (le.linked) continue;
+      let best: (typeof list)[number] | null = null;
+      for (const o of list) if (o !== le && (!best || Math.hypot(o.pole.x - le.pole.x, o.pole.y - le.pole.y) < Math.hypot(best.pole.x - le.pole.x, best.pole.y - le.pole.y))) best = o;
+      if (best && Math.hypot(best.pole.x - le.pole.x, best.pole.y - le.pole.y) < 45) stringWires(le.pole, best.pole, true);
+      le.linked = true;
+    }
+  }
+
+  return { items, tiles: [...wires.values()].map((b) => b.build()), spans, stats };
 }

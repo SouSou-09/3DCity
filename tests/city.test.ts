@@ -757,6 +757,129 @@ describe('street furniture', () => {
       else cells.set(k2(it.x, it.y), [it]);
     }
     expect(close).toBe(0);
+    // Wires that pass over a carriageway are known to, and hang high enough for a lorry.
+    const lane = (x: number, y: number, h: number): boolean => {
+      for (let dx = -1; dx <= 1; dx++)
+        for (let dy = -1; dy <= 1; dy++)
+          for (const s of grid.get(key(x + dx * CELL, y + dy * CELL)) ?? []) {
+            const [vx, vy] = [s.bx - s.ax, s.by - s.ay];
+            const l = Math.hypot(vx, vy) || 1;
+            const u = ((x - s.ax) * vx + (y - s.ay) * vy) / (l * l);
+            if (u < 0 || u > 1 || Math.abs(mix(s.ah, s.bh, u) - h) > 2.5) continue;
+            const off = ((x - s.ax) * -vy + (y - s.ay) * vx) / l;
+            if (off > s.l + 0.3 && off < s.r - 0.3) return true;
+          }
+      return false;
+    };
+    const poles = new Map(f.items.filter((it) => it.kind === 'pole').map((it) => [`${it.x},${it.y}`, it]));
+    let unflagged = 0;
+    for (const w of f.spans) {
+      const [a, b] = [poles.get(`${w.a.x},${w.a.y}`), poles.get(`${w.b.x},${w.b.y}`)];
+      expect(a && b, 'a span of wire ends at two poles').toBeTruthy();
+      expect(w.low).toBeGreaterThan(w.crossing ? 5.5 : 4);
+      if (w.crossing || !a || !b) continue;
+      for (let k = 1; k < 8; k++) if (lane(mix(a.x, b.x, k / 8), mix(a.y, b.y, k / 8), mix(a.h, b.h, k / 8))) unflagged++;
+    }
+    expect(unflagged).toBe(0);
+  });
+
+  it('puts poles, hydrants, bins, benches, bus stops and the rest along the streets', () => {
+    const f = placeStreetFurniture(city(1), model(1));
+    for (const kind of ['pole', 'hydrant', 'bin', 'bench', 'busstop', 'shelter', 'mail', 'news', 'meter', 'rack', 'box'] as const) expect(f.stats[kind], kind).toBeGreaterThan(0);
+    expect(f.stats.pole).toBeGreaterThan(1500);
+    expect(f.stats.hydrant).toBeGreaterThan(800);
+    expect(f.stats.busstop).toBeGreaterThan(40);
+    expect(f.spans.length).toBeGreaterThan(f.stats.pole * 0.7);
+    expect(f.tiles.reduce((sum, t) => sum + t.triangles, 0)).toBeGreaterThan(100_000);
+    expect(placeStreetFurniture(city(1), model(1)).spans).toEqual(f.spans);
+  });
+
+  it.each(MODEL_SEEDS)('seed %i: utility poles stand where the wires are overhead, and none in the centre or on the hills', (seed) => {
+    const c = city(seed);
+    const f = placeStreetFurniture(c, model(seed));
+    const types = new Set<string>();
+    for (const it of f.items) {
+      if (it.kind !== 'pole') continue;
+      const e = c.graph.edges[it.edge!];
+      expect(['arterial', 'collector', 'local']).toContain(e.cls);
+      types.add(c.profiles[e.id].type);
+    }
+    for (const t of types) expect(['residential', 'oldtown', 'beach', 'industrial', 'suburb']).toContain(t);
+    expect(types.size).toBeGreaterThan(1);
+    // The transformers and cabinets of the buried wires stand where there are no poles.
+    for (const it of f.items) if (it.kind === 'box') expect(['residential', 'oldtown', 'beach', 'industrial']).not.toContain(c.profiles[it.edge!].type);
+  });
+
+  it.each(MODEL_SEEDS)('seed %i: bus stops are on the main streets, apart, with a clear kerb; hydrants have room around them', (seed) => {
+    const c = city(seed);
+    const m = model(seed);
+    const f = placeStreetFurniture(c, m);
+    const stops = f.items.filter((it) => it.kind === 'busstop');
+    expect(stops.length).toBeGreaterThan(20);
+    for (const s of stops) {
+      const e = c.graph.edges[s.edge!];
+      expect(e.cls === 'arterial' || c.profiles[e.id].bus).toBe(true);
+      expect(e.bridge).toBeFalsy();
+      // Past the junction, not in it.
+      const line = m.lines[e.id]!;
+      for (const end of [line[0], line[line.length - 1]]) expect(Math.hypot(end[0] - s.x, end[2] - s.y)).toBeGreaterThan(15);
+      // Stops for the same direction are a few minutes' walk apart.
+      for (const o of stops) {
+        if (o === s || Math.abs(angleDiff(o.yaw, s.yaw)) > 1.2) continue;
+        expect(Math.hypot(o.x - s.x, o.y - s.y), `stops at ${s.x.toFixed(0)}, ${s.y.toFixed(0)} and ${o.x.toFixed(0)}, ${o.y.toFixed(0)}`).toBeGreaterThan(200);
+      }
+    }
+    for (const it of f.items) {
+      if (it.kind === 'shelter') {
+        expect(stops.some((s) => Math.hypot(s.x - it.x, s.y - it.y) < 9), 'a shelter belongs to a stop').toBe(true);
+        // Nothing tall stands where people board.
+        for (const o of f.items) if (o !== it && (o.kind === 'pole' || o.kind === 'light' || o.kind === 'signal') && o.edge === it.edge) expect(Math.hypot(o.x - it.x, o.y - it.y)).toBeGreaterThan(2.5);
+      }
+    }
+    const near = new Map<number, typeof f.items>();
+    const k4 = (x: number, y: number): number => Math.floor(x / 4) * 8192 + Math.floor(y / 4);
+    for (const it of f.items) near.set(k4(it.x, it.y), [...(near.get(k4(it.x, it.y)) ?? []), it]);
+    let crowded = 0;
+    for (const it of f.items) {
+      if (it.kind !== 'hydrant') continue;
+      for (let dx = -1; dx <= 1; dx++)
+        for (let dy = -1; dy <= 1; dy++) for (const o of near.get(k4(it.x + dx * 4, it.y + dy * 4)) ?? []) if (o !== it && Math.hypot(o.x - it.x, o.y - it.y) < 1) crowded++;
+    }
+    expect(crowded).toBe(0);
+  });
+
+  it.each(MODEL_SEEDS)('seed %i: benches, bins and shelters leave room to walk past', (seed) => {
+    const c = city(seed);
+    const m = model(seed);
+    const f = placeStreetFurniture(c, m);
+    const DEPTH: Record<string, number> = { bench: 0.6, bin: 0.6, shelter: 1.8, news: 0.45, rack: 0.8, mail: 0.6 };
+    let n = 0;
+    for (const it of f.items) {
+      const depth = DEPTH[it.kind];
+      if (depth === undefined) continue;
+      n++;
+      const line = m.lines[it.edge!]!;
+      const lay = layout(m.sections[it.edge!]);
+      // Offset from the centre line, to the right of the road's direction.
+      // At a bend two stretches are about as near and give different offsets; each check takes the one in its favour.
+      const offs: [number, number][] = [];
+      for (let i = 1; i < line.length; i++) {
+        const [p, q] = [line[i - 1], line[i]];
+        const [vx, vy] = [q[0] - p[0], q[2] - p[2]];
+        const l = Math.hypot(vx, vy) || 1;
+        const u = clamp(((it.x - p[0]) * vx + (it.y - p[2]) * vy) / (l * l), 0, 1);
+        offs.push([Math.hypot(p[0] + vx * u - it.x, p[2] + vy * u - it.y), ((it.x - p[0]) * -vy + (it.y - p[2]) * vx) / l]);
+      }
+      const best = Math.min(...offs.map((o) => o[0]));
+      const close = offs.filter((o) => o[0] < best + 0.6).sort((u, v) => Math.abs(v[1]) - Math.abs(u[1]));
+      const [off, inner] = [close[0][1], close[close.length - 1][1]];
+      const outer = off > 0 ? lay.outer[1] : -lay.outer[0];
+      const kerb = off > 0 ? lay.road[1] : -lay.road[0];
+      const where = `${it.model} at ${it.x.toFixed(0)}, ${it.y.toFixed(0)}`;
+      expect(Math.abs(off) - depth / 2, where).toBeGreaterThan(kerb + 0.4);
+      expect(outer - (Math.abs(inner) + depth / 2), where).toBeGreaterThan(c.profiles[it.edge!].type === 'downtown' ? 2.35 : 1.45);
+    }
+    expect(n).toBeGreaterThan(100);
   });
 });
 
