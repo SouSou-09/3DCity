@@ -212,6 +212,19 @@ export class Site {
     return true;
   }
 
+  /** Gives the ground of the given lots (by index) back as open ground. */
+  release(lots: number[]): void {
+    if (!lots.length) return;
+    const land = this.city.land;
+    const gone = new Set(lots);
+    for (let j = 0; j < this.n; j++)
+      for (let i = 0; i < this.n; i++) {
+        if (this.grid[j * this.n + i] !== LOT) continue;
+        const [li, lj] = [Math.floor(((i + 0.5) * SITE_CELL) / land.cell), Math.floor(((j + 0.5) * SITE_CELL) / land.cell)];
+        if (gone.has(land.grid[lj * land.n + li] - 1)) this.grid[j * this.n + i] = FREE;
+      }
+  }
+
   heightAt(x: number, y: number): number {
     return sample(this.city.terrain, this.ground, x, y);
   }
@@ -319,6 +332,19 @@ export class Site {
         const [u0, u1, v0, v1] = [(a / nx) * hx, ((a + 1) / nx) * hx, (c / nz) * hz, ((c + 1) / nz) * hz];
         b.quadUp(tex, at(a, c), at(a + 1, c), at(a + 1, c + 1), at(a, c + 1), 0, [[u0, v0], [u1, v0], [u1, v1], [u0, v1]]);
       }
+  }
+
+  /** Lays one copy of a mark (a worn patch, fallen leaves) over the ground, stretched to the rectangle. */
+  decal(b: MeshBuilder, tex: string, cx: number, cy: number, yaw: number, hx: number, hz: number, lift = 0.04): void {
+    const { mw, mh } = b.part(tex);
+    const [nx, nz] = [Math.max(1, Math.round(hx / 1.5)), Math.max(1, Math.round(hz / 1.5))];
+    const at = (a: number, c: number): V3 => {
+      const p = Site.local(cx, cy, yaw, (a / nx) * hx, (c / nz) * hz);
+      return [p.x, this.heightAt(p.x, p.y) + lift, p.y];
+    };
+    const uv = (a: number, c: number): [number, number] => [((a / nx + 1) / 2) * mw, ((c / nz + 1) / 2) * mh];
+    for (let a = -nx; a < nx; a++)
+      for (let c = -nz; c < nz; c++) b.quadUp(tex, at(a, c), at(a + 1, c), at(a + 1, c + 1), at(a, c + 1), 0, [uv(a, c), uv(a + 1, c), uv(a + 1, c + 1), uv(a, c + 1)]);
   }
 
   /** Lays a ribbon of paving along a line on the map. */

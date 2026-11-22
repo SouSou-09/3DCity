@@ -351,6 +351,41 @@ export function addWaterfront(): void {
   A('boardwalk-wide', 'ボードウォーク 幅広 6m', (b, f) => boardwalk(b, f, 12, 6, { deck: 'paving/boardwalk', y: 0.6 }));
   const SAND = ['sand-dry', 'sand-white', 'sand-dark', 'sand-ripples', 'sand-wrack'];
   SAND.forEach((c, i) => A(`dune-${c.replace('sand-', '')}`, `砂丘 ${['乾いた砂', '白砂', '暗い砂', '風紋', '打ち上げ海藻'][i]}`, (b, f) => dune(b, S(c), f, 7 + i, 5 + (i % 2) * 2, 1 + i * 0.25, 70 + i)));
+  // What the sea and the day's visitors leave on the sand.
+  const log = (b: MeshBuilder, f: Pose, len: number, r: number, seed: number): void => {
+    const pts: V3[] = [];
+    for (let i = 0; i <= 5; i++) pts.push(at(f, (i / 5 - 0.5) * len, r * 0.8 + Math.sin(i * 1.3 + seed) * r * 0.25, Math.sin(i * 0.9 + seed * 2) * len * 0.04));
+    pipe(b, S('pile-wood-grey'), pts, (q) => r * (1.15 - q * 0.5), 7);
+    // The stub of a branch.
+    pipe(b, S('pile-wood-grey'), [at(f, len * 0.1, r, 0), at(f, len * 0.22, r * 2.6, len * 0.12)], (q) => r * (0.45 - q * 0.2), 5);
+  };
+  A('driftwood-log', '流木', (b, f) => log(b, f, 2.8, 0.13, 1));
+  A('driftwood-branch', '流木 細い枝', (b, f) => log(b, f, 1.7, 0.06, 4));
+  A('driftwood-pile', '流木の山', (b, f) => {
+    log(b, f, 3.2, 0.15, 2);
+    log(b, turn(move(f, 0.3, 0.12, 0.4), 38), 2.4, 0.1, 5);
+    log(b, turn(move(f, -0.5, 0.05, -0.5), -64), 1.8, 0.07, 7);
+  });
+  A('seaweed-heap', '打ち上げられた海藻', (b, f) => {
+    dune(b, S('sand-wrack'), f, 1.1, 0.6, 0.12, 31);
+    dune(b, S('sand-wrack'), move(f, 1.3, 0, 0.3), 0.6, 0.4, 0.08, 32);
+  });
+  const towel = (b: MeshBuilder, f: Pose, tex: string): void => box(b, tex, f, [0, 0.012, 0], [0.45, 0.012, 0.9]);
+  ['canvas-stripe-blue', 'canvas-stripe-red', 'canvas-stripe-yellow'].forEach((c, i) => A(`beach-towel-${c.replace('canvas-stripe-', '')}`, `ビーチタオル ${['青縞', '赤縞', '黄縞'][i]}`, (b, f) => towel(b, f, S(c))));
+  A('beach-towel-set', 'ビーチタオル2枚とバッグ、ボール', (b, f) => {
+    towel(b, f, S('canvas-stripe-red'));
+    towel(b, turn(move(f, 1.15, 0, 0.1), 7), S('canvas-white'));
+    box(b, S('canvas-stripe-blue'), turn(move(f, 0.6, 0, -1.1), 20), [0, 0.14, 0], [0.22, 0.14, 0.12]);
+    ball(b, S('canvas-stripe-yellow'), f, [-0.7, 0.17, 0.5], 0.17, 10);
+  });
+  A('sandcastle', '砂の城', (b, f) => {
+    const sand = S('sand-wet');
+    lathe(b, sand, f, [[0.75, 0], [0.6, 0.12], [0.34, 0.14], [0.3, 0.36], [0.2, 0.38], [0.16, 0.52], [0, 0.6]], 10);
+    for (const [x, z] of [[0.5, 0.5], [-0.5, 0.5], [0.5, -0.5], [-0.5, -0.5]]) lathe(b, sand, move(f, x, 0, z), [[0.17, 0], [0.13, 0.26], [0, 0.36]], 8);
+    // The bucket and spade that made it.
+    lathe(b, 'trim/paint-red', move(f, 1.1, 0, 0.2), [[0.09, 0], [0.12, 0.2], [0.11, 0.2], [0.08, 0.02], [0, 0.02]], 10);
+    box(b, 'trim/paint-blue', turn(move(f, 1, 0, -0.3), 30), [0, 0.012, 0], [0.05, 0.012, 0.2]);
+  });
   A('beach-sign-rules', 'ビーチ規則看板', (b, f) => {
     for (const sx of [-1, 1]) box(b, 'signal/pole-wood', f, [sx * 0.52, 1.1, 0], [0.05, 1.1, 0.05], 'Y');
     plate(b, S('sign-beach-rules'), f, [0, 1.5, 0.06]);

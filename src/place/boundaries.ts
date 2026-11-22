@@ -47,11 +47,12 @@ export function placeBoundaries(site: Site, shore: Waterfront): Boundaries {
   const seed = site.seed;
   const rnd = (...v: number[]): number => hash(seed, 9107, ...v);
   const out: Boundaries = { lots: [], runs: [], shared: 0 };
+  const sandLots = new Set(shore.sandLots);
   const lotAt = (x: number, y: number): Lot | null => {
     const [i, j] = [Math.floor(x / land.cell), Math.floor(y / land.cell)];
     if (i < 0 || j < 0 || i >= land.n || j >= land.n) return null;
     const id = land.grid[j * land.n + i];
-    return id > 0 ? land.lots[id - 1] : null;
+    return id > 0 && !sandLots.has(id - 1) ? land.lots[id - 1] : null;
   };
 
   /** One 12 m panel between two points: raked to the ground, or in level steps where the ground is too steep to rake. */
@@ -73,8 +74,8 @@ export function placeBoundaries(site: Site, shore: Waterfront): Boundaries {
   // --- Lots ---
   const fencedIds = new Set<number>();
   const junctionNear = (p: Vec2, r: number): boolean => roads.junctions.some((j) => Math.abs(j.x - p.x) < r + 30 && Math.hypot(j.x - p.x, j.y - p.y) < r + 12);
-  for (const lot of land.lots) {
-    if (!FENCED[lot.use] || lot.poly.length < 3 || lot.area < 150) continue;
+  for (const [index, lot] of land.lots.entries()) {
+    if (!FENCED[lot.use] || lot.poly.length < 3 || lot.area < 150 || sandLots.has(index)) continue;
     const type = districtAt(t, city.districts, lot.poly[0].x, lot.poly[0].y).type;
     // Open land is only fenced where it is a vacant lot in town: small, level, and not every one.
     if (lot.use === 'OS' && (lot.area > 3500 || lot.site.slope > 0.06 || type === 'hills' || type === 'suburb' || rnd(1, lot.id) < 0.45)) continue;

@@ -52,7 +52,20 @@ export interface ParkPlan {
   fence: string | null;
   /** Things that children play on, with the radius each needs to itself. */
   play: { x: number; y: number; r: number; model: string }[];
+  /** Grass worn to earth, where people stand about and play. */
+  worn: { x: number; y: number; r: number }[];
+  /** Lines walked into the grass, off the paths. */
+  trails: Vec2[][];
 }
+
+/** Shrubs and grasses under the trees of a grove. */
+const UNDER: Record<string, string[]> = {
+  beach: ['plant/shrub-hibiscus-red', 'plant/shrub-hibiscus-pink', 'plant/shrub-plumbago', 'plant/grass-fountain', 'plant/shrub-bougainvillea'],
+  hills: ['plant/shrub-dry', 'plant/grass-fescue', 'plant/grass-tuft-dry', 'plant/shrub-broadleaf'],
+  default: ['plant/shrub-broadleaf', 'plant/shrub-camellia', 'plant/shrub-box-light', 'plant/grass-fountain', 'plant/grass-patch', 'plant/shrub-box'],
+};
+/** Beds beside the main walks. */
+const BEDS = ['plant/flower-strip', 'plant/flower-strip-red', 'plant/flower-lavender-row', 'plant/flower-bed-round', 'plant/grass-fountain-row', 'plant/hedge-low'];
 
 // What a cell of a park holds.
 const OUT = 0;
@@ -189,7 +202,7 @@ export function placeParks(site: Site): { parks: ParkPlan[]; tiles: ModelData[] 
         const k = cellOf(x, y);
         return k < 0 ? OUT : occ[k];
       };
-      const plan: ParkPlan = { park: pi, tier, type, area, centre, entrances: [], paths: [], features: [], lawns: [], fence: null, play: [] };
+      const plan: ParkPlan = { park: pi, tier, type, area, centre, entrances: [], paths: [], features: [], lawns: [], fence: null, play: [], worn: [], trails: [] };
       const put = (model: string, kind: SiteKind, x: number, y: number, yaw: number, o: Partial<SiteItem> & { lift?: number } = {}): SiteItem => site.put(model, kind, x, y, yaw, { park: pi, ...o });
       const local = (r: Rect, mx: number, mz: number): Vec2 => Site.local(r.x, r.y, r.yaw, mx, mz);
       /** Marks the cells under a rectangle (only those that are lawn, or apron when a solid thing lands on its own apron). */
@@ -861,6 +874,11 @@ export function placeParks(site: Site): { parks: ParkPlan[]; tiles: ModelData[] 
             const lamp = at(-(path.w / 2 + 0.7));
             small(LIGHTS[tier], 'light', lamp.x, lamp.y, 0, 0.5, true);
           }
+          // Planting beside the main walks of the bigger parks.
+          if (path.kind === 'main' && tier !== 'pocket' && count % 2 === 0) {
+            const bed = at(-(path.w / 2 + 2.4));
+            small(pick(BEDS, rnd(76, count)), 'plant', bed.x, bed.y, Math.atan2(tan.y, tan.x), 1.6);
+          }
         }
       }
       plan.entrances.forEach((e, i) => {
@@ -910,7 +928,68 @@ export function placeParks(site: Site): { parks: ParkPlan[]; tiles: ModelData[] 
           if (hash(seed, pi, gx, gy, 3) > p) continue;
           const kind = pick(palette, hash(seed, pi, Math.floor(x / 46), Math.floor(y / 46), rim ? 5 : 4) * 0.75 + hash(seed, pi, gx, gy, 6) * 0.25);
           put(kind, 'tree', x, y, hash(seed, pi, gx, gy, 7) * Math.PI * 2, { scale: 0.85 + hash(seed, pi, gx, gy, 8) * 0.4 });
+          const h = (n: number): number => hash(seed, pi, gx, gy, n);
+          // What has fallen from it lies under it.
+          if (h(9) < 0.7) {
+            const litter = /autumn/.test(kind) ? 'site/leaf-litter-autumn' : /cherry|jacaranda|tabebuia|magnolia|spring/.test(kind) ? 'site/petals-fallen' : 'site/leaf-litter';
+            const lr = 2.2 + h(10) * 1.4;
+            if (!/palm/.test(kind)) site.decal(b, litter, x, y, h(11) * 6.3, lr, lr, 0.045);
+          }
+          if (rim || grove <= 0.54) continue;
+          // In a grove the trees stand in twos and threes, with shrubs under them.
+          for (let q = 0; q < 2; q++) {
+            if (h(12 + q) > 0.45) continue;
+            const a = h(14 + q) * 6.3;
+            const d = 3.2 + h(16 + q) * 1.6;
+            const [tx, ty] = [x + Math.cos(a) * d, y + Math.sin(a) * d];
+            const tk = cellOf(tx, ty);
+            if (tk < 0 || occ[tk] !== LAWN || tclr[tk] * C < 2.6) continue;
+            put(kind, 'tree', tx, ty, h(18 + q) * 6.3, { scale: 0.6 + h(20 + q) * 0.35 });
+          }
+          for (let q = 0; q < 3; q++) {
+            if (h(22 + q) > 0.3) continue;
+            const a = h(25 + q) * 6.3;
+            const d = 1.6 + h(28 + q) * 2.2;
+            small(pick(UNDER[type] ?? UNDER.default, h(31 + q)), 'plant', x + Math.cos(a) * d, y + Math.sin(a) * d, h(34 + q) * 6.3, 0.8);
+          }
         }
+
+      // --- Where the grass has given out: goal mouths, the middle of the open lawns, the lines people cut to them ---
+      const worn = (x: number, y: number, r: number, yaw: number): void => {
+        site.decal(b, 'site/lawn-worn', x, y, yaw, r, r * (0.7 + hash(seed, pi, Math.round(x), Math.round(y), 40) * 0.3));
+        plan.worn.push({ x, y, r });
+      };
+      for (const f of plan.features)
+        if (f.type === 'soccer')
+          for (const sd of [-1, 1]) {
+            const p = Site.local(f.x, f.y, f.yaw, 0, sd * (f.hz - 3));
+            worn(p.x, p.y, 3.2, f.yaw);
+          }
+      plan.lawns.forEach((lawn, li) => {
+        for (let q = 0; q < 1 + Math.floor(lawn.r / 9); q++) {
+          const [a, d] = [rnd(90, li, q) * 6.3, rnd(91, li, q) * lawn.r * 0.6];
+          worn(lawn.x + Math.cos(a) * d, lawn.y + Math.sin(a) * d, 2 + rnd(92, li, q) * 2.2, rnd(93, li, q) * 6.3);
+        }
+        // The short cut from the nearest path to the middle of the lawn.
+        let near: Vec2 | null = null;
+        for (const path of plan.paths) for (const p of path.pts) if (!near || Math.hypot(p.x - lawn.x, p.y - lawn.y) < Math.hypot(near.x - lawn.x, near.y - lawn.y)) near = p;
+        if (!near) return;
+        const len = Math.hypot(near.x - lawn.x, near.y - lawn.y);
+        if (len < 8 || len > 90) return;
+        const pts: Vec2[] = [];
+        const [ux, uy] = [(lawn.x - near.x) / len, (lawn.y - near.y) / len];
+        for (let d = 0; d < len - lawn.r * 0.3; d += 2) {
+          // It wanders a little, as feet do.
+          const off = Math.sin(d / 9 + li) * 1.2 * Math.min(1, d / 6);
+          const p = { x: near.x + ux * d - uy * off, y: near.y + uy * d + ux * off };
+          const k = cellOf(p.x, p.y);
+          if (k < 0 || (occ[k] !== LAWN && occ[k] !== OPEN && occ[k] !== PATH)) break;
+          pts.push(p);
+        }
+        if (pts.length < 4) return;
+        site.ribbon(b, 'site/lawn-trail', pts, 1.4, 0.045);
+        plan.trails.push(pts);
+      });
 
       // --- Fence along the streets ---
       const fence =

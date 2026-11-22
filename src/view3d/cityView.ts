@@ -7,6 +7,8 @@ import { RoadModel, buildRoadModel } from '../place/roadModel';
 import { RailModel, buildRailModel } from '../place/railModel';
 import { OpenSpace, placeOpenSpace } from '../place/openSpace';
 import { StreetFurniture, placeStreetFurniture } from '../place/streetFurniture';
+import { WATER_Y } from '../place/waterfront';
+import { bedTexture, groundMaterial, waterMaterial } from './ground';
 import { Materials } from './materials';
 
 /** A catalogue model standing somewhere in the city. */
@@ -35,6 +37,9 @@ export class CityView {
   private controls: OrbitControls;
   private content = new THREE.Group();
   private running = false;
+  /** Seconds since the view started, for the waves. */
+  private time = { value: 0 };
+  private clock = new THREE.Clock();
   private materials: Materials;
   /** Last road model, for inspection from the console and tests. */
   roads: RoadModel | null = null;
@@ -119,12 +124,13 @@ export class CityView {
         if (o instanceof THREE.InstancedMesh) o.dispose();
         // Road materials are shared and cached; only the terrain and water own theirs.
         if (o.userData.ownMaterial) (o.material as THREE.Material).dispose();
+        for (const tex of (o.userData.ownTextures as THREE.Texture[] | undefined) ?? []) tex.dispose();
       }
     });
     this.content.clear();
     const roads = (this.roads = buildRoadModel(city));
     const open = (this.open = placeOpenSpace(city, roads));
-    this.content.add(this.buildTerrain(city, open), this.buildWater(city));
+    this.content.add(this.buildTerrain(city, open), this.buildWater(city, open));
     for (const tile of roads.tiles) {
       const g = this.materials.group(tile);
       g.traverse((o) => {
@@ -155,6 +161,8 @@ export class CityView {
     const n = t.n;
     const pos = new Float32Array(n * n * 3);
     const col = new Float32Array(n * n * 3);
+    // How much of the ground at each vertex is sand, lawn, rough grass and open shore.
+    const cover = new Float32Array(n * n * 4);
     const color = new THREE.Color();
     for (let j = 0; j < n; j++) {
       for (let i = 0; i < n; i++) {
@@ -175,11 +183,13 @@ export class CityView {
         r = mix(r, 0.85, sand);
         g = mix(g, 0.78, sand);
         b = mix(b, 0.58, sand);
-        if (open.isPark(i * t.cell, j * t.cell)) {
+        const lawn = open.isPark(i * t.cell, j * t.cell);
+        if (lawn) {
           r = 0.36;
           g = 0.55;
           b = 0.3;
         }
+        cover.set([lawn ? 0 : sand, lawn ? 1 : 0, lawn ? 0 : hl * (1 - yard), clamp((t.riverBank[k] - t.seaDist[k]) / 40 + 0.5, 0, 1)], k * 4);
         color.setRGB(clamp(r, 0, 1), clamp(g, 0, 1), clamp(b, 0, 1), THREE.SRGBColorSpace);
         col[k * 3] = color.r;
         col[k * 3 + 1] = color.g;
@@ -198,20 +208,24 @@ export class CityView {
     const geo = new THREE.BufferGeometry();
     geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
     geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
+    geo.setAttribute('cover', new THREE.BufferAttribute(cover, 4));
     geo.setIndex(new THREE.BufferAttribute(index, 1));
     geo.computeVertexNormals();
-    const mesh = new THREE.Mesh(geo, new THREE.MeshLambertMaterial({ vertexColors: true }));
+    const mesh = new THREE.Mesh(geo, groundMaterial(this.materials, WATER_Y));
     mesh.userData.ownMaterial = true;
     return mesh;
   }
 
-  private buildWater(city: City): THREE.Mesh {
+  private buildWater(city: City, open: OpenSpace): THREE.Mesh {
     const s = city.config.size;
     const geo = new THREE.PlaneGeometry(s * 6, s * 6);
     geo.rotateX(-Math.PI / 2);
-    const mesh = new THREE.Mesh(geo, new THREE.MeshLambertMaterial({ color: 0x3f7fa8, transparent: true, opacity: 0.88 }));
-    mesh.position.set(s / 2, -0.4, s / 2);
+    const t = city.terrain;
+    const bed = bedTexture(t.n, t.cell, open.ground, (k) => clamp((t.riverBank[k] - t.seaDist[k]) / 40 + 0.5, 0, 1), WATER_Y);
+    const mesh = new THREE.Mesh(geo, waterMaterial(bed, t.n, (t.n - 1) * t.cell, WATER_Y, this.time));
+    mesh.position.set(s / 2, WATER_Y, s / 2);
     mesh.userData.ownMaterial = true;
+    mesh.userData.ownTextures = [bed];
     return mesh;
   }
 
@@ -237,6 +251,7 @@ export class CityView {
     this.resize();
     this.renderer.setAnimationLoop(() => {
       this.controls.update();
+      this.time.value += Math.min(0.1, this.clock.getDelta());
       this.renderer.render(this.scene, this.camera);
     });
   }
