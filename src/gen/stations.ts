@@ -23,6 +23,8 @@ export const STATION_HALF = 110;
 const SPACING: [number, number] = [950, 1450];
 /** Clear track between the end of the platforms and a level crossing, metres: a stopped train must not hold the gates down. */
 const CROSSING_CLEAR = 60;
+/** Clear track between the end of a platform and the points of the branch, metres. */
+const JUNCTION_CLEAR = 180;
 /** A station further than this from a main street is hard to reach, metres. */
 const ACCESS = 260;
 
@@ -38,6 +40,7 @@ export function placeStations(rail: Rail, t: Terrain, districts: Districts, rng:
   const w = Math.round(STATION_HALF / RAIL_STEP);
   const mine = crossings.filter((c) => c.line === li);
   const gates = mine.filter((c) => c.kind === 'level');
+  const junctions = rail.lines.filter((l) => l.kind === 'freight').map((l) => l.points[0]);
   const streets = mine.filter((c) => graph?.edges[c.edge]?.cls === 'arterial');
   const access = (p: Vec2): number => {
     let best = ACCESS;
@@ -53,6 +56,8 @@ export function placeStations(rail: Rail, t: Terrain, districts: Districts, rng:
     // The whole station is at one level: on the ground or up on the viaduct, not on the ramp between them.
     for (let k = i - w; k <= i + w; k++) if (line.structure[k] !== line.structure[i]) return Infinity;
     if (gates.some((c) => Math.hypot(c.x - p.x, c.y - p.y) < STATION_HALF + CROSSING_CLEAR)) return Infinity;
+    // Nor do the platforms reach into the junction where the branch leaves.
+    if (junctions.some((j) => dist(j, p) < STATION_HALF + JUNCTION_CLEAR)) return Infinity;
     const a = line.points[i - w];
     const b = line.points[i + w];
     // Sagitta of the platform track: platforms want straight track.

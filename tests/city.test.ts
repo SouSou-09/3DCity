@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { SegmentIndex, pointSeg, segSeg } from '../src/core/geom';
-import { angleDiff, clamp, dist, mix } from '../src/core/vec2';
+import { Vec2, angleDiff, clamp, dist, mix } from '../src/core/vec2';
 import { City, DEFAULT_CONFIG, generateCity } from '../src/gen/city';
 import { districtAt } from '../src/gen/districts';
 import { LAND_USES, LandUse, Site, useWeights } from '../src/gen/landuse';
@@ -263,8 +263,23 @@ describe('city generation', () => {
         expect(beside * RAIL_STEP, `${line.kind} beside the freeway`).toBeLessThanOrEqual(260);
         if (line.kind !== 'freight') continue;
         expect(line.length).toBeLessThanOrEqual(1600);
-        const works = line.points.filter((p) => districtAt(c.terrain, c.districts, p.x, p.y).type === 'industrial').length;
-        expect(works / line.points.length, 'branch among the works').toBeGreaterThan(0.6);
+        // Past the junction, where it runs beside the main line, it is on the land of the works it serves.
+        const main = c.rail.lines.find((l) => l.kind === 'main')!;
+        const off = (p: Vec2) => Math.min(...main.points.slice(1).map((q, i) => pointSeg(p.x, p.y, main.points[i], q).d));
+        const beyond = line.points.filter((p) => off(p) > 45);
+        const works = beyond.filter((p) => districtAt(c.terrain, c.districts, p.x, p.y).type === 'industrial').length;
+        expect(works / beyond.length, 'branch among the works').toBeGreaterThan(0.6);
+        // It leaves the main line the way a turnout does - alongside it, from plain track - and no station reaches into the junction.
+        const at = main.points.reduce((b, q, i) => (dist(q, line.points[0]) < dist(main.points[b], line.points[0]) ? i : b), 0);
+        const along = Math.atan2(main.points[at + 1].y - main.points[at - 1].y, main.points[at + 1].x - main.points[at - 1].x);
+        const away = Math.atan2(line.points[2].y - line.points[0].y, line.points[2].x - line.points[0].x);
+        expect(Math.abs(Math.sin(away - along)), 'angle the branch leaves at').toBeLessThan(0.3);
+        expect(off(line.points[0]), 'branch starts on the main line').toBeLessThan(4);
+        expect(Math.abs(line.level[0] - main.level[at]), 'branch starts at the level of the main line').toBeLessThan(0.3);
+        expect(sharpestRailTurn(line.points), 'curve of the branch').toBeLessThanOrEqual(RAIL_STEP / RAIL_MIN_RADIUS.freight + 1e-6);
+        for (let k = at - 8; k <= at + 8; k++) expect(main.structure[k], 'main line at the junction').toBe(main.structure[at]);
+        expect(['ground', 'elevated']).toContain(main.structure[at]);
+        for (const st of c.stations) expect(dist(st, line.points[0]), 'station by the junction').toBeGreaterThan(STATION_HALF + 150);
       }
     });
 
