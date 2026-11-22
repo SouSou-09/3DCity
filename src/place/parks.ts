@@ -916,18 +916,30 @@ export function placeParks(site: Site): { parks: ParkPlan[]; tiles: ModelData[] 
       const tclr = clearance(occ, w, w, LAWN);
       const G = 8;
       const dense = tier === 'central' || tier === 'district' ? 1 : 0.6;
-      /** Where the tree of a grid square stands, if it has one. */
-      const treeAt = (gx: number, gy: number): Vec2 => ({ x: (gx + 0.2 + hash(seed, pi, gx, gy, 1) * 0.6) * G, y: (gy + 0.2 + hash(seed, pi, gx, gy, 2) * 0.6) * G });
+      /** The tree of a grid square, if the square has one: where it stands, and whether in a grove or on the rim of the park. */
+      const treeAt = (gx: number, gy: number): { x: number; y: number; grove: number; rim: boolean } | null => {
+        const x = (gx + 0.2 + hash(seed, pi, gx, gy, 1) * 0.6) * G;
+        const y = (gy + 0.2 + hash(seed, pi, gx, gy, 2) * 0.6) * G;
+        const k = cellOf(x, y);
+        if (k < 0 || occ[k] !== LAWN || tclr[k] * C < 2.6) return null;
+        const grove = noise(seed * 7 + pi, x, y, 46);
+        const rim = clr0[k] * C < 10;
+        const p = rim ? 0.75 : (grove > 0.54 ? 0.95 : grove > 0.4 ? 0.5 : 0.18) * dense;
+        return hash(seed, pi, gx, gy, 3) > p ? null : { x, y, grove, rim };
+      };
+      // Every tree of the grid is known before any is planted, so one added beside a tree can keep clear of the rest.
+      const trunks = new Map<string, Vec2>();
+      for (let gy = Math.floor(cy(0) / G); gy * G < cy(w); gy++)
+        for (let gx = Math.floor(cx(0) / G); gx * G < cx(w); gx++) {
+          const t = treeAt(gx, gy);
+          if (t) trunks.set(`${gx},${gy}`, t);
+        }
       const seconds: Vec2[] = [];
       for (let gy = Math.floor(cy(0) / G); gy * G < cy(w); gy++)
         for (let gx = Math.floor(cx(0) / G); gx * G < cx(w); gx++) {
-          const { x, y } = treeAt(gx, gy);
-          const k = cellOf(x, y);
-          if (k < 0 || occ[k] !== LAWN || tclr[k] * C < 2.6) continue;
-          const grove = noise(seed * 7 + pi, x, y, 46);
-          const rim = clr0[k] * C < 10;
-          const p = rim ? 0.75 : (grove > 0.54 ? 0.95 : grove > 0.4 ? 0.5 : 0.18) * dense;
-          if (hash(seed, pi, gx, gy, 3) > p) continue;
+          const tree = treeAt(gx, gy);
+          if (!tree) continue;
+          const { x, y, grove, rim } = tree;
           const kind = pick(palette, hash(seed, pi, Math.floor(x / 46), Math.floor(y / 46), rim ? 5 : 4) * 0.75 + hash(seed, pi, gx, gy, 6) * 0.25);
           put(kind, 'tree', x, y, hash(seed, pi, gx, gy, 7) * Math.PI * 2, { scale: 0.85 + hash(seed, pi, gx, gy, 8) * 0.4 });
           const h = (n: number): number => hash(seed, pi, gx, gy, n);
@@ -950,8 +962,8 @@ export function placeParks(site: Site): { parks: ParkPlan[]; tiles: ModelData[] 
             let clash = seconds.some((t) => Math.hypot(t.x - tx, t.y - ty) < 2.4);
             for (let ny = gy - 1; ny <= gy + 1 && !clash; ny++)
               for (let nx = gx - 1; nx <= gx + 1 && !clash; nx++) {
-                const t = treeAt(nx, ny);
-                clash = (nx !== gx || ny !== gy) && Math.hypot(t.x - tx, t.y - ty) < 2.4;
+                const t = trunks.get(`${nx},${ny}`);
+                clash = !!t && (nx !== gx || ny !== gy) && Math.hypot(t.x - tx, t.y - ty) < 2.4;
               }
             if (clash) continue;
             seconds.push({ x: tx, y: ty });
