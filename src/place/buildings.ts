@@ -466,6 +466,17 @@ export function placeBuildings(site: Site, shore: Waterfront): Buildings {
       const [A, B, C, D] = [pt(a0, c0), pt(a1, c0), pt(a1, c1), pt(a0, c1)];
       if (depth < 3 && Math.max(a1 - a0, c1 - c0) > 0.8 && cover(A, B, C, D) < 0.02) {
         const [am, cm] = [(a0 + a1) / 2, (c0 + c1) / 2];
+        // The piece beside this one may be laid whole: its straight side and the two halves that meet here part
+        // at the middle, and an upright sliver closes what would open between them.
+        const mids: [V3, V3, V3, [number, number][]][] = [
+          [A, pt(am, c0), B, [[a0, c0], [am, c0], [a1, c0]]], [B, pt(a1, cm), C, [[a1, c0], [a1, cm], [a1, c1]]],
+          [C, pt(am, c1), D, [[a1, c1], [am, c1], [a0, c1]]], [D, pt(a0, cm), A, [[a0, c1], [a0, cm], [a0, c0]]],
+        ];
+        for (const [P, M, Q, uv] of mids) {
+          if (Math.abs(M[1] - (P[1] + Q[1]) / 2) < 0.004) continue;
+          b.tri(tex, P, M, Q, uv);
+          b.tri(tex, Q, M, P, [uv[2], uv[1], uv[0]]);
+        }
         lay(a0, am, c0, cm, depth + 1);
         lay(am, a1, c0, cm, depth + 1);
         lay(a0, am, cm, c1, depth + 1);
