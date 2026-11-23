@@ -492,9 +492,9 @@ export function placeBuildings(site: Site, shore: Waterfront): Buildings {
         const tank = i === 0 && max[1] > 11 && /^R|^O/.test(f.lot.use) && (f.type === 'oldtown' || f.type === 'midtown' || f.type === 'downtown') && rnd(f.lot.id, 701, uc) < 0.5;
         let part = tank ? `buildpart/water-tank-${1 + Math.floor(rnd(f.lot.id, 702) * 3)}` : rnd(f.lot.id, 703, i) < 0.62 ? ROOF_AC[Math.floor(rnd(f.lot.id, 704, i) * ROOF_AC.length)] : ROOF_SMALL[Math.floor(rnd(f.lot.id, 705, i) * ROOF_SMALL.length)];
         let turn = Math.floor(rnd(f.lot.id, 706, i) * 4);
-        // Turned the other way if that is how it fits, and a small unit where a big one has no room.
+        // Turned the other way if that is how it fits, and a small unit where a tank or a big one has no room.
         let r = room(part, turn) ?? room(part, ++turn);
-        if (!r && !tank) r = room((part = ROOF_AC[0]), turn);
+        if (!r) r = room((part = ROOF_AC[0]), turn);
         if (!r) continue;
         put.push(r);
         const p = Site.local(c.x, c.y, f.yaw, (sx - mx) * k, sz - mz);
