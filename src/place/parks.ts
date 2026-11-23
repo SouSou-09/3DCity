@@ -4,7 +4,7 @@ import { catmullRom, polyLength, pointAt, resample, simplify } from '../core/geo
 import { Heap } from '../core/heap';
 import { Vec2 } from '../core/vec2';
 import { DistrictType, districtAt } from '../gen/districts';
-import { FREE, PARK, SITE_CELL, Site, SiteItem, SiteKind, bbox, clearance, facing, hash, pick } from './site';
+import { FREE, LOT, PARK, USED, SITE_CELL, Site, SiteItem, SiteKind, bbox, clearance, facing, hash, pick } from './site';
 
 const C = SITE_CELL;
 export type ParkTier = 'central' | 'district' | 'neighbourhood' | 'pocket';
@@ -287,6 +287,9 @@ export function placeParks(site: Site): { parks: ParkPlan[]; tiles: ModelData[] 
         // No street runs along the park: a footpath over open ground from the nearest street that has one.
         let best: { d: number; from: Vec2; to: Vec2; edge: number } | null = null;
         const rim = cells.filter((k) => clr0[k] <= 1.5);
+        // Where the lots around leave no open ground between, the path is a right of way across them.
+        for (const over of [[FREE], [FREE, LOT]]) {
+        if (best) break;
         city.graph.edges.forEach((e) => {
           const line = roads.lines[e.id];
           if (!line || e.bridge || !line.some((q) => Math.hypot(q[0] - park.center.x, q[2] - park.center.y) < R + 220)) return;
@@ -304,15 +307,18 @@ export function placeParks(site: Site): { parks: ParkPlan[]; tiles: ModelData[] 
                 if (best && dist >= best.d) continue;
                 // The way there must be open ground.
                 let clear = true;
-                for (let u = 2.5; clear && u < dist - 1; u += 1.5) clear = site.all(from.x + ((to.x - from.x) * u) / dist, from.y + ((to.y - from.y) * u) / dist, 1.2, FREE);
+                for (let u = 2.5; clear && u < dist - 1; u += 1.5) clear = site.all(from.x + ((to.x - from.x) * u) / dist, from.y + ((to.y - from.y) * u) / dist, 1.2, ...over);
                 if (clear) best = { d: dist, from, to, edge: e.id };
               }
             }
           }
         });
+        }
         if (best) {
           const { from, to, d, edge } = best as { d: number; from: Vec2; to: Vec2; edge: number };
           const [nx, ny] = [(to.x - from.x) / d, (to.y - from.y) / d];
+          // Nothing is built on the way.
+          site.stampBand(from.x, from.y, to.x, to.y, -1.8, 1.8, USED, 0, LOT);
           plan.entrances.push({ x: to.x, y: to.y, nx, ny, edge, main: true, gap: 3, from });
         }
       }

@@ -9,6 +9,8 @@ import { landCover } from '../place/landCover';
 import { OpenSpace, placeOpenSpace } from '../place/openSpace';
 import { SITE_CELL } from '../place/site';
 import { StreetFurniture, placeStreetFurniture } from '../place/streetFurniture';
+import { CAR_SIZE } from '../assets/mesh/vehicles';
+import { Vehicle, Vehicles, placeVehicles } from '../place/vehicles';
 import { WATER_Y } from '../place/waterfront';
 import { bedTexture, groundMaterial, waterMaterial } from './ground';
 import { Materials } from './materials';
@@ -25,6 +27,8 @@ interface Instance {
   scale?: number;
   /** Scale along the model's own x axis. */
   stretch?: number;
+  /** Colour of the body paint, for the cars. */
+  tint?: number;
 }
 
 /**
@@ -47,6 +51,10 @@ export class CityView {
   roads: RoadModel | null = null;
   /** Signals, signs and lights standing along the roads. */
   furniture: StreetFurniture | null = null;
+  vehicles: Vehicles | null = null;
+  private farCar: { geo: THREE.BufferGeometry; mat: THREE.Material } | null = null;
+  /** Geometry of the small things by model: kept from one city to the next, as the models do not change. */
+  private nearGeos = new Map<string, { geo: THREE.BufferGeometry; mat: THREE.Material; layer: number; tinted: boolean }[]>();
   /** Tracks, level crossings and stations along the railway. */
   rail: RailModel | null = null;
   /** Parks, the waterfront and fences as placed. */
@@ -70,8 +78,7 @@ export class CityView {
   }
 
   /** One instanced mesh per model, material and 800 m tile, so that what is out of view is skipped. */
-  private buildFurniture(items: Instance[]): THREE.Group {
-    const TILE = 800;
+  private buildFurniture(items: Instance[], TILE = 800, geos = new Map<string, { geo: THREE.BufferGeometry; mat: THREE.Material; layer: number; tinted: boolean }[]>()): THREE.Group {
     const groups = new Map<string, Instance[]>();
     for (const it of items) {
       const k = `${it.model}|${Math.floor(it.x / TILE)}|${Math.floor(it.y / TILE)}`;
@@ -80,7 +87,7 @@ export class CityView {
       else groups.set(k, [it]);
     }
     const out = new THREE.Group();
-    const geos = new Map<string, { geo: THREE.BufferGeometry; mat: THREE.Material; layer: number }[]>();
+    const tint = new THREE.Color();
     const m = new THREE.Matrix4();
     const size = new THREE.Vector3();
     for (const [k, list] of groups) {
@@ -95,7 +102,7 @@ export class CityView {
           geo.setAttribute('normal', new THREE.Float32BufferAttribute(p.normals, 3));
           geo.setAttribute('uv', new THREE.Float32BufferAttribute(p.uvs, 2));
           geo.setIndex(p.indices);
-          return { geo, mat: this.materials.material(p.material, p.layer), layer: p.layer };
+          return { geo, mat: this.materials.material(p.material, p.layer), layer: p.layer, tinted: p.material.startsWith('vehicle/paint') };
         });
         geos.set(id, parts);
       }
@@ -109,7 +116,9 @@ export class CityView {
           m.elements[9] = it.slopeZ ?? 0;
           m.setPosition(it.x, it.h, it.y);
           mesh.setMatrixAt(i, m);
+          if (p.tinted && it.tint !== undefined) mesh.setColorAt(i, tint.setHex(it.tint, THREE.SRGBColorSpace));
         });
+        if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
         mesh.instanceMatrix.needsUpdate = true;
         mesh.computeBoundingSphere();
         mesh.renderOrder = p.layer;
@@ -119,10 +128,100 @@ export class CityView {
     return out;
   }
 
+  /** Small things in tiles of their own, drawn only for the tiles near the camera. */
+  private buildNear(items: Instance[], TILE = 160, reach = 420): THREE.Group {
+    const tiles = new Map<string, Instance[]>();
+    for (const it of items) {
+      const k = `${Math.floor(it.x / TILE)}|${Math.floor(it.y / TILE)}`;
+      const g = tiles.get(k);
+      if (g) g.push(it);
+      else tiles.set(k, [it]);
+    }
+    const out = new THREE.Group();
+    for (const list of tiles.values()) {
+      const lod = new THREE.LOD();
+      const c = list.reduce((a, it) => [a[0] + it.x / list.length, a[1] + it.h / list.length, a[2] + it.y / list.length], [0, 0, 0]);
+      lod.position.set(c[0], c[1], c[2]);
+      // The geometry of a model is made once and kept for the next city too, so no tile owns it.
+      const near = this.buildFurniture(list, TILE, this.nearGeos);
+      near.position.set(-c[0], -c[1], -c[2]);
+      near.traverse((o) => (o.userData.sharedGeometry = true));
+      lod.addLevel(near, 0);
+      lod.addLevel(new THREE.Object3D(), reach);
+      out.add(lod);
+    }
+    return out;
+  }
+
+  /** Cars in small tiles: the models up close, a tinted block for each further off, nothing beyond that. */
+  private buildVehicles(items: Vehicle[]): THREE.Group {
+    const TILE = 200;
+    const tiles = new Map<string, Vehicle[]>();
+    for (const it of items) {
+      const k = `${Math.floor(it.x / TILE)}|${Math.floor(it.y / TILE)}`;
+      const g = tiles.get(k);
+      if (g) g.push(it);
+      else tiles.set(k, [it]);
+    }
+    if (!this.farCar) {
+      // A body and a cabin on it, white where the paint is and dark where the glass is.
+      const body = new THREE.BoxGeometry(1, 0.42, 1).translate(0, 0.37, 0);
+      const cabin = new THREE.BoxGeometry(0.52, 0.42, 0.9).translate(-0.06, 0.79, 0);
+      const shade = (g: THREE.BufferGeometry, side: number): void => {
+        const n = g.getAttribute('normal');
+        const c = new Float32Array(n.count * 3);
+        for (let i = 0; i < n.count; i++) c.fill(n.getY(i) > 0.5 ? 1 : side, i * 3, i * 3 + 3);
+        g.setAttribute('color', new THREE.BufferAttribute(c, 3));
+      };
+      shade(body, 0.82);
+      shade(cabin, 0.05);
+      const geo = new THREE.BufferGeometry();
+      for (const name of ['position', 'normal', 'color'] as const) {
+        const [a, b] = [body.getAttribute(name), cabin.getAttribute(name)];
+        const arr = new Float32Array(a.array.length + b.array.length);
+        arr.set(a.array as Float32Array);
+        arr.set(b.array as Float32Array, a.array.length);
+        geo.setAttribute(name, new THREE.BufferAttribute(arr, 3));
+      }
+      geo.setIndex([...Array.from(body.index!.array), ...Array.from(cabin.index!.array, (i) => i + body.getAttribute('position').count)]);
+      this.farCar = { geo, mat: new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.45, metalness: 0.15 }) };
+    }
+    const out = new THREE.Group();
+    const geos = new Map<string, { geo: THREE.BufferGeometry; mat: THREE.Material; layer: number; tinted: boolean }[]>();
+    const m = new THREE.Matrix4();
+    const size = new THREE.Vector3();
+    const tint = new THREE.Color();
+    for (const list of tiles.values()) {
+      const lod = new THREE.LOD();
+      const c = list.reduce((a, it) => [a[0] + it.x / list.length, a[1] + it.h / list.length, a[2] + it.y / list.length], [0, 0, 0]);
+      lod.position.set(c[0], c[1], c[2]);
+      const near = this.buildFurniture(list, TILE, geos);
+      near.position.set(-c[0], -c[1], -c[2]);
+      const far = new THREE.InstancedMesh(this.farCar.geo, this.farCar.mat, list.length);
+      list.forEach((it, i) => {
+        const r = CAR_SIZE.get(it.model)!;
+        m.makeRotationY(-it.yaw);
+        m.scale(size.set(r.len - 0.16, r.hgt, r.wid - 0.3));
+        m.setPosition(it.x - c[0], it.h - c[1], it.y - c[2]);
+        far.setMatrixAt(i, m);
+        far.setColorAt(i, tint.setHex(it.tint, THREE.SRGBColorSpace));
+      });
+      far.instanceMatrix.needsUpdate = true;
+      far.instanceColor!.needsUpdate = true;
+      far.computeBoundingSphere();
+      far.userData.sharedGeometry = true;
+      lod.addLevel(near, 0);
+      lod.addLevel(far, 260);
+      lod.addLevel(new THREE.Object3D(), 1800);
+      out.add(lod);
+    }
+    return out;
+  }
+
   setCity(city: City): void {
     this.content.traverse((o) => {
       if (o instanceof THREE.Mesh) {
-        o.geometry.dispose();
+        if (!o.userData.sharedGeometry) o.geometry.dispose();
         if (o instanceof THREE.InstancedMesh) o.dispose();
         // Road materials are shared and cached; only the terrain and water own theirs.
         if (o.userData.ownMaterial) (o.material as THREE.Material).dispose();
@@ -148,7 +247,10 @@ export class CityView {
     for (const tile of rail.tiles) this.content.add(this.materials.group(tile));
     this.content.add(this.buildFurniture(rail.items));
     for (const tile of open.tiles) this.content.add(this.materials.group(tile));
-    this.content.add(this.buildFurniture(open.items));
+    this.content.add(this.buildFurniture(open.items.filter((it) => it.kind !== 'prop')));
+    this.content.add(this.buildNear(open.items.filter((it) => it.kind === 'prop')));
+    this.vehicles = placeVehicles(city, open.buildings, this.furniture);
+    this.content.add(this.buildVehicles(this.vehicles.items));
     const s = city.config.size;
     const dt = city.districts.downtown.center;
     this.controls.target.set(dt.x, 0, dt.y);

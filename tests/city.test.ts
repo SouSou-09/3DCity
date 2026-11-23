@@ -14,6 +14,8 @@ import { RailModel, buildRailModel, crossingLook } from '../src/place/railModel'
 import { roadAt, trackAt } from '../src/place/railProfile';
 import { LOW_TREES, STREET_TREES, placeStreetFurniture } from '../src/place/streetFurniture';
 import { Building } from '../src/place/buildings';
+import { carsOverlap, placeVehicles } from '../src/place/vehicles';
+import { CAR_SIZE } from '../src/assets/mesh/vehicles';
 import { landCover } from '../src/place/landCover';
 import { BELT, COPSE, RIVERSIDE, WILD, YARD } from '../src/place/leftover';
 import { OpenSpace, placeOpenSpace } from '../src/place/openSpace';
@@ -938,7 +940,8 @@ describe('street furniture', () => {
     const c = city(seed);
     const m = model(seed);
     const f = placeStreetFurniture(c, m);
-    const trees = f.items.filter((it) => it.kind === 'tree');
+    // The trees along the streets: those on the island of a roundabout belong to no street.
+    const trees = f.items.filter((it) => it.kind === 'tree' && it.edge !== undefined);
     expect(trees.length).toBeGreaterThan(4000);
     expect(f.stats.pit).toBeGreaterThan(800);
     expect(f.stats.plant).toBeGreaterThan(60);
@@ -2036,5 +2039,151 @@ describe('parks, waterfront and boundaries', () => {
       }
     });
     expect(loose).toBeLessThan(0.09 * 2 * runs.length);
+  });
+
+  it('seed 9: where no roundabout comes of a radial quarter, the streets at its middle are left as they were', () => {
+    const c = city(9);
+    expect(c.graph.nodes.filter((n) => n.roundabout).length).toBe(0);
+    const d = c.districts.list.find((q) => q.radial)!;
+    const about = (n: { x: number; y: number }): boolean => Math.hypot(n.x - d.center.x, n.y - d.center.y) < 200;
+    // Clearing the ground for a roundabout that is then not built would leave the streets around cut short.
+    expect(c.graph.nodes.filter((n) => about(n) && n.edges.length === 1).length).toBeLessThanOrEqual(3);
+    const streets = c.graph.edges.filter((e) => e.cls !== 'highway' && e.cls !== 'ramp' && e.points.some((p, k) => k > 0 && pointSeg(d.center.x, d.center.y, e.points[k - 1], p).d < 88));
+    expect(streets.reduce((sum, e) => sum + e.length, 0)).toBeGreaterThan(900);
+  });
+
+  it.each(OPEN_SEEDS)('seed %i: a roundabout has a planted island with no building, lot or car on it or on its ring', (seed) => {
+    const [c, m, o] = [city(seed), model(seed), open(seed)];
+    const f = placeStreetFurniture(c, m);
+    const cars = placeVehicles(c, o.buildings, f).items;
+    const rounds = m.junctions.filter((j) => j.roundabout);
+    for (const j of rounds) {
+      const { radius, island } = j.roundabout!;
+      expect(j.arms.length).toBeGreaterThanOrEqual(3);
+      expect(island).toBeGreaterThan(4);
+      expect(radius - island).toBeGreaterThan(5);
+      for (const b of o.buildings.list) expect(Math.hypot(b.x - j.x, b.y - j.y) - Math.hypot(b.hx, b.hz), `${b.model} at the roundabout`).toBeGreaterThan(radius);
+      for (const it of o.items) if (it.kind === 'building' || it.kind === 'parking' || it.kind === 'prop') expect(Math.hypot(it.x - j.x, it.y - j.y), it.model).toBeGreaterThan(radius);
+      for (const v of cars) expect(Math.hypot(v.x - j.x, v.y - j.y), v.model).toBeGreaterThan(radius + 2);
+      const green = f.items.filter((i) => (i.kind === 'tree' || i.kind === 'plant') && Math.hypot(i.x - j.x, i.y - j.y) < island);
+      expect(green.length).toBeGreaterThan(3);
+      // Nothing but the planting and the signs that turn the traffic stands on the island.
+      for (const i of f.items) if (Math.hypot(i.x - j.x, i.y - j.y) < island - 1.2) expect(['tree', 'plant'], i.model).toContain(i.kind);
+    }
+    expect(c.graph.nodes.filter((n) => n.roundabout).length).toBeGreaterThanOrEqual(rounds.length);
+  });
+
+  it.each(OPEN_SEEDS)('seed %i: cars of many kinds stand in the marked spaces, on the drives and at the kerb, none in another', (seed) => {
+    const [c, o] = [city(seed), open(seed)];
+    const f = placeStreetFurniture(c, model(seed));
+    const v = placeVehicles(c, o.buildings, f);
+    expect(placeVehicles(c, o.buildings, f).items).toEqual(v.items);
+    const ids = new Set(MODELS.map((x) => x.id));
+    for (const it of v.items) expect(ids.has(it.model), it.model).toBe(true);
+    const s = v.stats;
+    expect(Object.keys(s.models).length).toBeGreaterThanOrEqual(15);
+    expect(new Set(v.items.map((x) => x.tint)).size).toBeGreaterThanOrEqual(12);
+    // No one model is most of the cars.
+    expect(Math.max(...Object.values(s.models))).toBeLessThan(0.25 * v.items.length);
+    // Car parks are partly full, most drives have a car, the kerbs are neither empty nor lined end to end.
+    for (const [n, of, lo, hi] of [[s.stall, s.stalls, 0.25, 0.8], [s.drive, s.drives, 0.4, 0.95], [s.kerb, s.kerbs, 0.15, 0.75]]) {
+      expect(of).toBeGreaterThan(300);
+      expect(n / of).toBeGreaterThan(lo);
+      expect(n / of).toBeLessThan(hi);
+    }
+    const G = 8;
+    const cells = new Map<number, typeof v.items>();
+    let hits = 0;
+    for (const a of v.items) {
+      const [i, j] = [Math.floor(a.x / G), Math.floor(a.y / G)];
+      for (let dj = -1; dj <= 1; dj++) for (let di = -1; di <= 1; di++) for (const b of cells.get((j + dj) * 4096 + i + di) ?? []) if (carsOverlap(a, b, 0.3)) hits++;
+      (cells.get(j * 4096 + i) ?? cells.set(j * 4096 + i, []).get(j * 4096 + i)!).push(a);
+    }
+    expect(hits).toBe(0);
+    // No car in a building: its middle is not well within the walls (a garage set back from the front has a car before its door).
+    const near = new Map<number, Building[]>();
+    for (const b of o.buildings.list) {
+      const r = Math.hypot(b.hx, b.hz);
+      for (let y = b.y - r; y <= b.y + r + 16; y += 16) for (let x = b.x - r; x <= b.x + r + 16; x += 16) {
+        const k = Math.floor(y / 16) * 4096 + Math.floor(x / 16);
+        (near.get(k) ?? near.set(k, []).get(k)!).push(b);
+      }
+    }
+    let inside = 0;
+    for (const a of v.items) for (const b of near.get(Math.floor(a.y / 16) * 4096 + Math.floor(a.x / 16)) ?? []) {
+      const [cs, sn] = [Math.cos(b.yaw), Math.sin(b.yaw)];
+      if (Math.abs((a.x - b.x) * cs + (a.y - b.y) * sn) < b.hx - 2.6 && Math.abs(-(a.x - b.x) * sn + (a.y - b.y) * cs) < b.hz - 2.6) inside++;
+    }
+    expect(inside).toBe(0);
+    // Nobody at the kerb stands across the mouth of a drive or of the way into a car park, whether a car is on the drive or not.
+    expect(o.buildings.mouths.length).toBeGreaterThan(2000);
+    const mouths = new Map<number, typeof o.buildings.mouths>();
+    for (const m of o.buildings.mouths) {
+      const k = Math.floor(m.y / 16) * 4096 + Math.floor(m.x / 16);
+      (mouths.get(k) ?? mouths.set(k, []).get(k)!).push(m);
+    }
+    let across = 0;
+    for (const a of v.items) {
+      if (a.where !== 'kerb') continue;
+      const [cs, sn, half] = [Math.cos(a.yaw), Math.sin(a.yaw), CAR_SIZE.get(a.model)!.len / 2];
+      for (let dj = -1; dj <= 1; dj++) for (let di = -1; di <= 1; di++) for (const m of mouths.get((Math.floor(a.y / 16) + dj) * 4096 + Math.floor(a.x / 16) + di) ?? []) {
+        const [dx, dy] = [m.x - a.x, m.y - a.y];
+        const [fore, side] = [dx * cs + dy * sn, -dx * sn + dy * cs];
+        // The mouth is over the pavement on the kerb side, and the car covers this much of its width.
+        if (side > 0 && side < 9 && Math.min(m.w / 2, fore + half) - Math.max(-m.w / 2, fore - half) > 0.5) across++;
+      }
+    }
+    expect(across).toBe(0);
+    // A place at the kerb is set out for a car 2.1 m wide: a wider van or lorry stands further out into the street, not over the pavement.
+    const places = new Map<number, typeof f.kerb>();
+    for (const k of f.kerb) {
+      const key = Math.floor(k.y / 16) * 4096 + Math.floor(k.x / 16);
+      (places.get(key) ?? places.set(key, []).get(key)!).push(k);
+    }
+    let [wide, over] = [0, 0];
+    for (const a of v.items) {
+      if (a.where !== 'kerb') continue;
+      let [best, side] = [Infinity, 0];
+      for (let dj = -1; dj <= 1; dj++) for (let di = -1; di <= 1; di++) for (const k of places.get((Math.floor(a.y / 16) + dj) * 4096 + Math.floor(a.x / 16) + di) ?? []) {
+        const far = Math.hypot(a.x - k.x, a.y - k.y);
+        if (far < best) [best, side] = [far, -(a.x - k.x) * Math.sin(k.yaw) + (a.y - k.y) * Math.cos(k.yaw)];
+      }
+      const wid = CAR_SIZE.get(a.model)!.wid;
+      if (wid > 2.3) wide++;
+      if (side + wid / 2 - 1.05 > 0.1) over++;
+    }
+    expect(wide).toBeGreaterThan(20);
+    expect(over).toBe(0);
+  });
+
+  it.each(OPEN_SEEDS)('seed %i: each chain restaurant has its room inside it, and the shop fronts their boards, banners, tables and crates', (seed) => {
+    const o = open(seed);
+    const ids = new Set(MODELS.map((x) => x.id));
+    const props = o.items.filter((i) => i.kind === 'prop');
+    for (const p of props) expect(ids.has(p.model), p.model).toBe(true);
+    const rooms = props.filter((p) => p.model.startsWith('prop/interior-'));
+    const eat = o.items.filter((i) => i.kind === 'building' && /^shop\/(fastfood|diner)-/.test(i.model));
+    expect(eat.length).toBeGreaterThan(20);
+    expect(rooms.length).toBe(eat.length);
+    for (const b of eat) {
+      const room = rooms.find((r) => r.x === b.x && r.y === b.y);
+      expect(room?.model, b.model).toBe(`prop/interior-${b.model.slice(5)}`);
+      expect(room!.yaw).toBe(b.yaw);
+      expect(room!.h).toBe(b.h);
+    }
+    expect(new Set(rooms.map((r) => r.model)).size).toBeGreaterThanOrEqual(6);
+    const loose = props.filter((p) => !p.model.startsWith('prop/interior-'));
+    expect(loose.length).toBeGreaterThan(800);
+    expect(new Set(loose.map((p) => p.model)).size).toBeGreaterThanOrEqual(30);
+    const family = (id: string): string => id.slice(5).replace(/-[^-]+$/, '');
+    expect(new Set(loose.map((p) => family(p.model))).size).toBeGreaterThanOrEqual(8);
+    // None stands in a building.
+    let inside = 0;
+    for (const p of loose) for (const b of o.buildings.list) {
+      if (Math.abs(p.x - b.x) > 40 || Math.abs(p.y - b.y) > 40) continue;
+      const [cs, sn] = [Math.cos(b.yaw), Math.sin(b.yaw)];
+      if (Math.abs((p.x - b.x) * cs + (p.y - b.y) * sn) < b.hx - 0.25 && Math.abs(-(p.x - b.x) * sn + (p.y - b.y) * cs) < b.hz - 0.25) inside++;
+    }
+    expect(inside).toBe(0);
   });
 });

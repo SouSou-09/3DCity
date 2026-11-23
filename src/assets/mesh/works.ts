@@ -3,6 +3,7 @@ import { MeshBuilder } from './builder';
 import { acUnit, antenna, awning, balcony, barrel, billboard, blade, chimney, duct, flatRoof, Opening, pq, sawtooth, sides, sign, skylight, slab, stoop, vent, wall, waterTank, weatherBySeed } from './buildkit';
 import { block, roofPlant } from './blocks';
 import { RoofOpts, roofOn, spread } from './houses';
+import { Inside, Room, furnish, roomPlan, roomShell } from './interiors';
 import { box, face, lathe, pipe, stand } from './kit';
 import { addModel } from './registry';
 
@@ -184,17 +185,26 @@ function gasStation(b: MeshBuilder, o: { seed: number; canopy: string; islands: 
 }
 
 /** Free-standing shop with glazing all round: fast food, diners and banks. */
-function pavilion(b: MeshBuilder, o: { seed: number; w: number; d: number; h: number; wall: string; trim: string; win: string; door: string; roof: RoofOpts['kind']; roofMat: string; rise: number; sign?: string; pole?: string; stripe?: string; blade?: string; columns?: number; lift?: number; drive?: boolean }): void {
+function pavilion(b: MeshBuilder, o: { seed: number; w: number; d: number; h: number; wall: string; trim: string; win: string; door: string; roof: RoofOpts['kind']; roofMat: string; rise: number; sign?: string; pole?: string; stripe?: string; blade?: string; columns?: number; lift?: number; drive?: boolean; inside?: Inside }): void {
   const rnd = new Rand(o.seed);
   weatherBySeed(b, o.seed, (o as { wall?: string }).wall);
   const { w, d, h } = o;
   const lift = o.lift ?? 0;
+  if (o.inside) return dining(b, o as Parameters<typeof dining>[1], rnd);
   const wh = textureSpec(o.win).meters[1];
   const [dw, dh] = textureSpec(o.door).meters;
   const sill = lift + Math.min(1, h - lift - wh - 0.4);
   const front: Opening[] = [{ x: w / 2 - dw / 2, y: lift + 0.03, w: dw, h: dh, tex: o.door, depth: 0.15, frame: o.trim }];
   if (w / 2 - dw / 2 - 1.4 > 1.2) front.push(band(0.7, w / 2 - dw / 2 - 0.7, sill, o.win, 0), band(w / 2 + dw / 2 + 0.7, w - 0.7, sill, o.win, 2));
   shell(b, 0, 0, w, d, h, o.wall, [front, [band(0.8, d - 0.8, sill, o.win, 1)], [{ x: 1, y: lift + 0.03, w: 0.9, h: 2.1, tex: D('steel-brown'), depth: 0.08 }], [band(0.8, d * 0.6, sill, o.win, 3), ...(o.drive ? [{ x: d * 0.6 + 1, y: lift + 1, w: 1.2, h: 1.2, tex: WIN('slider-white'), depth: 0.1, sill: o.trim }] : [])]]);
+  pavilionTop(b, o, rnd, dw);
+}
+
+type PavilionOpts = Parameters<typeof pavilion>[1];
+/** What a pavilion has besides its walls: the stripe, the steps, a portico, the roof and its plant, and the signs. */
+function pavilionTop(b: MeshBuilder, o: PavilionOpts, rnd: Rand, dw: number): void {
+  const { w, d, h } = o;
+  const lift = o.lift ?? 0;
   if (o.stripe) for (const s of sides(0, 0, w, d, h - 0.5)) box(b, o.stripe, s.f, [s.w / 2, 0, 0.02], [s.w / 2 + 0.02, 0.22, 0.03]);
   if (lift > 0.1) stoop(b, stand([0, 0, d / 2 + (o.columns ? 2.2 : 0)]), dw + (o.columns ? 6 : 1.2), lift, { landing: o.columns ? 0.4 : 1, mat: 'structure/wall-smooth' });
   if (o.columns) {
@@ -220,6 +230,50 @@ function pavilion(b: MeshBuilder, o: { seed: number; w: number; d: number; h: nu
   if (o.sign) sign(b, stand([0, o.roof === 'mansard' ? h + o.rise * 0.5 : h - 0.15, d / 2 + (o.roof === 'mansard' ? 0.25 : 0)]), 4.8, 0.9, o.sign);
   if (o.blade) blade(b, stand([-w / 2 + 0.5, h - 0.4, d / 2]), o.blade);
   if (o.pole) billboard(b, stand([w / 2 + 3, 0, d / 2 + 2], rnd.range(-20, 20)), o.pole, 6.5, 0.45);
+}
+
+const PR = (c: string): string => `prop/${c}`;
+/** How each chain fits out its restaurants. */
+export const INSIDE: Record<string, Inside> = {
+  'fastfood-1': { plan: 'deep', frame: 'aluminium', floor: PR('floor-check-red'), wall: PR('wall-cream-red'), counter: PR('counter-red'), counterTop: PR('laminate-white'), menu: PR('menu-burger'), vinyl: PR('vinyl-red'), top: PR('laminate-white'), chair: 'shell-red', stool: PR('vinyl-red'), lamp: ['cone', 'red'], set: 'tray', posters: [PR('poster-burger'), PR('poster-combo')], machines: ['dispenser', 'shelf', 'fryer', 'fryer', 'coffee'], bin: PR('plastic-red'), seating: 0 },
+  'fastfood-2': { plan: 'deep', frame: 'black', floor: PR('floor-tile-terracotta'), wall: PR('wall-yellow-wood'), counter: PR('counter-yellow'), counterTop: PR('steel'), menu: PR('menu-taco'), vinyl: PR('vinyl-orange'), top: PR('laminate-cream'), chair: 'shell-yellow', stool: PR('vinyl-orange'), lamp: ['dome', 'yellow'], set: 'tray', posters: [PR('poster-combo'), PR('poster-shake')], machines: ['shelf', 'dispenser', 'fryer', 'fridge'], bin: PR('wood-walnut'), seating: 1 },
+  'fastfood-3': { plan: 'deep', frame: 'white', floor: PR('floor-check-bw'), wall: PR('wall-pink-chrome'), counter: PR('counter-teal'), counterTop: PR('laminate-white'), menu: PR('menu-donut'), vinyl: PR('vinyl-cream'), top: PR('laminate-white'), chair: 'bistro-chrome', stool: PR('vinyl-teal'), lamp: ['globe', 'white'], set: 'coffee', posters: [PR('poster-donut'), PR('poster-coffee')], machines: ['coffee', 'shelf', 'shelf', 'coffee'], bin: PR('plastic-teal'), seating: 1 },
+  'fastfood-4': { plan: 'deep', frame: 'bronze', floor: PR('floor-tile-quarry'), wall: PR('wall-green-white'), counter: PR('counter-wood'), counterTop: PR('laminate-cream'), menu: PR('menu-pizza'), vinyl: PR('vinyl-green'), top: PR('wood-oak'), chair: 'wood-oak', stool: PR('vinyl-green'), lamp: ['cone', 'green'], set: 'pizza', posters: [PR('poster-pizza'), PR('poster-combo')], machines: ['oven', 'shelf', 'dispenser', 'oven', 'fridge'], bin: PR('wood-oak'), seating: 0 },
+  'fastfood-5': { plan: 'deep', frame: 'red', floor: PR('floor-wood'), wall: PR('wall-orange-brown'), counter: PR('counter-black'), counterTop: PR('wood-walnut'), menu: PR('menu-noodle'), vinyl: PR('vinyl-black'), top: PR('wood-walnut'), chair: 'wood-walnut', stool: PR('vinyl-black'), lamp: ['drum', 'cream'], set: 'noodle', posters: [PR('poster-noodle'), PR('poster-combo')], machines: ['shelf', 'fridge', 'dispenser'], bin: PR('steel'), seating: 2 },
+  'diner-1': { plan: 'diner', frame: 'red', floor: PR('floor-check-bw'), wall: PR('wall-white-tile'), counter: PR('counter-red'), counterTop: PR('laminate-white'), menu: PR('menu-diner'), vinyl: PR('vinyl-red'), top: PR('laminate-red'), chair: 'pad-red', stool: PR('vinyl-red'), lamp: ['dome', 'black'], set: 'plates', posters: [PR('poster-breakfast'), PR('poster-shake')], machines: ['coffee', 'shelf', 'fryer', 'dispenser', 'fridge', 'oven'], bin: PR('steel'), seating: 0 },
+  'diner-2': { plan: 'diner', frame: 'white', floor: PR('floor-check-teal'), wall: PR('wall-teal-cream'), counter: PR('counter-teal'), counterTop: PR('steel'), menu: PR('menu-coffee'), vinyl: PR('vinyl-teal'), top: PR('laminate-teal'), chair: 'pad-teal', stool: PR('vinyl-teal'), lamp: ['globe', 'white'], set: 'plates', posters: [PR('poster-coffee'), PR('poster-breakfast')], machines: ['fridge', 'coffee', 'shelf', 'dispenser', 'oven', 'fryer'], bin: PR('steel'), seating: 0 },
+  'diner-3': { plan: 'diner', frame: 'green', floor: PR('floor-check-green'), wall: PR('wall-green-white'), counter: PR('counter-green'), counterTop: PR('laminate-cream'), menu: PR('menu-chicken'), vinyl: PR('vinyl-green'), top: PR('laminate-cream'), chair: 'pad-black', stool: PR('vinyl-black'), lamp: ['cone', 'green'], set: 'plates', posters: [PR('poster-burger'), PR('poster-shake')], machines: ['shelf', 'coffee', 'fryer', 'fridge', 'dispenser'], bin: PR('steel'), seating: 2 },
+};
+
+/** A restaurant you can see into: its windows are real glass, and behind them is the room. */
+export const roomOf = (o: PavilionOpts & { inside: Inside }): Room => ({ seed: o.seed, w: o.w, d: o.d, h: o.h, lift: o.lift ?? 0, dw: textureSpec(o.door).meters[0], in: o.inside });
+function dining(b: MeshBuilder, o: PavilionOpts & { inside: Inside }, rnd: Rand): void {
+  const { w, d, h } = o;
+  const lift = o.lift ?? 0;
+  const room = roomOf(o);
+  const p = roomPlan(room);
+  const deep = o.inside.plan === 'deep';
+  const glass = `prop/glass-${o.inside.frame}${deep ? '' : '-low'}`;
+  const gh = textureSpec(glass).meters[1];
+  const sill = lift + (deep ? 0.45 : 0.9);
+  // Whole panes only, centred in the run they have.
+  const panes = (x0: number, x1: number): Opening[] => {
+    const n = Math.floor((x1 - x0) / 1.5);
+    return n < 1 ? [] : [{ x: (x0 + x1) / 2 - n * 0.75, y: sill, w: n * 1.5, h: gh, tex: glass, v: 0, depth: 0.1 }];
+  };
+  const [dw, dh] = textureSpec(o.door).meters;
+  const front: Opening[] = [{ x: w / 2 - dw / 2, y: lift + 0.03, w: dw, h: dh, tex: o.door, depth: 0.15, frame: o.trim }, ...panes(0.6, w / 2 - dw / 2 - 0.5), ...panes(w / 2 + dw / 2 + 0.5, w - 0.6)];
+  // The side windows light the room, not the kitchen behind it.
+  const far = d / 2 - p.zk - (deep ? 0.5 : 0.7);
+  const holes: Opening[][] = [
+    front,
+    panes(0.7, far),
+    [{ x: 1, y: lift + 0.03, w: 0.9, h: 2.1, tex: D('steel-brown'), depth: 0.08 }],
+    [...panes(d - far, d - 0.7), ...(o.drive ? [{ x: d - far - 2.6, y: lift + 1, w: 1.2, h: 1.2, tex: WIN('slider-white'), depth: 0.1, sill: o.trim }] : [])],
+  ];
+  shell(b, 0, 0, w, d, h, o.wall, holes);
+  pavilionTop(b, o, rnd, dw);
+  roomShell(b, room, holes);
 }
 
 /** Retail shed with a tall entrance feature and a long blank front. */
@@ -349,7 +403,7 @@ export function addWorks(): void {
     ['fastfood-1', 'ファストフード店 1', { w: 11, d: 17, h: 3.4, wall: W('brick-red'), trim: T('white'), win: WIN('shop-low-aluminium'), door: D('glass-double-aluminium'), roof: 'mansard', roofMat: 'roof/seam-red', rise: 1.5, sign: 'trim/sign-burgers', pole: 'trim/billboard-burger', drive: true }],
     ['fastfood-2', 'ファストフード店 2', { w: 12, d: 15, h: 3.6, wall: W('stucco-yellow'), trim: T('red'), win: WIN('shop-low-black'), door: D('glass-double-red'), roof: 'flat', roofMat: 'roof/flat-membrane-dirty', rise: 0, sign: 'trim/sign-tacos-el-rey', stripe: T('red'), pole: 'trim/billboard-cola', drive: true }],
     ['fastfood-3', 'ファストフード店 3', { w: 10, d: 14, h: 3.4, wall: W('tile-white'), trim: T('orange'), win: WIN('shop-low-aluminium'), door: D('glass-aluminium'), roof: 'mansard', roofMat: 'roof/seam-blue', rise: 1.3, sign: 'trim/sign-donuts', drive: true }],
-    ['fastfood-4', 'ファストフード店 4', { w: 13, d: 18, h: 3.8, wall: W('stucco-cream'), trim: T('brown'), win: WIN('shop-low-black'), door: D('glass-double-bronze'), roof: 'hip', roofMat: 'roof/clay-terracotta', rise: 1.6, sign: 'trim/sign-pizza', pole: 'trim/billboard-burger' }],
+    ['fastfood-4', 'ファストフード店 4', { w: 13, d: 18, h: 3.8, wall: W('stucco-cream'), trim: T('brown'), win: WIN('shop-low-black'), door: D('glass-double-bronze'), roof: 'hip', roofMat: 'roof/clay-terracotta', rise: 1.6, sign: 'trim/sign-pizza', pole: 'trim/billboard-pizza' }],
     ['fastfood-5', 'ファストフード店 5', { w: 9, d: 12, h: 3.4, wall: W('block-red'), trim: T('yellow'), win: WIN('shop-low-aluminium'), door: D('glass-red'), roof: 'shed', roofMat: 'roof/seam-white', rise: 1.4, sign: 'trim/sign-noodle-house', stripe: T('yellow') }],
     ['diner-1', 'ダイナー 1', { w: 16, d: 6, h: 3.3, wall: W('metal-panel-silver'), trim: T('red'), win: WIN('band-black'), door: D('glass-red'), roof: 'flat', roofMat: 'roof/flat-membrane-grey', rise: 0, stripe: T('red'), blade: 'trim/blade-diner', lift: 0.6, sign: 'trim/sign-cafe-luna' }],
     ['diner-2', 'ダイナー 2', { w: 18, d: 7, h: 3.3, wall: W('metal-panel-silver'), trim: T('teal'), win: WIN('band-white'), door: D('glass-aluminium'), roof: 'flat', roofMat: 'roof/flat-membrane-grey', rise: 0, stripe: T('teal'), blade: 'trim/blade-diner', lift: 0.6 }],
@@ -358,7 +412,13 @@ export function addWorks(): void {
     ['bank-2', '銀行 2', { w: 14, d: 18, h: 7, wall: W('stone-granite-grey'), trim: T('grey'), win: WIN('band-tall-aluminium'), door: D('glass-double-black'), roof: 'flat', roofMat: 'roof/flat-gravel', rise: 0, columns: 4, lift: 0.9 }],
     ['bank-3', '銀行 3', { w: 18, d: 14, h: 5, wall: W('brick-buff'), trim: T('white'), win: WIN('band-tall-black'), door: D('glass-double-aluminium'), roof: 'hip', roofMat: 'roof/seam-copper', rise: 2, columns: 4, lift: 0.6 }],
   ];
-  PAV.forEach(([id, label, o]) => add('shop', id, label, pavilion, o));
+  PAV.forEach(([id, label, o]) => {
+    const seed = next();
+    const inside = INSIDE[id];
+    addModel('shop', id, label, (b) => pavilion(b, { ...o, seed, inside }));
+    // What stands in the room is a model of its own, shown only from near by.
+    if (inside) addModel('prop', `interior-${id}`, `店内 ${label}`, (b) => furnish(b, roomOf({ ...o, seed, inside })));
+  });
   // Big-box stores.
   ([['concrete-tiltup', 'blue', 'discount-99', 'metal-panel-white', 70, 50], ['concrete-white', 'red', 'furniture', 'metal-panel-red', 60, 45], ['block-beige', 'green', 'hardware', 'metal-panel-green', 80, 54], ['concrete-panel', 'orange', 'market', 'metal-panel-orange', 54, 40]] as [string, string, string, string, number, number][])
     .forEach(([wl, st, sg, ft, w, d], i) => add('shop', `bigbox-${i + 1}`, `大型量販店 ${i + 1}`, bigBox, { w, d, wall: W(wl), trim: T('grey'), stripe: T(st), sign: `trim/sign-${sg}`, feature: W(ft) }));

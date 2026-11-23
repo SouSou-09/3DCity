@@ -22,10 +22,12 @@ export type SiteKind =
   | 'play' | 'sport' | 'pavilion' | 'feature' | 'bench' | 'light' | 'bin' | 'sign' | 'tree' | 'plant' | 'table'
   | 'fence' | 'gate' | 'guardrail' | 'wall'
   | 'beach' | 'pier' | 'seawall' | 'port' | 'rock' | 'buoy' | 'lighthouse' | 'boat' | 'dock'
-  | 'building' | 'parking' | 'yard' | 'roof';
+  | 'building' | 'parking' | 'yard' | 'roof'
+  /** Small things in and in front of the shops, shown only from near by. */
+  | 'prop';
 export const SITE_KINDS: SiteKind[] = [
   'play', 'sport', 'pavilion', 'feature', 'bench', 'light', 'bin', 'sign', 'tree', 'plant', 'table',
-  'fence', 'gate', 'guardrail', 'wall', 'beach', 'pier', 'seawall', 'port', 'rock', 'buoy', 'lighthouse', 'boat', 'dock', 'building', 'parking', 'yard', 'roof',
+  'fence', 'gate', 'guardrail', 'wall', 'beach', 'pier', 'seawall', 'port', 'rock', 'buoy', 'lighthouse', 'boat', 'dock', 'building', 'parking', 'yard', 'roof', 'prop',
 ];
 
 /** One model standing somewhere off the roads. */
@@ -127,7 +129,7 @@ export class Site {
         r = Math.max(r, -lay.outer[0], lay.outer[1]);
         this.stampBand(j.x, j.y, j.x + a.dir.x * (a.reach + 0.5), j.y + a.dir.y * (a.reach + 0.5), lay.outer[0] - M, lay.outer[1] + M, ROAD, 0);
       }
-      this.stampDisc(j.x, j.y, r + M, ROAD);
+      this.stampDisc(j.x, j.y, (j.roundabout ? j.roundabout.radius + 3.5 : r) + M, ROAD);
     }
     for (const bay of roads.bays) {
       const line = roads.lines[bay.edge]!;

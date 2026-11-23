@@ -25,6 +25,8 @@ const MAX_RUN = 320;
 /** New junctions keep this far from existing ones, or snap onto them. */
 const MIN_EDGE = 22;
 const MIN_SIN = 0.6;
+/** New roads keep this far from the middle of a roundabout. */
+const ROUNDABOUT_CLEAR = 78;
 const ROOM = (35 * Math.PI) / 180;
 
 /** Depth of land behind the street (metres from the nearest street or obstacle) beyond which a block gets a road. */
@@ -311,6 +313,7 @@ export function addInfillRoads(graph: RoadGraph, t: Terrain, districts: District
     return { node, edge: e.id };
   };
 
+  const hubs = nodes.filter((n) => n.roundabout);
   const newNode = (p: Vec2): number => {
     nodes.push({ id: nodes.length, x: p.x, y: p.y, edges: [], degree: 0 });
     return nodes.length - 1;
@@ -343,6 +346,8 @@ export function addInfillRoads(graph: RoadGraph, t: Terrain, districts: District
   const clear = (pts: Vec2[], joined: [boolean, boolean]): boolean => {
     const first = pts[0];
     const last = pts[pts.length - 1];
+    // Nothing joins a street on its way into a roundabout.
+    if (hubs.length && pts.some((p) => hubs.some((h) => dist(h, p) < ROUNDABOUT_CLEAR))) return false;
     for (let i = 1; i < pts.length; i++) {
       const a = pts[i - 1];
       const b = pts[i];

@@ -14,7 +14,7 @@ const GLASS: RGB = [0.1, 0.14, 0.2];
 const shadeC = (c: RGB, m: number): RGB => [c[0] * m, c[1] * m, c[2] * m];
 
 /** Flat artwork built from rectangles, discs and lettering, then weathered. */
-class Art {
+export class Art {
   readonly L: Layers;
   readonly w: number;
   readonly h: number;
@@ -245,7 +245,7 @@ const SHUTTERS: [string, string, number | null, number, number][] = [['steel', '
 for (const [id, label, c, rust, tags] of SHUTTERS) add('door', `shutter-${id}`, `巻き上げシャッター ${label}`, [2.4, 2.4], (t, s) => shutter(t, s, c === null ? null : hex(c), rust, tags), { tile: 'xy', density: 200 });
 
 // --- Paint for trim, gutters, railings and frames. ---
-function paint(tex: Tex, seed: number, c: RGB, o: { metal?: number; rough?: number; wear?: number } = {}): TextureData {
+export function paint(tex: Tex, seed: number, c: RGB, o: { metal?: number; rough?: number; wear?: number; chips?: number } = {}): TextureData {
   const L = new Layers(tex, c, o.rough ?? 0.5);
   const tone = tex.noise(0.4, 0.4, seed, 3);
   const fine = tex.noise(0.01, 0.01, seed + 1, 2);
@@ -253,7 +253,7 @@ function paint(tex: Tex, seed: number, c: RGB, o: { metal?: number; rough?: numb
   const chip = tex.noise(0.08, 0.08, seed + 3, 4, 0.6);
   tex.map((x, y, k) => {
     const st = sstep(0.15, 0.8, streak(x, y)) * (o.wear ?? 0.3) * 0.35;
-    const ch = sstep(0.46 - (o.wear ?? 0.3) * 0.16, 0.5 - (o.wear ?? 0.3) * 0.16, chip(x, y));
+    const ch = sstep(0.46 - (o.wear ?? 0.3) * 0.16, 0.5 - (o.wear ?? 0.3) * 0.16, chip(x, y)) * (o.chips ?? 1);
     const m = (1 + tone(x, y) * 0.07 + fine(x, y) * 0.04) * (1 - st);
     L.r[k] = lerp(c[0] * m, 0.32, ch * 0.7);
     L.g[k] = lerp(c[1] * m, 0.28, ch * 0.7);
@@ -341,7 +341,7 @@ function blade(tex: Tex, seed: number, word: string, bg: RGB, fg: RGB): TextureD
 const BLADES: [string, number, number][] = [['HOTEL', 0x1c2c5c, 0xf4e8c0], ['MOTEL', 0x1c6c8c, 0xf8f4e0], ['BAR', 0x181818, 0xe83c50], ['LOANS', 0xe8c81c, 0x141414], ['PAWN', 0xb01c18, 0xf4e060], ['LIQUOR', 0xf0ece0, 0xb01c18], ['PARKING', 0x1c4c9c, 0xf4f4f0], ['THEATRE', 0x8c1c2c, 0xf4d060], ['DINER', 0xd83c2c, 0xf4f4e8], ['APTS', 0x2c4c3c, 0xe8dcb4]];
 for (const [word, bg, fg] of BLADES) add('trim', `blade-${word.toLowerCase()}`, `袖看板 ${word}`, [0.8, word.length * 0.62 + 0.3], (t, s) => blade(t, s, word, hex(bg), hex(fg)), { density: 160, emissive: 0.3 });
 /** Roof billboards. */
-const BOARDS: [string, string, string, number, number, number][] = [['cola', 'ZAP COLA', 'TASTE THE SPARK', 0xb81c1c, 0xf4f4f0, 0xf4d030], ['injury', 'INJURED?', 'CALL 555 0199 NOW', 0xf4d020, 0x141414, 0xb01c18], ['radio', '98.3 FM', 'THE COAST ROCKS', 0x141428, 0xe8508c, 0x40d0e8], ['casino', 'LUCKY PALMS', 'CASINO  EXIT 14', 0x2c1c4c, 0xf4d060, 0xe86030], ['burger', 'BIG STACK', 'BURGERS  NEXT RIGHT', 0xe8a020, 0x8c1c14, 0xf4f0e0], ['phone', 'NOVA 9', 'THE PHONE THAT GETS YOU', 0xe8e8ec, 0x1c1c24, 0x2c7ce0], ['movie', 'HEAT WAVE', 'IN THEATERS FRIDAY', 0x181014, 0xe86020, 0xf4e0b0], ['realty', 'SOLD', 'COASTLINE REALTY', 0x1c4c8c, 0xf4f4f0, 0xe8c030]];
+const BOARDS: [string, string, string, number, number, number][] = [['cola', 'ZAP COLA', 'TASTE THE SPARK', 0xb81c1c, 0xf4f4f0, 0xf4d030], ['injury', 'INJURED?', 'CALL 555 0199 NOW', 0xf4d020, 0x141414, 0xb01c18], ['radio', '98.3 FM', 'THE COAST ROCKS', 0x141428, 0xe8508c, 0x40d0e8], ['casino', 'LUCKY PALMS', 'CASINO  EXIT 14', 0x2c1c4c, 0xf4d060, 0xe86030], ['burger', 'BIG STACK', 'BURGERS  NEXT RIGHT', 0xe8a020, 0x8c1c14, 0xf4f0e0], ['phone', 'NOVA 9', 'THE PHONE THAT GETS YOU', 0xe8e8ec, 0x1c1c24, 0x2c7ce0], ['movie', 'HEAT WAVE', 'IN THEATERS FRIDAY', 0x181014, 0xe86020, 0xf4e0b0], ['pizza', 'SLICE CITY', 'HOT PIZZA  DINE IN', 0x1f6a38, 0xf4f0e0, 0xc8281c], ['realty', 'SOLD', 'COASTLINE REALTY', 0x1c4c8c, 0xf4f4f0, 0xe8c030]];
 for (const [id, head, sub, bg, fg, accent] of BOARDS) add('trim', `billboard-${id}`, `屋上広告 ${head}`, [6, 3], (t, s) => {
   const a = new Art(t, hex(bg), 0.5);
   a.put(hex(accent), (m) => t.poly(m, [[[0, 0], [6, 0], [6, 0.5], [0, 1.0]]]), {});
