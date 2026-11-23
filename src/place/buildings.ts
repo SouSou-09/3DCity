@@ -1,0 +1,1312 @@
+import { ironFence, masonry, mesh, panel } from '../assets/mesh/boundaries';
+import { MeshBuilder, ModelData, V3 } from '../assets/mesh/builder';
+import { HOUSE_PLANS } from '../assets/mesh/houses';
+import { Pose, box } from '../assets/mesh/kit';
+import { MODELS } from '../assets/mesh/registry';
+import { layout } from '../assets/mesh/section';
+import { Vec2 } from '../core/vec2';
+import { DistrictType } from '../gen/districts';
+import { LandUse, Lot } from '../gen/landuse';
+import { waterDistAt } from '../gen/terrain';
+import { bbox, facing, FREE, hash, LOT, ROAD, Site, SITE_CELL, USED, WATER } from './site';
+import { Waterfront } from './waterfront';
+
+/** One building standing on a lot. */
+export interface Building {
+  lot: number;
+  use: LandUse;
+  model: string;
+  /** Middle of its footprint on the map, and the half sizes of that footprint across and along its depth. */
+  x: number;
+  y: number;
+  hx: number;
+  hz: number;
+  /** Turns the model's +x axis to (cos, sin) on the map; its front (+z) looks at the road. */
+  yaw: number;
+  /** Height of its ground floor, and the lowest and highest ground under it. */
+  floor: number;
+  ground: [number, number];
+  /** Distance of its front from the lot's front line. */
+  setback: number;
+  /** The building the lot is for, rather than a shed or a second block behind it. */
+  main: boolean;
+  /** Stands wall to wall with its neighbours. */
+  party: boolean;
+  /** What a public building is: 'school', 'fire' and so on. */
+  civic?: string;
+}
+
+export interface Buildings {
+  list: Building[];
+  tiles: ModelData[];
+  /** Outline of each lot's plot, by lot: the lot with the open ground behind it that goes with it. Null for a lot that is left alone. */
+  plots: (Vec2[] | null)[];
+  /** Which lot (+1) each cell of the site grid behind the lots has gone to. */
+  owner: Int32Array;
+  /** Lots that should have a building and have none: nothing in the catalogue fits them. */
+  vacant: number[];
+  /** Metres of fence and wall built round house and shop lots. */
+  fence: number;
+  /** Marked parking spaces. */
+  stalls: number;
+  /** Buildings per use, and public buildings per kind. */
+  count: Partial<Record<LandUse, number>>;
+  civic: Record<string, number>;
+}
+
+/** A lot seen from its road: u runs along the front (left to right for someone looking in), v into the lot. */
+interface Frame {
+  lot: Lot;
+  type: DistrictType;
+  ox: number;
+  oy: number;
+  tx: number;
+  ty: number;
+  nx: number;
+  ny: number;
+  w: number;
+  /** Depth of the nearer rear corner, and where the front line is at its deepest (a road that bends into the lot). */
+  d: number;
+  v0: number;
+  /** u of the rear corners. */
+  ua: number;
+  ub: number;
+  /** Width of the strip between the lot and the back of the pavement. */
+  gap: number;
+  yaw: number;
+  /** +1 where the model's +x runs along +u. */
+  sx: 1 | -1;
+  va: number;
+  vb: number;
+  /** Depth of the rear corners of the lot as it was laid out, before it took in the open ground behind it. */
+  va0: number;
+  vb0: number;
+  /** Outline of the plot: the lot and the ground behind it that goes with it. */
+  poly: Vec2[];
+  /** Rectangles already taken on the lot, in (u, v), and those of them that are buildings. */
+  taken: Rect[];
+  solid: Rect[];
+}
+
+type Rect = [u0: number, u1: number, v0: number, v1: number];
+
+const TILE = 800;
+const STEP = 0.17;
+
+/** Families of the catalogue with their models' footprints, looked up once. */
+interface Shape {
+  id: string;
+  w: number;
+  d: number;
+  h: number;
+}
+const shapes = new Map<string, Shape[]>();
+function family(prefix: string): Shape[] {
+  let list = shapes.get(prefix);
+  if (!list) {
+    const numbered = new RegExp(`^${prefix}-\\d+$`);
+    list = named(...MODELS.filter((m) => numbered.test(m.id)).map((m) => m.id));
+    if (!list.length) throw new Error(`no models ${prefix}`);
+    shapes.set(prefix, list);
+  }
+  return list;
+}
+function named(...ids: string[]): Shape[] {
+  return ids.map((id) => {
+    const { min, max } = bbox(id);
+    return { id, w: max[0] - min[0], d: max[2] - min[2], h: max[1] };
+  });
+}
+
+/** Buildings whose ground floor is open, so that the ground may not rise into it. */
+const OPEN = /^(apartment\/dingbat|shop\/gas|office\/carpark|apartment\/motel|civic\/fire)/;
+
+function inPoly(poly: Vec2[], x: number, y: number): boolean {
+  let inside = false;
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+    const [a, b] = [poly[i], poly[j]];
+    if (a.y > y !== b.y > y && x < ((b.x - a.x) * (y - a.y)) / (b.y - a.y) + a.x) inside = !inside;
+  }
+  return inside;
+}
+function edgeDist(poly: Vec2[], x: number, y: number): number {
+  let best = Infinity;
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+    const [a, b] = [poly[j], poly[i]];
+    const [vx, vy] = [b.x - a.x, b.y - a.y];
+    const t = Math.max(0, Math.min(1, ((x - a.x) * vx + (y - a.y) * vy) / (vx * vx + vy * vy || 1)));
+    best = Math.min(best, Math.hypot(x - a.x - vx * t, y - a.y - vy * t));
+  }
+  return best;
+}
+
+const ZINC = 'structure/steel-galvanized';
+type FenceFn = (b: MeshBuilder, f: Pose, len: number) => void;
+/** A fence as a run of its texture between plain posts: there are hundreds of kilometres of it, so each piece is a few triangles. */
+const light = (tex: string, post: string, y0 = 0): FenceFn => (b, f, len) => {
+  const h = b.part(tex).mh;
+  panel(b, tex, f, 0, len, y0, h);
+  const n = Math.max(1, Math.round(len / 6));
+  for (let i = 0; i < n; i++) box(b, post, f, [(len * i) / n, (y0 + h + 0.04) / 2, -0.05], [0.045, (y0 + h + 0.04) / 2, 0.045], 'yY');
+};
+/** Chain link in the same few triangles: the mesh, square posts and a top rail. */
+const wire = (h: number): FenceFn => (b, f, len) => {
+  mesh(b, 'trim/chainlink', f, 0, len, 0.04, h - 0.04);
+  const n = Math.max(1, Math.round(len / 3));
+  for (let i = 0; i < n; i++) box(b, ZINC, f, [(len * i) / n, (h + 0.06) / 2, 0], [0.028, (h + 0.06) / 2, 0.028], 'yY');
+  box(b, ZINC, f, [len / 2, h, 0], [len / 2, 0.02, 0.02], 'xX');
+};
+/** Fences and walls between plots, built to the length of each run. */
+const FENCES: Record<string, FenceFn> = {
+  cedar: light('site/fence-board-cedar', 'signal/pole-wood'),
+  weathered: light('site/fence-board-weathered', 'signal/pole-wood-grey'),
+  redwood: light('site/fence-board-redwood', 'signal/pole-wood'),
+  brown: light('site/fence-board-brown', 'trim/paint-brown-old'),
+  white: light('site/fence-board-white', 'trim/paint-white-old'),
+  vinyl: light('site/fence-vinyl-white', 'trim/paint-white', 0.05),
+  vinylTan: light('site/fence-vinyl-tan', 'trim/paint-tan', 0.05),
+  chain: wire(1.2),
+  chainTall: wire(1.8),
+  block: (b, f, l) => masonry(b, f, l, 'wall/block-grey', { cap: 'structure/wall-old' }),
+  blockWhite: (b, f, l) => masonry(b, f, l, 'wall/block-white', { h: 1.5, cap: 'trim/paint-white-old' }),
+  stucco: (b, f, l) => masonry(b, f, l, 'wall/stucco-white-stained', { ridge: 'roof/clay-terracotta', t: 0.3 }),
+  stuccoPeach: (b, f, l) => masonry(b, f, l, 'wall/stucco-peach', { h: 1.6, t: 0.25, cap: 'wall/stucco-peach' }),
+  brick: (b, f, l) => masonry(b, f, l, 'wall/brick-red'),
+  // Low ones for the front of a plot.
+  picket: light('site/fence-picket-white', 'trim/paint-white', 0.03),
+  picketOld: light('site/fence-picket-peeling', 'trim/paint-white-old', 0.03),
+  picketWood: light('site/fence-picket-natural', 'signal/pole-wood', 0.03),
+  hoop: light('site/fence-iron-hoop', 'structure/steel-black', 0.03),
+  iron: light('site/fence-iron-flat', 'structure/steel-black', 0.03),
+  ironBrick: (b, f, l) => ironFence(b, f, l, 'site/fence-iron-spear', { pier: 'wall/brick-brown', base: 'wall/brick-brown' }),
+  lowBlock: (b, f, l) => masonry(b, f, l, 'wall/block-white', { h: 0.9, cap: 'trim/paint-white-old' }),
+  lowStucco: (b, f, l) => masonry(b, f, l, 'wall/stucco-cream', { h: 0.9, t: 0.25, cap: 'wall/stucco-cream' }),
+  lowBrick: (b, f, l) => masonry(b, f, l, 'wall/brick-brown', { h: 0.8 }),
+};
+const BACK_FENCE: Record<DistrictType, string[]> = {
+  suburb: ['cedar', 'cedar', 'redwood', 'vinyl', 'vinylTan', 'brown', 'weathered', 'block'],
+  residential: ['cedar', 'weathered', 'weathered', 'chain', 'brown', 'redwood', 'white', 'block'],
+  oldtown: ['weathered', 'chain', 'brick', 'block', 'brown'],
+  beach: ['blockWhite', 'stucco', 'white', 'vinyl', 'weathered'],
+  hills: ['stucco', 'stuccoPeach', 'redwood', 'block', 'cedar'],
+  industrial: ['chain', 'chainTall', 'weathered'],
+  midtown: ['weathered', 'chain', 'brick', 'block'],
+  downtown: ['brick', 'chainTall', 'block'],
+};
+const FRONT_FENCE: Record<DistrictType, string[]> = {
+  suburb: ['picket', 'lowBrick', 'hoop'],
+  residential: ['picket', 'picketOld', 'picketWood', 'chain', 'hoop', 'lowBlock'],
+  oldtown: ['iron', 'ironBrick', 'hoop', 'picketOld', 'lowBrick'],
+  beach: ['lowBlock', 'lowStucco', 'picket', 'picketWood'],
+  hills: ['lowStucco', 'ironBrick', 'lowBrick'],
+  industrial: ['chain'],
+  midtown: ['iron', 'hoop', 'lowBrick'],
+  downtown: ['iron'],
+};
+/** How often a house plot has a fenced back yard and a fence along the street. */
+const FENCED: Record<DistrictType, [back: number, front: number]> = {
+  suburb: [0.6, 0.06], residential: [0.7, 0.28], oldtown: [0.6, 0.45], beach: [0.55, 0.35], hills: [0.4, 0.3], industrial: [0.5, 0.25], midtown: [0.6, 0.4], downtown: [0.5, 0.3],
+};
+
+const clamp = (x: number, a: number, b: number): number => Math.max(a, Math.min(b, x));
+
+interface Opt {
+  stretch?: number;
+  party?: boolean;
+  main?: boolean;
+  civic?: string;
+  maxRelief?: number;
+  /** u of the door, where it is known: the floor is level with the ground there. */
+  doorU?: number;
+  /** A point the floor must be level with, as a garage door is with its drive. */
+  level?: [number, number];
+}
+
+export function placeBuildings(site: Site, shore: Waterfront): Buildings {
+  const { city, roads } = site;
+  const land = city.land;
+  const seed = site.seed;
+  const rnd = (...v: number[]): number => hash(seed, 7717, ...v);
+  const out: Buildings = { list: [], tiles: [], plots: [], owner: new Int32Array(0), vacant: [], fence: 0, stalls: 0, count: {}, civic: {} };
+  const sand = new Set(shore.sandLots);
+  const builders = new Map<string, MeshBuilder>();
+  const tile = (x: number, y: number): MeshBuilder => {
+    const k = `${Math.floor(x / TILE)},${Math.floor(y / TILE)}`;
+    let b = builders.get(k);
+    if (!b) builders.set(k, (b = new MeshBuilder()));
+    return b;
+  };
+
+  // --- The lot as its road sees it ---
+  const gapOf = (lot: Lot, x: number, y: number): number => {
+    const line = roads.lines[lot.edge];
+    if (!line) return 0;
+    let [best, off] = [Infinity, 0];
+    for (let i = 1; i < line.length; i++) {
+      const [a, b] = [line[i - 1], line[i]];
+      const [vx, vy] = [b[0] - a[0], b[2] - a[2]];
+      const l = Math.hypot(vx, vy) || 1;
+      const t = clamp(((x - a[0]) * vx + (y - a[2]) * vy) / (l * l), 0, 1);
+      const d = Math.hypot(x - a[0] - vx * t, y - a[2] - vy * t);
+      if (d < best) [best, off] = [d, ((x - a[0]) * -vy + (y - a[2]) * vx) / l];
+    }
+    const lay = layout(roads.sections[lot.edge]);
+    return best - (off > 0 ? lay.outer[1] : -lay.outer[0]);
+  };
+  const frameOf = (lot: Lot): Frame | null => {
+    const nf = lot.front;
+    if (nf < 2 || lot.poly.length < nf + 2) return null;
+    const [f0, f1, b, a] = [lot.poly[0], lot.poly[nf - 1], lot.poly[nf], lot.poly[nf + 1]];
+    const w = Math.hypot(f1.x - f0.x, f1.y - f0.y);
+    if (w < 3) return null;
+    const [tx, ty] = [(f1.x - f0.x) / w, (f1.y - f0.y) / w];
+    const [ox, oy] = [(f0.x + f1.x) / 2, (f0.y + f1.y) / 2];
+    let [nx, ny] = [-ty, tx];
+    if (((a.x + b.x) / 2 - ox) * nx + ((a.y + b.y) / 2 - oy) * ny < 0) [nx, ny] = [-nx, -ny];
+    const uv = (p: Vec2): [number, number] => [(p.x - ox) * tx + (p.y - oy) * ty, (p.x - ox) * nx + (p.y - oy) * ny];
+    const [ua, va] = uv(a);
+    const [ub, vb] = uv(b);
+    if (va < 4 || vb < 4) return null;
+    let v0 = 0;
+    for (let i = 0; i < nf; i++) v0 = Math.max(v0, uv(lot.poly[i])[1]);
+    const yaw = facing({ x: -nx, y: -ny });
+    const ex = Site.local(0, 0, yaw, 1, 0);
+    // A lot whose front line is on the pavement starts behind it.
+    const gap = gapOf(lot, ox, oy);
+    if (gap < 0) v0 = Math.max(v0, 0.2 - gap);
+    return { lot, type: lot.site.type, ox, oy, tx, ty, nx, ny, w, d: Math.min(va, vb), v0, ua, ub, va, vb, va0: va, vb0: vb, poly: lot.poly, gap: clamp(gap, 0, 8), yaw, sx: ex.x * tx + ex.y * ty > 0 ? 1 : -1, taken: [], solid: [] };
+  };
+  /**
+   * Open ground behind a lot goes with it: blocks are deeper than two rows of lots, and what is left in the middle is
+   * back yards and service yards, not waste. A lot takes what lies straight behind it, half of it where another lot backs on to the same ground.
+   */
+  const owner = new Int32Array(site.n * site.n);
+  const cellOf = (x: number, y: number): number => {
+    const [i, j] = [Math.floor(x / SITE_CELL), Math.floor(y / SITE_CELL)];
+    return i < 0 || j < 0 || i >= site.n || j >= site.n ? -1 : j * site.n + i;
+  };
+  const tn = city.terrain.n;
+  const sandy = (x: number, y: number): boolean => shore.sand[clamp(Math.round(y / city.terrain.cell), 0, tn - 1) * tn + clamp(Math.round(x / city.terrain.cell), 0, tn - 1)] > 0.15;
+  const extend = (f: Frame): void => {
+    const rear = (c: number, k: number): Vec2 => at(f, f.ua + (f.ub - f.ua) * c, f.va + (f.vb - f.va) * c + k);
+    let [reach, beyond] = [0, FREE];
+    march: for (let k = 1; k <= 25; k += 2) {
+      for (const c of [0.1, 0.5, 0.9]) {
+        const p = rear(c, k);
+        const cell = cellOf(p.x, p.y);
+        const code = cell < 0 ? ROAD : owner[cell] ? USED : site.at(p.x, p.y);
+        const base = rear(c, 0);
+        if (code !== FREE || waterDistAt(city.terrain, p.x, p.y) < 8 || sandy(p.x, p.y) || Math.abs(site.heightAt(p.x, p.y) - site.heightAt(base.x, base.y)) > 0.6 + 0.13 * k) {
+          beyond = code === FREE ? WATER : code;
+          break march;
+        }
+      }
+      reach = k + 1;
+    }
+    // Half way to a lot that backs on to the same ground, all the way to ground already taken by one, and short of anything else.
+    const ext = beyond === LOT ? reach / 2 : beyond === FREE || beyond === USED ? reach : reach - 2;
+    if (ext < 2.5) return;
+    const [a, b] = [rear(0, 0), rear(1, 0)];
+    const [a2, b2] = [rear(0, ext), rear(1, ext)];
+    const quad = [a, b, b2, a2];
+    const [x0, x1, y0, y1] = [Math.min(a.x, b.x, a2.x, b2.x), Math.max(a.x, b.x, a2.x, b2.x), Math.min(a.y, b.y, a2.y, b2.y), Math.max(a.y, b.y, a2.y, b2.y)];
+    for (let y = Math.floor(y0 / SITE_CELL); y <= Math.floor(y1 / SITE_CELL); y++)
+      for (let x = Math.floor(x0 / SITE_CELL); x <= Math.floor(x1 / SITE_CELL); x++) {
+        const [px, py] = [(x + 0.5) * SITE_CELL, (y + 0.5) * SITE_CELL];
+        const cell = cellOf(px, py);
+        if (cell >= 0 && !owner[cell] && site.grid[cell] === FREE && inPoly(quad, px, py)) owner[cell] = f.lot.id + 1;
+      }
+    const nf = f.lot.front;
+    f.poly = [...f.lot.poly.slice(0, nf + 1), b2, a2, ...f.lot.poly.slice(nf + 1)];
+    f.va += ext;
+    f.vb += ext;
+    f.d = Math.min(f.va, f.vb);
+  };
+  const at = (f: Frame, u: number, v: number): Vec2 => ({ x: f.ox + f.tx * u + f.nx * v, y: f.oy + f.ty * u + f.ny * v });
+  const left = (f: Frame, v: number): number => -f.w / 2 + ((f.ua + f.w / 2) * Math.min(v, f.va0)) / f.va0;
+  const right = (f: Frame, v: number): number => f.w / 2 + ((f.ub - f.w / 2) * Math.min(v, f.vb0)) / f.vb0;
+  /** The u range that is on the lot all the way from v0 to v1, `m` in from its sides. */
+  const span = (f: Frame, v0: number, v1: number, m = 0): [number, number] => [Math.max(left(f, v0), left(f, v1)) + m, Math.min(right(f, v0), right(f, v1)) - m];
+  const free = (f: Frame, u: number, v: number, r: number, list = f.taken): boolean => list.every(([u0, u1, v0, v1]) => u < u0 - r || u > u1 + r || v < v0 - r || v > v1 + r);
+  const ground = (f: Frame, u: number, v: number): number => {
+    const p = at(f, u, v);
+    return site.heightAt(p.x, p.y);
+  };
+
+  // --- Standing a building ---
+  /** What was on the ground before any building: the buildings themselves are kept apart by their outlines, not by the raster. */
+  const before = site.grid.slice();
+  const HASH = 48;
+  const placed = new Map<number, Vec2[][]>();
+  const footprint = (x: number, y: number, yaw: number, hx: number, hz: number): Vec2[] => [[-1, -1], [1, -1], [1, 1], [-1, 1]].map(([i, j]) => Site.local(x, y, yaw, i * hx, j * hz));
+  const overlaps = (a: Vec2[], b: Vec2[]): boolean => {
+    for (const q of [a, b])
+      for (let i = 0; i < 2; i++) {
+        const [nx, ny] = [q[i + 1].y - q[i].y, q[i].x - q[i + 1].x];
+        let [a0, a1, b0, b1] = [Infinity, -Infinity, Infinity, -Infinity];
+        for (const p of a) {
+          const d = p.x * nx + p.y * ny;
+          a0 = Math.min(a0, d);
+          a1 = Math.max(a1, d);
+        }
+        for (const p of b) {
+          const d = p.x * nx + p.y * ny;
+          b0 = Math.min(b0, d);
+          b1 = Math.max(b1, d);
+        }
+        if (a1 <= b0 || b1 <= a0) return false;
+      }
+    return true;
+  };
+  const skirt = (f: Frame, r: Rect, top: number, low: number): void => {
+    const c = at(f, (r[0] + r[1]) / 2, (r[2] + r[3]) / 2);
+    const hy = (top - low) / 2 + 0.2;
+    tile(c.x, c.y).box('structure/wall-smooth', [c.x, top - 0.02 - hy, c.y], [(r[1] - r[0]) / 2, hy, (r[3] - r[2]) / 2], [f.tx, 0, f.ty], [0, 1, 0], [-f.ty, 0, f.tx]);
+  };
+  /** Stands a model with the middle of its front at (uc, vf); null where the lot has no room for it or the ground is too steep. */
+  const place = (f: Frame, model: string, uc: number, vf: number, o: Opt = {}): Building | null => {
+    const { min, max } = bbox(model);
+    const k = o.stretch ?? 1;
+    const [hx, hz] = [((max[0] - min[0]) / 2) * k, (max[2] - min[2]) / 2];
+    const vc = vf + hz;
+    const lot = f.lot;
+    const tol = o.party ? 1.1 : 0.5;
+    for (const [a, c] of [[-1, -1], [1, -1], [1, 1], [-1, 1], [0, 1], [-1, 0], [1, 0], [0, -1]]) {
+      const p = at(f, uc + a * hx, vc + c * hz);
+      if (!inPoly(f.poly, p.x, p.y) && edgeDist(f.poly, p.x, p.y) > tol) return null;
+    }
+    const [mx, mz] = [Math.max(0.4, hx - (o.party ? 1 : 0.5)), Math.max(0.4, hz - 0.5)];
+    const [nu, nv] = [Math.ceil(mx), Math.ceil(mz)];
+    for (let i = -nu; i <= nu; i++)
+      for (let j = -nv; j <= nv; j++) {
+        const p = at(f, uc + (i / nu) * mx, vc + (j / nv) * mz);
+        const cell = cellOf(p.x, p.y);
+        const code = cell < 0 ? ROAD : before[cell];
+        if (code === LOT) continue;
+        // The rasters are coarser than the lot's outline: open ground inside it is the lot's, and so is the fringe of the margin kept round the road.
+        if ((code !== FREE && code !== ROAD) || !inPoly(f.poly, p.x, p.y) || (code === ROAD && edgeDist(f.poly, p.x, p.y) > 2.5)) return null;
+      }
+    // Clear of every building already standing: walls that share a line may touch.
+    const c = at(f, uc, vc);
+    const mine = footprint(c.x, c.y, f.yaw, hx - (o.party ? 0.15 : 0), hz);
+    const reach = Math.hypot(hx, hz);
+    for (let gy = Math.floor((c.y - reach) / HASH); gy <= Math.floor((c.y + reach) / HASH); gy++)
+      for (let gx = Math.floor((c.x - reach) / HASH); gx <= Math.floor((c.x + reach) / HASH); gx++) for (const other of placed.get(gy * 4096 + gx) ?? []) if (overlaps(mine, other)) return null;
+    let [g0, g1, gf] = [Infinity, -Infinity, -Infinity];
+    const [gu, gv] = [Math.max(1, Math.ceil(hx / 1.5)), Math.max(1, Math.ceil(hz / 1.5))];
+    for (let i = -gu; i <= gu; i++)
+      for (let j = -gv; j <= gv; j++) {
+        const g = ground(f, uc + (i / gu) * hx, vc + (j / gv) * hz);
+        g0 = Math.min(g0, g);
+        g1 = Math.max(g1, g);
+        if (j === -gv) gf = Math.max(gf, g);
+      }
+    if (g1 - g0 > (o.maxRelief ?? (hx > 20 ? 4.5 : 3.5))) return null;
+    // Level with the ground at the door; the ground may stand against the walls elsewhere, but not up to the windows.
+    const door = ground(f, o.doorU ?? uc, vf);
+    const floor = (OPEN.test(model) ? g1 : Math.max(door, gf - 0.35, Math.min(g1 - 0.9, door + 1.7))) + 0.04;
+    if (o.level && floor - ground(f, o.level[0], o.level[1]) > 0.4) return null;
+    for (let gy = Math.floor((c.y - reach) / HASH); gy <= Math.floor((c.y + reach) / HASH); gy++)
+      for (let gx = Math.floor((c.x - reach) / HASH); gx <= Math.floor((c.x + reach) / HASH); gx++) (placed.get(gy * 4096 + gx) ?? placed.set(gy * 4096 + gx, []).get(gy * 4096 + gx)!).push(mine);
+    site.put(model, 'building', c.x, c.y, f.yaw, { h: floor, ...(k !== 1 ? { stretch: k } : {}) });
+    const [a, b] = [at(f, uc - Math.max(0.3, hx - 0.5), vc), at(f, uc + Math.max(0.3, hx - 0.5), vc)];
+    site.stampBand(a.x, a.y, b.x, b.y, -Math.max(0.3, hz - 0.5), Math.max(0.3, hz - 0.5), USED);
+    const rect: Rect = [uc - hx, uc + hx, vf, vf + 2 * hz];
+    f.taken.push(rect);
+    // A house stands on less than its bounding box: the drive runs up to a garage door set back from the front.
+    const [cx, cz] = [(min[0] + max[0]) / 2, (min[2] + max[2]) / 2];
+    const parts = HOUSE_PLANS.get(model)?.body.map(([x0, x1, z0, z1]): Rect => {
+      const [a0, a1] = [uc + f.sx * (x0 - cx), uc + f.sx * (x1 - cx)];
+      return [Math.min(a0, a1), Math.max(a0, a1), vc - (z1 - cz), vc - (z0 - cz)];
+    });
+    f.solid.push(...(parts ?? [rect]));
+    if (floor - g0 > 0.12) {
+      if (parts) for (const r of parts) skirt(f, r, floor, g0);
+      else skirt(f, [uc - hx + 0.12, uc + hx - 0.12, vf + 0.12, vf + 2 * hz - 0.12], floor, g0);
+    }
+    const made: Building = { lot: lot.id, use: lot.use, model, x: c.x, y: c.y, hx, hz, yaw: f.yaw, floor, ground: [g0, g1], setback: vf, main: o.main ?? true, party: o.party ?? false, ...(o.civic ? { civic: o.civic } : {}) };
+    out.list.push(made);
+    return made;
+  };
+  /** A point of a model in the lot's (u, v), for a model standing with the middle of its front at (uc, vf). */
+  const modelUV = (f: Frame, model: string, uc: number, vf: number, mx: number, mz: number): [number, number] => {
+    const { min, max } = bbox(model);
+    return [uc + f.sx * (mx - (min[0] + max[0]) / 2), vf + (max[2] - mz)];
+  };
+
+  // --- Surfaces ---
+  /** The least height of a quad over the ground under it, whichever way it is cut into two triangles. */
+  const cover = (A: V3, B: V3, C: V3, D: V3): number => {
+    let least = Infinity;
+    for (let q = 1; q < 4; q++)
+      for (let r = 1; r < 4; r++) {
+        const [s, t] = [q / 4, r / 4];
+        const ac = s >= t ? A[1] + s * (B[1] - A[1]) + t * (C[1] - B[1]) : A[1] + t * (D[1] - A[1]) + s * (C[1] - D[1]);
+        const bd = s + t <= 1 ? A[1] + s * (B[1] - A[1]) + t * (D[1] - A[1]) : C[1] + (1 - s) * (D[1] - C[1]) + (1 - t) * (B[1] - C[1]);
+        const x = A[0] + s * (B[0] - A[0]) + t * (D[0] - A[0]) + s * t * (A[0] - B[0] + C[0] - D[0]);
+        const z = A[2] + s * (B[2] - A[2]) + t * (D[2] - A[2]) + s * t * (A[2] - B[2] + C[2] - D[2]);
+        least = Math.min(least, Math.min(ac, bd) - site.heightAt(x, z));
+      }
+    return least;
+  };
+  /** Lays paving over a rectangle of the lot, following the ground; not under the lot's buildings. */
+  const pave = (f: Frame, tex: string, r: Rect, lift = 0.05, step = 2): void => {
+    const [u0, u1, v0, v1] = r;
+    if (u1 - u0 < 0.3 || v1 - v0 < 0.3) return;
+    const c = at(f, (u0 + u1) / 2, (v0 + v1) / 2);
+    const b = tile(c.x, c.y);
+    const [nu, nv] = [Math.max(1, Math.round((u1 - u0) / step)), Math.max(1, Math.round((v1 - v0) / step))];
+    const pt = (u: number, v: number): V3 => {
+      const p = at(f, u, v);
+      return [p.x, site.heightAt(p.x, p.y) + lift, p.y];
+    };
+    // A piece lies flat between its corners, and the ground between them may not: one that the ground would come
+    // through, where it crosses a fold of the terrain, is laid as four smaller ones.
+    const lay = (a0: number, a1: number, c0: number, c1: number, depth: number): void => {
+      const [A, B, C, D] = [pt(a0, c0), pt(a1, c0), pt(a1, c1), pt(a0, c1)];
+      if (depth < 3 && Math.max(a1 - a0, c1 - c0) > 0.8 && cover(A, B, C, D) < 0.02) {
+        const [am, cm] = [(a0 + a1) / 2, (c0 + c1) / 2];
+        // The piece beside this one may be laid whole: its straight side and the two halves that meet here part
+        // at the middle, and an upright sliver closes what would open between them.
+        const mids: [V3, V3, V3, [number, number][]][] = [
+          [A, pt(am, c0), B, [[a0, c0], [am, c0], [a1, c0]]], [B, pt(a1, cm), C, [[a1, c0], [a1, cm], [a1, c1]]],
+          [C, pt(am, c1), D, [[a1, c1], [am, c1], [a0, c1]]], [D, pt(a0, cm), A, [[a0, c1], [a0, cm], [a0, c0]]],
+        ];
+        for (const [P, M, Q, uv] of mids) {
+          if (Math.abs(M[1] - (P[1] + Q[1]) / 2) < 0.004) continue;
+          b.tri(tex, P, M, Q, uv);
+          b.tri(tex, Q, M, P, [uv[2], uv[1], uv[0]]);
+        }
+        lay(a0, am, c0, cm, depth + 1);
+        lay(am, a1, c0, cm, depth + 1);
+        lay(a0, am, cm, c1, depth + 1);
+        lay(am, a1, cm, c1, depth + 1);
+        return;
+      }
+      b.quadUp(tex, A, B, C, D, 0, [[a0, c0], [a1, c0], [a1, c1], [a0, c1]]);
+    };
+    for (let j = 0; j < nv; j++)
+      for (let i = 0; i < nu; i++) {
+        const [a0, a1, c0, c1] = [u0 + ((u1 - u0) * i) / nu, u0 + ((u1 - u0) * (i + 1)) / nu, v0 + ((v1 - v0) * j) / nv, v0 + ((v1 - v0) * (j + 1)) / nv];
+        if (!free(f, (a0 + a1) / 2, (c0 + c1) / 2, -0.4, f.solid)) continue;
+        lay(a0, a1, c0, c1, 0);
+      }
+  };
+
+  // --- Fences ---
+  const fenced = new Map<number, Vec2[]>();
+  const FC = 3;
+  const fenceNear = (p: Vec2): boolean => {
+    const [ci, cj] = [Math.floor(p.x / FC), Math.floor(p.y / FC)];
+    for (let j = cj - 1; j <= cj + 1; j++)
+      for (let i = ci - 1; i <= ci + 1; i++) for (const q of fenced.get(j * 4096 + i) ?? []) if (Math.hypot(q.x - p.x, q.y - p.y) < 1.7) return true;
+    return false;
+  };
+  /** A run of fence between two points of the map, in pieces that follow the ground; nothing where another fence already runs. */
+  const fence = (style: string, p: Vec2, q: Vec2): void => {
+    const len = Math.hypot(q.x - p.x, q.y - p.y);
+    if (len < 0.7) return;
+    // Long pieces where the ground between the ends is even, short ones where it rolls.
+    const even = Math.abs(site.heightAt((p.x + q.x) / 2, (p.y + q.y) / 2) - (site.heightAt(p.x, p.y) + site.heightAt(q.x, q.y)) / 2) < 0.08;
+    const n = Math.max(1, Math.ceil(len / (even ? 12 : 5)));
+    const [dx, dy] = [(q.x - p.x) / len, (q.y - p.y) / len];
+    const l = len / n;
+    for (let k = 0; k < n; k++) {
+      const a = { x: p.x + dx * l * k, y: p.y + dy * l * k };
+      const probes = [0.2, 0.5, 0.8].map((t) => ({ x: a.x + dx * l * t, y: a.y + dy * l * t }));
+      if (probes.filter(fenceNear).length >= 2) continue;
+      const here = site.at(probes[1].x, probes[1].y);
+      if (here !== LOT && here !== USED && here !== FREE) continue;
+      const [h0, h1] = [site.heightAt(a.x, a.y), site.heightAt(a.x + dx * l, a.y + dy * l)];
+      FENCES[style](tile(a.x, a.y), { o: [a.x, h0 - 0.03, a.y], x: [dx, (h1 - h0) / l, dy], y: [0, 1, 0], z: [-dy, 0, dx] }, l);
+      out.fence += l;
+      for (let s = 0; s <= l; s += 1.2) {
+        const m = { x: a.x + dx * s, y: a.y + dy * s };
+        const key = Math.floor(m.y / FC) * 4096 + Math.floor(m.x / FC);
+        (fenced.get(key) ?? fenced.set(key, []).get(key)!).push(m);
+      }
+    }
+  };
+
+  // --- Choosing a model ---
+  const recent = new Map<string, string[]>();
+  const keyOf = (lot: Lot): string => `${lot.edge}:${lot.side}`;
+  /** The candidates in the order to try them: random by weight, with what the neighbours along the street already have last. */
+  const order = (cands: [Shape, number][], lot: Lot, salt: number): Shape[] => {
+    const last = recent.get(keyOf(lot)) ?? [];
+    return cands
+      .filter(([, w]) => w > 0)
+      .map(([s, w], i) => ({ s, k: Math.pow(rnd(lot.id, salt, i) + 1e-9, 1 / (w * (last.includes(s.id) ? 0.004 : 1))) }))
+      .sort((a, b) => b.k - a.k)
+      .map((x) => x.s);
+  };
+  const remember = (lot: Lot, id: string): void => {
+    const k = keyOf(lot);
+    const list = recent.get(k) ?? recent.set(k, []).get(k)!;
+    list.push(id);
+    if (list.length > 2) list.shift();
+  };
+  const mix = (list: [string, number, number][], fav?: string): [Shape, number][] => list.flatMap(([p, , w]) => family(p).map((s) => [s, w * (p === fav ? 3 : 1)] as [Shape, number]));
+  /** How well a model's height suits the storeys the lot is zoned for. */
+  const tall = (s: Shape, target: number, soft = 0.3): number => Math.exp(-Math.abs(s.h - target) / (soft * target + 1.5));
+
+  // --- Plants and small things ---
+  const TREES: Record<DistrictType, string[]> = {
+    suburb: ['plant/street-oak', 'plant/street-maple', 'plant/street-birch', 'plant/street-spring', 'plant/street-magnolia', 'plant/street-pear', 'plant/street-cherry', 'plant/street-elm'],
+    residential: ['plant/street-oak', 'plant/street-maple', 'plant/street-jacaranda', 'plant/street-magnolia', 'plant/street-cherry', 'plant/street-elm', 'plant/street-ficus-small', 'plant/street-sparse'],
+    oldtown: ['plant/street-plane', 'plant/street-elm', 'plant/street-oak-old', 'plant/street-magnolia', 'plant/street-sparse'],
+    beach: ['plant/palm-queen', 'plant/palm-date-short', 'plant/palm-fan-short', 'plant/street-ficus-small', 'plant/street-tabebuia', 'plant/street-bougainvillea'],
+    hills: ['plant/street-oak', 'plant/street-eucalyptus', 'plant/street-olive', 'plant/street-oak-old', 'plant/street-jacaranda'],
+    industrial: ['plant/street-sparse', 'plant/street-eucalyptus', 'plant/street-poplar'],
+    midtown: ['plant/street-plane', 'plant/street-maple', 'plant/street-ficus', 'plant/street-pear'],
+    downtown: ['plant/street-plane', 'plant/street-ficus', 'plant/street-pear', 'plant/street-elm'],
+  };
+  const BEDS = ['plant/flower-lavender', 'plant/grass-fountain', 'plant/flower-iris', 'plant/flower-tulip-mixed', 'plant/flower-geranium', 'plant/grass-fescue', 'plant/flower-tulip-red', 'plant/flower-lavender-row', 'plant/shrub-dry'];
+  const SHRUBS = ['plant/shrub-box', 'plant/shrub-rose-pink', 'plant/shrub-rose-white', 'plant/shrub-hibiscus-pink'];
+  /** Is the point on the lot, `m` in from its sides and its back, and clear of everything on it by `r`? */
+  const open = (f: Frame, u: number, v: number, m: number, r: number): boolean => {
+    if (v < Math.max(0, f.v0) + m || v > f.d - m || u < left(f, v) + m || u > right(f, v) - m || !free(f, u, v, r)) return false;
+    const p = at(f, u, v);
+    const code = site.at(p.x, p.y);
+    return code === LOT || (code === FREE && inPoly(f.poly, p.x, p.y));
+  };
+  const tree = (f: Frame, u: number, v: number, salt: number, clear = 2.6, margin = 1.6): boolean => {
+    if (!open(f, u, v, margin, 0.9) || !free(f, u, v, clear, f.solid)) return false;
+    const p = at(f, u, v);
+    const list = TREES[f.type];
+    site.put(list[Math.floor(rnd(f.lot.id, salt, 1) * list.length)], 'tree', p.x, p.y, rnd(f.lot.id, salt, 2) * 6.28, { scale: 0.7 + rnd(f.lot.id, salt, 3) * 0.45 });
+    f.taken.push([u - 0.5, u + 0.5, v - 0.5, v + 0.5]);
+    return true;
+  };
+  const small = (f: Frame, model: string, kind: 'plant' | 'yard' | 'parking' | 'bin' | 'sign', u: number, v: number, turn = 0, r = 0.5): boolean => {
+    if (!open(f, u, v, 0.4, 0.15)) return false;
+    const p = at(f, u, v);
+    site.put(model, kind, p.x, p.y, f.yaw + turn);
+    f.taken.push([u - r, u + r, v - r, v + r]);
+    return true;
+  };
+  /** Steps down from a door whose foot is above the ground; returns how far they run towards the road. */
+  const steps = (f: Frame, u: number, v: number, top: number, w: number): number => {
+    const g = ground(f, u, v);
+    const n = Math.ceil((top - g - 0.06) / STEP);
+    if (n < 1 || n * 0.3 > v + f.gap - 0.4) return 0;
+    for (let i = 0; i < n; i++) {
+      const y = top - (i + 1) * STEP;
+      const c = at(f, u, v - (i + 0.5) * 0.3);
+      const low = ground(f, u, v - (i + 1) * 0.3) - 0.3;
+      tile(c.x, c.y).box('structure/wall-smooth', [c.x, (y + low) / 2, c.y], [w / 2, (y - low) / 2, 0.15], [f.tx, 0, f.ty], [0, 1, 0], [-f.ty, 0, f.tx]);
+    }
+    return n * 0.3;
+  };
+
+  // --- Houses ---
+  const HOUSES: Record<DistrictType, [string, number, number][]> = {
+    suburb: [['house/ranch', 8, 3], ['house/suburban', 6, 4], ['house/colonial', 6, 2.5], ['house/modern', 6, 1], ['house/spanish', 6, 1.5], ['house/cape', 4, 1.2], ['house/duplex', 4, 0.4]],
+    residential: [['house/bungalow', 6, 3], ['house/colonial', 6, 1.5], ['house/cape', 4, 2], ['house/victorian', 6, 1], ['house/spanish', 6, 2], ['house/cottage', 6, 0.5], ['house/suburban', 6, 1.5], ['house/ranch', 8, 0.8], ['house/duplex', 4, 0.6], ['house/modern', 6, 0.6]],
+    oldtown: [['house/victorian', 6, 4], ['house/cottage', 6, 2.5], ['house/bungalow', 6, 2], ['apartment/rowhouse', 6, 2]],
+    beach: [['house/cottage', 6, 2], ['house/spanish', 6, 2.5], ['house/modern', 6, 2], ['house/bungalow', 6, 2], ['house/cape', 4, 1], ['house/victorian', 6, 1.2]],
+    hills: [['house/modern', 6, 3], ['house/spanish', 6, 3], ['house/ranch', 8, 2], ['house/colonial', 6, 1.5]],
+    industrial: [['house/cottage', 6, 2], ['house/mobile', 4, 3], ['house/bungalow', 6, 1]],
+    midtown: [['house/victorian', 6, 3], ['apartment/rowhouse', 6, 3], ['house/bungalow', 6, 1], ['house/duplex', 4, 1]],
+    downtown: [['apartment/rowhouse', 6, 3], ['house/victorian', 6, 2]],
+  };
+  const ANY_HOUSE: [string, number, number][] = [['house/cottage', 6, 1], ['house/victorian', 6, 1], ['house/bungalow', 6, 1], ['house/cape', 4, 1], ['house/modern', 6, 1], ['house/spanish', 6, 1], ['house/colonial', 6, 1]];
+  /** Front setback range, least side setback and least back yard of a house, by district. */
+  const HOUSE_SET: Record<DistrictType, [number, number, number, number]> = {
+    suburb: [6, 9, 1.8, 6], residential: [4, 6, 1.2, 5], oldtown: [1.2, 3, 0.7, 3], beach: [1.5, 3.5, 0.8, 3], hills: [6, 12, 3.5, 5], industrial: [3, 6, 1.2, 3], midtown: [2, 4, 0.8, 3], downtown: [1.2, 3, 0.7, 3],
+  };
+  const DRIVES = ['concrete/driveway', 'concrete/driveway', 'concrete/walk-plain', 'asphalt/plain-worn-cracked', 'asphalt/plain-bleached-cracked', 'concrete/road-smooth-cracked'];
+  const WALKS = ['concrete/walk-plain', 'concrete/walk-small', 'concrete/walk-new', 'paving/running-red', 'paving/basket-tan', 'paving/slabs-sandstone', 'concrete/walk-square-cracked'];
+
+  /** A fenced back yard and, on some plots, a low fence along the street, with openings where the path and the drive come in. */
+  const yardFence = (f: Frame, house: Rect, startL: number, startR: number, gaps: [number, number][]): void => {
+    const lot = f.lot;
+    const [pb, pf] = FENCED[f.type];
+    const m = 0.25;
+    const side = (v: number, s: -1 | 1): Vec2 => at(f, (s < 0 ? left(f, v) + m : right(f, v) - m), v);
+    const rearL = at(f, f.ua + m, f.va - m);
+    const rearR = at(f, f.ub - m, f.vb - m);
+    if (rnd(lot.id, 60) < pb) {
+      const list = BACK_FENCE[f.type];
+      const street = list[Math.floor(rnd(lot.edge, lot.side, 61) * list.length)];
+      const style = rnd(lot.id, 62) < 0.55 ? street : list[Math.floor(rnd(lot.id, 63) * list.length)];
+      fence(style, side(startL, -1), rearL);
+      fence(style, rearL, rearR);
+      fence(style, rearR, side(startR, 1));
+      // Returns to the house, with a way through beside it.
+      for (const s of [-1, 1] as const) {
+        const v = s < 0 ? startL : startR;
+        if (v < house[2] || v > house[3]) continue;
+        const [e, h] = [s < 0 ? left(f, v) + m : right(f, v) - m, s < 0 ? house[0] : house[1]];
+        const run = Math.abs(h - e);
+        if (run < 0.9) continue;
+        fence(style, at(f, e, v), at(f, run > 2.4 ? h + s : h, v));
+      }
+    }
+    const vf = Math.max(0, f.v0) + 0.3;
+    if (rnd(lot.id, 64) < pf && house[2] - vf > 2.2) {
+      const list = FRONT_FENCE[f.type];
+      const style = rnd(lot.id, 65) < 0.5 ? list[Math.floor(rnd(lot.edge, lot.side, 66) * list.length)] : list[Math.floor(rnd(lot.id, 67) * list.length)];
+      let u = left(f, vf) + m;
+      const end = right(f, vf) - m;
+      for (const [g0, g1] of [...gaps].sort((a, b) => a[0] - b[0])) {
+        if (g0 > u + 0.7) fence(style, at(f, u, vf), at(f, Math.min(g0, end), vf));
+        u = Math.max(u, g1);
+      }
+      if (end > u + 0.7) fence(style, at(f, u, vf), at(f, end, vf));
+      fence(style, side(vf, -1), side(Math.max(vf + 1, startL), -1));
+      fence(style, side(vf, 1), side(Math.max(vf + 1, startR), 1));
+    }
+  };
+
+  const houseLot = (f: Frame): boolean => {
+    const lot = f.lot;
+    const [s0, s1, sideMin, back] = HOUSE_SET[f.type];
+    const street = HOUSES[f.type];
+    const fav = street[Math.floor(rnd(lot.edge, 20) * street.length)][0];
+    const base = Math.max(0, f.v0) + s0 + (s1 - s0) * rnd(lot.edge, lot.side, 21) + (rnd(lot.id, 22) - 0.5) * 0.8;
+    let made: Building | null = null;
+    let [uc, vf] = [0, 0];
+    for (const [cands, side, salt] of [[mix(street, fav), sideMin, 23], [mix(ANY_HOUSE), 0.6, 24]] as [[Shape, number][], number, number][]) {
+      let tries = 0;
+      for (const s of order(cands, lot, salt)) {
+        // A shallow plot brings the house forward before it gives up its back yard.
+        vf = Math.min(base, Math.max(Math.max(0, f.v0) + Math.min(s0, 1.5), f.d - back - s.d));
+        if (vf + s.d > f.d - 1.5) continue;
+        const [lo, hi] = span(f, vf, vf + s.d, side);
+        if (hi - lo < s.w) continue;
+        const slack = hi - lo - s.w;
+        // To one side where that leaves room for a drive beside the house, else near the middle.
+        const plan = HOUSE_PLANS.get(s.id);
+        const t = !plan?.garage && slack > 2.4 && slack < 7 ? (rnd(lot.id, 25) < 0.5 ? 0.04 : 0.96) : 0.3 + 0.4 * rnd(lot.id, 26);
+        uc = lo + s.w / 2 + slack * t;
+        const door = plan ? modelUV(f, s.id, uc, vf, plan.door[0], plan.door[1])[0] : uc;
+        made = place(f, s.id, uc, vf, { maxRelief: 3.2, doorU: plan?.garage ? modelUV(f, s.id, uc, vf, plan.garage.x, plan.garage.z)[0] : door, ...(plan?.garage ? { level: modelUV(f, s.id, uc, vf, plan.garage.x, plan.garage.z + 1.5) } : {}) });
+        if (made || ++tries >= 6) break;
+      }
+      if (made) break;
+    }
+    if (!made) return false;
+    remember(lot, made.model);
+    const model = made.model;
+    const plan = HOUSE_PLANS.get(model);
+    const house: Rect = [uc - made.hx, uc + made.hx, vf, vf + 2 * made.hz];
+    const body = plan ? plan.body.map(([x0, , , z1]) => modelUV(f, model, uc, vf, x0, z1)[1]) : [vf];
+    const wallV = Math.min(...body.slice(0, 1));
+    const gaps: [number, number][] = [];
+    const old = f.type === 'oldtown' || f.type === 'beach' || f.type === 'midtown' || f.type === 'downtown';
+    // Drive: to the garage door, or beside the house.
+    let drive: Rect | null = null;
+    if (plan?.garage) {
+      const [gu, gv] = modelUV(f, model, uc, vf, plan.garage.x, plan.garage.z);
+      drive = [gu - plan.garage.w / 2 - 0.35, gu + plan.garage.w / 2 + 0.35, -f.gap, gv];
+    } else if (!old || rnd(lot.id, 30) < 0.3) {
+      const [lo, hi] = span(f, 0, house[3], 0.4);
+      const [roomL, roomR] = [house[0] - lo, hi - house[1]];
+      const s = roomL > roomR ? -1 : 1;
+      if (Math.max(roomL, roomR) >= 3 && rnd(lot.id, 31) < 0.8) drive = s < 0 ? [lo, lo + 2.7, -f.gap, house[2] + made.hz * (0.6 + rnd(lot.id, 32))] : [hi - 2.7, hi, -f.gap, house[2] + made.hz * (0.6 + rnd(lot.id, 32))];
+    }
+    const dtex = DRIVES[Math.floor(rnd(lot.id, 33) * DRIVES.length)];
+    if (drive) {
+      pave(f, f.type === 'industrial' && !plan?.garage ? 'ground/gravel-dirt' : dtex, drive, 0.05, 3);
+      f.taken.push(drive);
+      gaps.push([drive[0] - 0.2, drive[1] + 0.2]);
+    }
+    // Path from the door to the pavement, or across to the drive.
+    const [du, dv0] = plan ? modelUV(f, model, uc, vf, plan.door[0], plan.door[1]) : [uc, vf];
+    const dv = dv0 - steps(f, du, dv0, made.floor, 1.4);
+    const wtex = rnd(lot.id, 34) < 0.45 ? dtex.replace('asphalt/plain-worn-cracked', 'concrete/walk-plain').replace('asphalt/plain-bleached-cracked', 'concrete/walk-plain') : WALKS[Math.floor(rnd(lot.id, 35) * WALKS.length)];
+    const beside = drive && (du < drive[0] ? drive[0] - du : du - drive[1]);
+    if (drive && beside! > 1 && beside! < 9 && dv > 1.6 && rnd(lot.id, 36) < 0.5) {
+      const across: Rect = du < drive[0] ? [du - 0.55, drive[0], dv - 1.5, dv - 0.4] : [drive[1], du + 0.55, dv - 1.5, dv - 0.4];
+      pave(f, wtex, [du - 0.55, du + 0.55, dv - 0.4, dv], 0.06, 3);
+      pave(f, wtex, across, 0.06, 3);
+      f.taken.push([du - 0.55, du + 0.55, dv - 1.5, dv], across);
+    } else if (!(drive && du > drive[0] - 0.4 && du < drive[1] + 0.4)) {
+      const walk: Rect = [du - 0.55, du + 0.55, -f.gap, dv];
+      pave(f, wtex, walk, 0.06, 3);
+      f.taken.push(walk);
+      gaps.push([du - 0.75, du + 0.75]);
+    }
+    // Planting against the front wall, a tree or two, the mail box and the bins.
+    const lush = f.type === 'industrial' ? 0.3 : 1;
+    for (let i = 0; i < 4; i++) {
+      if (rnd(lot.id, 40, i) > 0.45 * lush) continue;
+      const u = house[0] + 0.8 + rnd(lot.id, 41, i) * (house[1] - house[0] - 1.6);
+      const heavy = rnd(lot.id, 42, i) < 0.12;
+      small(f, heavy ? SHRUBS[Math.floor(rnd(lot.id, 43, i) * SHRUBS.length)] : BEDS[Math.floor(rnd(lot.id, 43, i) * BEDS.length)], 'plant', u, wallV - 0.75, rnd(lot.id, 44, i) * 6, 0.6);
+    }
+    const [lo, hi] = span(f, 0, f.d, 0);
+    const pt = { suburb: 0.55, residential: 0.4, oldtown: 0.15, beach: 0.3, hills: 0.6, industrial: 0.1, midtown: 0.15, downtown: 0.1 }[f.type];
+    if (rnd(lot.id, 45) < pt && wallV > 4.5) for (let i = 0; i < 3; i++) if (tree(f, lo + 2 + rnd(lot.id, 46, i) * (hi - lo - 4), 1.8 + rnd(lot.id, 47, i) * (wallV - 4), 48 + i, 2.2)) break;
+    const yard = f.d - house[3];
+    for (let i = 0; i < 2; i++) if (rnd(lot.id, 50, i) < (i ? 0.25 : 0.55) * lush && yard > 5) tree(f, lo + 2 + rnd(lot.id, 51, i) * (hi - lo - 4), house[3] + 2.6 + rnd(lot.id, 52, i) * (yard - 4.4), 53 + i, 2.4);
+    if (!old && rnd(lot.id, 55) < (f.type === 'suburb' || f.type === 'hills' ? 0.85 : 0.4)) {
+      const u = drive ? (drive[0] - 0.6 > lo + 0.5 ? drive[0] - 0.6 : drive[1] + 0.6) : du + 1.2;
+      small(f, ['furniture/mail-curb-black', 'furniture/mail-curb-white', 'furniture/mail-curb-galvanized'][Math.floor(rnd(lot.id, 56) * 3)], 'yard', u, Math.max(0, f.v0) + 0.5, Math.PI, 0.3);
+    }
+    if (rnd(lot.id, 57) < 0.35) {
+      const s = drive && drive[0] < house[0] ? -1 : 1;
+      small(f, ['furniture/bin-cart-black', 'furniture/bin-cart-green', 'furniture/bin-cart-blue', 'furniture/bin-cart-trio'][Math.floor(rnd(lot.id, 58) * 4)], 'bin', s < 0 ? house[0] - 0.7 : house[1] + 0.7, house[2] + made.hz, s < 0 ? Math.PI / 2 : -Math.PI / 2, 0.5);
+    }
+    const start = house[2] + made.hz * (0.5 + 0.8 * rnd(lot.id, 59));
+    const startOn = (s: -1 | 1): number => (drive && !plan?.garage && (s < 0 ? drive[0] < house[0] : drive[1] > house[1]) ? Math.min(house[3], drive[3] + 0.3) : start);
+    yardFence(f, house, startOn(-1), startOn(1), gaps);
+    return true;
+  };
+
+  // --- Parking ---
+  const ASPHALT = ['asphalt/plain-used-patched', 'asphalt/plain-worn-sealed', 'asphalt/plain-worn-cracked', 'asphalt/plain-bleached-cracked', 'asphalt/plain-used-clean', 'asphalt/plain-worn-patched', 'asphalt/plain-bleached-sealed'];
+  const asphalt = (lot: Lot): string => ASPHALT[Math.floor(rnd(lot.id, 80) * ASPHALT.length)];
+  /** The lines of one parking space, 2.6 m by 5.4 m, in two pieces along its length so that it lies on the paving under it. */
+  const mark = (b: MeshBuilder, tex: string, cx: number, cy: number, yaw: number): void => {
+    const { mw, mh } = b.part(tex);
+    const pt = (a: number, c: number): [number, number, number] => {
+      const p = Site.local(cx, cy, yaw, a * 1.3, c * 2.7);
+      return [p.x, site.heightAt(p.x, p.y) + 0.09, p.y];
+    };
+    for (const c of [-1, 0]) b.quadUp(tex, pt(-1, c), pt(1, c), pt(1, c + 1), pt(-1, c + 1), 0, [[0, ((c + 1) / 2) * mh], [mw, ((c + 1) / 2) * mh], [mw, ((c + 2) / 2) * mh], [0, ((c + 2) / 2) * mh]]);
+  };
+  /**
+   * Marks parking spaces in rows across a paved rectangle, from its far end towards the road; returns how many.
+   * `lanes` are the u ranges of the ways in: every row but the far one leaves them open, so that each aisle is reached.
+   */
+  const stalls = (f: Frame, r: Rect, keep?: Rect, lanes: [number, number][] = []): number => {
+    const [u0, u1, v0, v1] = r;
+    const n = Math.floor((u1 - u0) / 2.6);
+    if (n < 2 || v1 - v0 < 5.4) return 0;
+    const rows: number[] = [];
+    // A row against the far edge, an aisle, then rows back to back with an aisle between each pair.
+    for (let v = v1 - 5.4, k = 1; v >= v0 - 0.01; k++) {
+      if (k > 1 && k % 2 === 1 && v - 6.2 < v0 - 0.01) break;
+      rows.push(v);
+      v -= 5.4 + (k % 2 === 1 ? 6.2 : 0);
+    }
+    let count = 0;
+    const worn = rnd(f.lot.id, 79) < 0.6;
+    const start = (u0 + u1) / 2 - (n * 2.6) / 2;
+    rows.forEach((v, k) => {
+      for (let i = 0; i < n; i++) {
+        const [u, vc] = [start + (i + 0.5) * 2.6, v + 2.7];
+        if (!free(f, u, vc, 1.2, f.solid) || (keep && u > keep[0] && u < keep[1] && vc > keep[2] && vc < keep[3])) continue;
+        if (k > 0 && lanes.some(([a, b]) => u + 1.3 > a && u - 1.3 < b)) continue;
+        const p = at(f, u, vc);
+        if (site.at(p.x, p.y) !== LOT && site.at(p.x, p.y) !== FREE) continue;
+        // The closed end of a space is away from its aisle: the far row and every second one after it open towards the road,
+        // and the texture's closed end is on the road side as it comes.
+        mark(tile(p.x, p.y), worn ? 'symbol/parking-stall-white-worn' : 'symbol/parking-stall-white-new', p.x, p.y, f.yaw + (k % 2 ? 0 : Math.PI));
+        count++;
+      }
+    });
+    out.stalls += count;
+    return count;
+  };
+  /** A paved yard behind the buildings with marked spaces, and a drive to it down one side of the lot where there is room. */
+  const rearParking = (f: Frame, group: Rect, gaps: [number, number][]): Rect | null => {
+    const lot = f.lot;
+    const [L, R] = span(f, 0, f.d - 1, 0.5);
+    const from = group[3] + 1.5;
+    if (f.d - 1 - from < 6 || R - L < 8) return null;
+    const [roomL, roomR] = [group[0] - L, R - group[1]];
+    if (Math.max(roomL, roomR) < 3.2) return null;
+    const tex = asphalt(lot);
+    const drive: Rect = roomL > roomR ? [L, L + Math.min(roomL - 0.2, 5.5), -f.gap, from] : [R - Math.min(roomR - 0.2, 5.5), R, -f.gap, from];
+    pave(f, tex, drive, 0.05, 4);
+    const pad: Rect = [L, R, from, f.d - 1];
+    pave(f, tex, pad, 0.05, 4);
+    f.taken.push(drive, pad);
+    gaps.push([drive[0] - 0.2, drive[1] + 0.2]);
+    stalls(f, [L + 0.3, R - 0.3, from + 0.2, f.d - 1.2], undefined, [[drive[0], drive[1]]]);
+    return drive;
+  };
+
+  // --- Flats ---
+  const flats = (f: Frame, use: LandUse = f.lot.use): boolean => {
+    const lot = f.lot;
+    const high = use === 'R3';
+    const floors = high ? Math.max(6, lot.floors) : Math.min(6, Math.max(2, lot.floors));
+    const target = floors * 3.05 + 2;
+    const t = f.type;
+    const soft = t === 'suburb' || t === 'residential' || t === 'beach';
+    const urban = t === 'oldtown' || t === 'midtown' || t === 'downtown';
+    const cands: [Shape, number][] = high
+      ? [...family('apartment/highrise').map((s) => [s, tall(s, target, 0.22)] as [Shape, number]), ...family('apartment/balcony').map((s) => [s, 0.6 * tall(s, target, 0.22)] as [Shape, number])]
+      : [
+          ...family('apartment/walkup').map((s) => [s, (t === 'hills' ? 0.6 : 2) * tall(s, target)] as [Shape, number]),
+          ...family('apartment/balcony').map((s) => [s, 1.5 * tall(s, target)] as [Shape, number]),
+          ...family('apartment/dingbat').map((s) => [s, (soft ? 2 : 0.3) * tall(s, target)] as [Shape, number]),
+          ...family('apartment/motel').map((s) => [s, (soft ? 1 : 0.2) * tall(s, target)] as [Shape, number]),
+          ...family('apartment/rowhouse').map((s) => [s, (urban ? 2 : t === 'residential' ? 0.8 : 0.2) * tall(s, target)] as [Shape, number]),
+          ...family('house/duplex').map((s) => [s, (urban ? 0.2 : 1) * tall(s, target)] as [Shape, number]),
+        ];
+    const front = Math.max(0, f.v0) + (high ? 4 + 4 * rnd(lot.edge, lot.side, 81) : 3 + 2 * rnd(lot.edge, lot.side, 81));
+    const between = high ? 10 : 3.5;
+    let group: Rect | null = null;
+    const gaps: [number, number][] = [];
+    let tries = 0;
+    search: for (const side of high ? [4, 1.5] : [1.5, 0.8])
+      for (const s of order(cands, lot, 82)) {
+        const vf = Math.min(front, Math.max(Math.max(0, f.v0) + 1.5, f.d - 2 - s.d));
+        if (vf + s.d > f.d - 1.2) continue;
+        const [lo, hi] = span(f, vf, vf + s.d, side);
+        if (hi - lo < s.w) continue;
+        const n = clamp(Math.floor((hi - lo + between) / (s.w + between)), 1, 3);
+        const width = n * s.w + (n - 1) * between;
+        const slack = hi - lo - width;
+        // Room for a drive down one side, or the block stands in the middle.
+        const pass = slack + side >= 3.4 && f.d - (vf + s.d) > 9;
+        const start = pass ? (rnd(lot.id, 83) < 0.5 ? lo : hi - width) : lo + slack / 2;
+        const same = shapes.get(s.id.replace(/-\d+$/, ''))!.filter((x) => x.w <= s.w + 0.01 && x.d <= s.d + 0.01);
+        let first: Building | null = null;
+        for (let i = 0; i < n; i++) {
+          const m = i === 0 ? s : same[Math.floor(rnd(lot.id, 84, i) * same.length)];
+          const uc = start + i * (s.w + between) + s.w / 2;
+          const b = place(f, m.id, uc, vf, { main: i === 0 });
+          if (!b) {
+            if (i === 0) break;
+            continue;
+          }
+          first ??= b;
+          remember(lot, m.id);
+          group = group ? [Math.min(group[0], uc - b.hx), Math.max(group[1], uc + b.hx), vf, Math.max(group[3], vf + 2 * b.hz)] : [uc - b.hx, uc + b.hx, vf, vf + 2 * b.hz];
+          const walk: Rect = [uc - 0.8, uc + 0.8, -f.gap, vf];
+          pave(f, 'concrete/walk-plain', walk, 0.06, 3);
+          f.taken.push(walk);
+          gaps.push([uc - 1, uc + 1]);
+        }
+        if (first || ++tries >= 5) break search;
+      }
+    if (!group) return false;
+    if (high && group[2] > 2.5) {
+      const court: Rect = [group[0], group[1], Math.max(0.3, group[2] - 3), group[2]];
+      pave(f, 'concrete/walk-square', court, 0.055, 3);
+      f.taken.push(court);
+    }
+    const drive = rearParking(f, group, gaps);
+    const [lo, hi] = span(f, 0, f.d, 0);
+    for (let i = 0; i < (high ? 4 : 2); i++) if (rnd(lot.id, 85, i) < 0.6) tree(f, lo + 2 + rnd(lot.id, 86, i) * (hi - lo - 4), 1.7 + rnd(lot.id, 87, i) * Math.max(0, group[2] - 3), 88 + i, 2.2);
+    for (let i = 0; i < 4; i++) if (rnd(lot.id, 92, i) < 0.4) small(f, BEDS[Math.floor(rnd(lot.id, 93, i) * BEDS.length)], 'plant', group[0] + 1 + rnd(lot.id, 94, i) * (group[1] - group[0] - 2), group[2] - 0.8, rnd(lot.id, 95, i) * 6, 0.6);
+    const start = group[2] + (group[3] - group[2]) * 0.5;
+    // On the side of the drive to the parking behind, the fence starts past the end of the drive, not across it.
+    const startOn = (s: -1 | 1): number => (drive && (s < 0 ? drive[0] < group[0] : drive[1] > group[1]) ? drive[3] + 0.3 : start);
+    yardFence(f, group, startOn(-1), startOn(1), gaps);
+    return true;
+  };
+
+  // --- Shops wall to wall along the street ---
+  const shopRow = (f: Frame): boolean => {
+    const lot = f.lot;
+    const vf = Math.max(0, f.v0) + 0.1;
+    const room = f.d - vf - 1;
+    const target = 4.6 + (lot.floors - 1) * 3.2;
+    const cands: [Shape, number][] =
+      lot.floors <= 1
+        ? mix([['shop/store', 12, 1]])
+        : [
+            ...family('shop/mixed').map((s) => [s, tall(s, target, 0.2)] as [Shape, number]),
+            ...(lot.floors <= 2 ? family('shop/store').map((s) => [s, 0.2] as [Shape, number]) : []),
+            ...(lot.floors >= 6 ? [...family('office/lowrise'), ...named('apartment/highrise-7', 'apartment/highrise-8', 'apartment/highrise-2', 'office/hotel-3')].map((s) => [s, 0.8 * tall(s, target * 1.1, 0.2)] as [Shape, number]) : []),
+          ];
+    const usable = cands.filter(([s]) => s.d <= room);
+    if (!usable.length) return false;
+    const [lo, hi] = span(f, vf, vf + Math.min(room, 14), 0);
+    const W = hi - lo;
+    let best: { seq: Shape[]; k: number; score: number } | null = null;
+    for (let t = 0; t < 8; t++) {
+      const list = order(usable, lot, 100 + t);
+      const seq: Shape[] = [];
+      let left = W;
+      for (let i = 0; i < list.length && seq.length < 4; i++) {
+        const s = list[i];
+        if (s.w * 0.9 > left || seq.includes(s)) continue;
+        seq.push(s);
+        left -= s.w;
+        if (left < 6.2) break;
+      }
+      if (!seq.length) continue;
+      const k = W / seq.reduce((a, s) => a + s.w, 0);
+      const score = Math.abs(k - 1) + (k > 1.15 ? 1 : 0) + t * 0.004;
+      if (!best || score < best.score) best = { seq, k, score };
+    }
+    if (!best) {
+      // Narrower than any shop: the smallest one squeezed in.
+      const s = usable.map(([x]) => x).sort((a, b) => a.w - b.w)[0];
+      if (W / s.w < 0.78) return false;
+      best = { seq: [s], k: W / s.w, score: 0 };
+    }
+    const k = clamp(best.k, 0.78, 1.15);
+    const total = best.seq.reduce((a, s) => a + s.w, 0) * k;
+    let u = lo + (rnd(lot.id, 110) < 0.5 ? 0 : W - total);
+    let back = 0;
+    let any = false;
+    for (const s of best.seq) {
+      // Where the street bends, the row next door leans in: a narrower front may still fit.
+      const b = place(f, s.id, u + (s.w * k) / 2, vf, { stretch: k, party: true, main: !any }) ?? place(f, s.id, u + (s.w * k) / 2, vf, { stretch: k * 0.86, party: true, main: !any });
+      u += s.w * k;
+      if (!b) continue;
+      any = true;
+      back = Math.max(back, vf + 2 * b.hz);
+      remember(lot, s.id);
+    }
+    if (!any) return false;
+    if (f.gap > 0.2) pave(f, 'concrete/walk-square', [lo, hi, -f.gap - 0.3, vf + 0.3], 0.06, 2);
+    if (f.d - back > 3.5 && rnd(lot.id, 111) < 0.75) {
+      const yard: Rect = [lo + 0.3, hi - 0.3, back - 0.1, f.d - 0.4];
+      pave(f, asphalt(lot), yard, 0.05, 4);
+      if (f.d - back > 9) stalls(f, [lo + 0.6, hi - 0.6, back + 3.2, f.d - 0.8]);
+      if (rnd(lot.id, 112) < 0.6) small(f, ['furniture/bin-dumpster', 'furniture/bin-dumpster-green', 'furniture/bin-dumpster-open', 'furniture/bin-dumpster-bags'][Math.floor(rnd(lot.id, 113) * 4)], 'bin', lo + 2 + rnd(lot.id, 114) * Math.max(0, W - 4), back + 1.3, Math.PI, 1.2);
+      f.taken.push(yard);
+    }
+    return true;
+  };
+
+  // --- Shops and offices that stand in their own car park ---
+  const strip = (f: Frame, use: LandUse = f.lot.use): boolean => {
+    const lot = f.lot;
+    const t = f.type;
+    const edge = Math.max(0, f.v0);
+    const busy = lot.site.road === 'arterial' || lot.site.road === 'collector';
+    const wide = family('shop/store').filter((s) => s.w > 15);
+    const cands: [Shape, number][] =
+      use === 'C4'
+        ? mix([['shop/bigbox', 4, 1]])
+        : use === 'C3'
+          ? [
+              ...mix([['shop/gas', 6, busy ? (lot.corner ? 3 : 1) : 0], ['shop/fastfood', 5, 2], ['shop/diner', 3, 1], ['shop/bank', 3, 1], ['shop/garage', 5, 1.2], ['apartment/motel', 4, t === 'beach' || t === 'suburb' ? 1.2 : 0.4]]),
+              ...wide.map((s) => [s, 1.5] as [Shape, number]),
+            ]
+          : [...mix([['shop/store', 12, 2], ['shop/diner', 3, 1], ['shop/bank', 3, 0.7], ['shop/garage', 5, 0.8]]), ...named('shop/fastfood-3', 'shop/fastfood-5').map((s) => [s, 1] as [Shape, number])];
+    let made: Building | null = null;
+    let [uc, vf, deep] = [0, 0, false];
+    let tries = 0;
+    search: for (const side of [2.5, 1])
+      for (const s of order(cands, lot, 120)) {
+        const room = f.d - 2 - s.d - edge;
+        if (room < 3) continue;
+        const gas = s.id.startsWith('shop/gas');
+        deep = !gas && room >= 13.5;
+        vf = gas ? edge + Math.min(room, 5) : deep ? Math.min(edge + (use === 'C4' ? 60 : 22), f.d - 2 - s.d) : edge + Math.min(room, 4 + 2 * rnd(lot.id, 121));
+        const [lo, hi] = span(f, vf, vf + s.d, side);
+        if (hi - lo < s.w) continue;
+        const slack = hi - lo - s.w;
+        uc = lo + s.w / 2 + slack * (deep || gas ? 0.25 + 0.5 * rnd(lot.id, 122) : rnd(lot.id, 122) < 0.5 ? 0.04 : 0.96);
+        made = place(f, s.id, uc, vf);
+        if (made || ++tries >= 5) break search;
+      }
+    if (!made) return false;
+    remember(lot, made.model);
+    const gas = made.model.startsWith('shop/gas');
+    const box: Rect = [uc - made.hx, uc + made.hx, vf, vf + 2 * made.hz];
+    const [L, R] = span(f, edge + 2, f.d - 1.2, 1.2);
+    const tex = asphalt(lot);
+    const lotRect: Rect = [L, R, edge + 2, f.d - 1.2];
+    pave(f, gas ? 'concrete/road-smooth-cracked' : tex, lotRect, 0.05, 4);
+    // Ways in from the street: one at each end of a long frontage, else one clear of the building.
+    const ways = R - L >= 34 ? [L + 5.5, R - 5.5] : [deep || gas ? (L + R) / 2 : box[0] - L > R - box[1] ? L + 4 : R - 4];
+    for (const e of ways) pave(f, tex, [e - 3.5, e + 3.5, -f.gap, edge + 2.05], 0.05, 2.4);
+    if (!gas) pave(f, 'concrete/walk-plain', [box[0], box[1], vf - 1.8, vf + 0.2], 0.07, 2);
+    const lanes = ways.map((e): [number, number] => [e - 3.5, e + 3.5]);
+    if (deep) stalls(f, [L + 1, R - 1, edge + 2.6, vf - 2], undefined, lanes);
+    else if (!gas) {
+      const sideRect: Rect = box[0] - L > R - box[1] ? [L + 0.5, box[0] - 1.5, edge + 2.6, f.d - 1.6] : [box[1] + 1.5, R - 0.5, edge + 2.6, f.d - 1.6];
+      stalls(f, sideRect, undefined, lanes);
+    }
+    f.taken.push(lotRect);
+    for (let u = L + 3, i = 0; u < R - 2; u += 9 + 5 * rnd(lot.id, 123, i), i++) if (ways.every((e) => Math.abs(u - e) > 5.5) && rnd(lot.id, 124, i) < 0.7) tree(f, u, edge + 1, 125 + i, 2, 0.6);
+    if (rnd(lot.id, 126) < 0.6) small(f, 'furniture/bin-dumpster', 'bin', clamp(uc + made.hx + 1.6, L + 1.5, R - 1.5), f.d - 2.4, Math.PI, 1.2);
+    return true;
+  };
+
+  // --- Offices and hotels ---
+  const offices = (f: Frame): boolean => {
+    const lot = f.lot;
+    const t = f.type;
+    const high = lot.use === 'O2';
+    const target = lot.floors * 3.9 + 3;
+    const edge = Math.max(0, f.v0);
+    const cands: [Shape, number][] = (high
+      ? mix([['office/glass', 10, 1.2], ['office/setback', 10, 1], ['office/deco', 4, 0.7], ['office/precast', 4, 0.7], ['office/brutal', 4, 0.5], ['office/hotel', 4, t === 'beach' ? 2.5 : 0.5]])
+      : mix([['office/lowrise', 8, 1], ['office/precast', 4, 0.7], ['office/brutal', 4, 0.5], ['office/hotel', 4, t === 'beach' ? 1.5 : 0.2]])
+    ).map(([s, w]) => [s, w * tall(s, target, 0.22)] as [Shape, number]);
+    const list = order(cands, lot, 130);
+    let group: Rect | null = null;
+    let tries = 0;
+    search: for (const [side, front] of [[high ? 1.5 : 3, edge + (high ? 1 + 4 * rnd(lot.edge, lot.side, 131) : 3 + 3 * rnd(lot.edge, lot.side, 131))], [0.6, edge + 0.6]])
+      for (const s of list) {
+        const vf = Math.min(front, f.d - 1 - s.d);
+        if (vf < edge + 0.3) continue;
+        const [lo, hi] = span(f, vf, vf + s.d, side);
+        if (hi - lo < s.w) continue;
+        const slack = hi - lo - s.w;
+        // A wide lot takes a second, lower building beside the first.
+        const second = slack > 26 ? list.find((x) => x !== s && x.h < s.h * 0.85 && x.w + 8 <= slack && x.d <= f.d - 1 - vf) : undefined;
+        const uc = second ? (rnd(lot.id, 132) < 0.5 ? lo + s.w / 2 : hi - s.w / 2) : lo + s.w / 2 + slack * (0.3 + 0.4 * rnd(lot.id, 133));
+        const b = place(f, s.id, uc, vf);
+        if (!b) {
+          if (++tries >= 5) break search;
+          continue;
+        }
+        remember(lot, s.id);
+        group = [uc - b.hx, uc + b.hx, vf, vf + 2 * b.hz];
+        if (second) {
+          const u2 = uc < (lo + hi) / 2 ? hi - second.w / 2 : lo + second.w / 2;
+          const b2 = place(f, second.id, u2, vf + 2 * rnd(lot.id, 134), { main: false });
+          if (b2) group = [Math.min(group[0], u2 - b2.hx), Math.max(group[1], u2 + b2.hx), vf, Math.max(group[3], b2.setback + 2 * b2.hz)];
+        }
+        break search;
+      }
+    if (!group) return false;
+    const [L, R] = span(f, 0, f.d - 0.4, 0.4);
+    const gaps: [number, number][] = [];
+    if (t === 'downtown' || t === 'midtown' || t === 'oldtown' || t === 'beach' || high) {
+      const plaza: Rect = [L, R, -f.gap - 0.2, Math.min(f.d - 0.4, group[3] + 1.5)];
+      pave(f, ['paving/slabs-granite', 'concrete/walk-square', 'paving/slabs-dark', 'paving/running-grey', 'concrete/walk-exposed', 'paving/slabs-sandstone'][Math.floor(rnd(lot.id, 135) * 6)], plaza, 0.055, 4);
+      if (group[2] - edge > 3.2) for (let u = L + 3, i = 0; u < R - 2; u += 7 + 3 * rnd(lot.id, 136, i), i++) if (Math.abs(u - (group[0] + group[1]) / 2) > 3) tree(f, u, edge + 1.6, 137 + i, 1.4, 0.8);
+      rearParking(f, group, gaps);
+      for (let i = 0; i < 3; i++) tree(f, L + 2 + rnd(lot.id, 141, i) * (R - L - 4), group[3] + 2.5 + rnd(lot.id, 142, i) * Math.max(0, f.d - group[3] - 5), 143 + i, 2.4);
+    } else {
+      const mid = (group[0] + group[1]) / 2;
+      pave(f, 'concrete/walk-square', [mid - 1.5, mid + 1.5, -f.gap, group[2]], 0.06, 2);
+      f.taken.push([mid - 1.5, mid + 1.5, 0, group[2]]);
+      rearParking(f, group, gaps);
+      for (let i = 0; i < 3; i++) if (rnd(lot.id, 138, i) < 0.7) tree(f, L + 2 + rnd(lot.id, 139, i) * (R - L - 4), edge + 1.5 + rnd(lot.id, 140, i) * Math.max(0, group[2] - edge - 3), 144 + i, 2.2, 1);
+    }
+    return true;
+  };
+
+  // --- Works and warehouses ---
+  const works = (f: Frame): boolean => {
+    const lot = f.lot;
+    const heavy = lot.use === 'I2';
+    const edge = Math.max(0, f.v0);
+    const cands: [Shape, number][] = heavy
+      ? mix([['industrial/mill', 4, 2], ['industrial/sawtooth', 4, 2], ['industrial/warehouse', 6, 1], ['industrial/vault', 3, 0.7]])
+      : mix([['industrial/warehouse', 6, 3], ['industrial/shed', 8, 2], ['industrial/vault', 3, 1], ['industrial/sawtooth', 4, 0.8], ['industrial/storage', 4, 0.8], ['industrial/quonset', 3, 0.3]]);
+    // The biggest that fits comes first more often than not: a works fills its plot.
+    const list = order(cands.map(([s, w]) => [s, w * (0.3 + (s.w * s.d) / 1500)] as [Shape, number]), lot, 150);
+    const front = edge + 9 + 5 * rnd(lot.id, 151);
+    let main: Building | null = null;
+    let tries = 0;
+    search: for (const [side, fr] of [[5, front], [2.5, edge + 6]])
+      for (const s of list) {
+        const vf = Math.min(fr, f.d - 3 - s.d);
+        if (vf < edge + 3) continue;
+        const [lo, hi] = span(f, vf, vf + s.d, side);
+        if (hi - lo < s.w) continue;
+        main = place(f, s.id, lo + s.w / 2 + (hi - lo - s.w) * (rnd(lot.id, 152) < 0.5 ? 0.1 : 0.9), vf);
+        if (main || ++tries >= 6) break search;
+      }
+    if (!main) return false;
+    remember(lot, main.model);
+    // Sheds, stores and tanks wherever the yard still has room, clear of the main building and the fence.
+    const extra: [Shape, number][] = [
+      ...mix([['industrial/shed', 8, 2], ['industrial/storage', 4, 1.5], ['industrial/quonset', 3, 1.5], ['industrial/tanks', 6, heavy ? 3 : 0.6], ['industrial/vault', 3, 0.5]]),
+      ...named('infra/tank-vertical', 'infra/tank-vertical-rusty', 'infra/tank-horizontal', 'infra/tank-propane').map((s) => [s, heavy ? 1.5 : 0.3] as [Shape, number]),
+    ];
+    let count = 0;
+    const want = Math.min(4, Math.floor(lot.area / (heavy ? 1800 : 2600)));
+    for (const s of order(extra, lot, 153)) {
+      if (count >= want) break;
+      let done = false;
+      for (let k = 0; k < 6 && !done; k++) {
+        const vf = edge + 8 + rnd(lot.id, 154, count, k) * Math.max(0, f.d - 11 - s.d - edge);
+        const [lo, hi] = span(f, vf, vf + s.d, 4);
+        if (hi - lo < s.w || vf + s.d > f.d - 3) continue;
+        const uc = lo + s.w / 2 + (hi - lo - s.w) * rnd(lot.id, 155, count, k);
+        const r: Rect = [uc - s.w / 2 - 5, uc + s.w / 2 + 5, vf - 5, vf + s.d + 5];
+        if (f.solid.some(([u0, u1, v0, v1]) => u0 < r[1] && u1 > r[0] && v0 < r[3] && v1 > r[2])) continue;
+        done = !!place(f, s.id, uc, vf, { main: false });
+      }
+      if (done) count++;
+    }
+    const [L, R] = span(f, edge + 1.5, f.d - 1.5, 1.5);
+    const tex = heavy ? ['ground/gravel-dirt', 'concrete/road-tined-stained', 'asphalt/plain-bleached-broken'][Math.floor(rnd(lot.id, 156) * 3)] : ['asphalt/plain-worn-patched', 'concrete/road-smooth-cracked', 'asphalt/plain-bleached-broken', 'asphalt/plain-used-patched', 'ground/gravel-dirt'][Math.floor(rnd(lot.id, 156) * 5)];
+    pave(f, tex, [L, R, edge + 1.5, f.d - 1.5], 0.05, 5);
+    pave(f, tex.startsWith('ground') ? 'concrete/road-smooth-cracked' : tex, [-6, 6, -f.gap, edge + 1.55], 0.05, 3);
+    // Staff parking along the front fence, clear of the gate.
+    stalls(f, [L + 1, R - 1, edge + 2, edge + 7.4], [-8, 8, -1, f.d]);
+    return true;
+  };
+
+  // --- Car parks ---
+  const parkingLot = (f: Frame): boolean => {
+    const lot = f.lot;
+    const edge = Math.max(0, f.v0);
+    if (lot.floors > 0) {
+      for (const s of order(mix([['office/carpark', 4, 1]]).map(([s, w]) => [s, w * tall(s, lot.floors * 3.2 + 2)] as [Shape, number]), lot, 160)) {
+        const vf = edge + Math.min(3, Math.max(1, f.d - 2 - s.d - edge));
+        const [lo, hi] = span(f, vf, vf + s.d, 1.5);
+        if (hi - lo < s.w || vf + s.d > f.d - 1) continue;
+        const uc = (lo + hi) / 2;
+        if (!place(f, s.id, uc, vf)) continue;
+        pave(f, asphalt(lot), [uc - 4, uc + 4, -f.gap, vf + 0.3], 0.05, 2.5);
+        return true;
+      }
+    }
+    const [L, R] = span(f, edge + 1, f.d - 1, 1);
+    if (R - L < 8 || f.d - edge < 9) return false;
+    const tex = asphalt(lot);
+    pave(f, tex, [L, R, edge + 1, f.d - 1], 0.05, 4);
+    pave(f, tex, [-3.6, 3.6, -f.gap, edge + 1.05], 0.05, 2.4);
+    const n = stalls(f, [L + 0.4, R - 0.4, edge + 1.3, f.d - 1.2], [-3.4, 3.4, -1, edge + 7], [[-3.4, 3.4]]);
+    if (n > 18 && rnd(lot.id, 161) < 0.5) {
+      const p = at(f, 5, edge + 3.2);
+      if (site.at(p.x, p.y) === LOT) site.put(rnd(lot.id, 162) < 0.5 ? 'infra/parking-booth' : 'infra/parking-booth-flat', 'parking', p.x, p.y, f.yaw);
+    }
+    if (rnd(lot.id, 163) < 0.6) {
+      const p = at(f, -4.6, edge + 1.2);
+      if (site.at(p.x, p.y) === LOT) site.put('infra/parking-sign-rates', 'sign', p.x, p.y, f.yaw);
+    }
+    return n > 0;
+  };
+
+  // --- Public buildings ---
+  interface Civic {
+    kind: string;
+    models: string[];
+    max: number;
+    /** Least distance to another of its kind. */
+    apart: number;
+    types: DistrictType[] | null;
+    front: number;
+    busy?: boolean;
+    /** Paved all the way across its front. */
+    plaza?: boolean;
+    flag?: boolean;
+  }
+  const ALL: DistrictType[] = ['downtown', 'midtown', 'oldtown', 'residential', 'suburb', 'beach', 'hills', 'industrial'];
+  const HOMES: DistrictType[] = ['residential', 'suburb', 'beach', 'hills', 'oldtown', 'midtown'];
+  const CIVIC: Civic[] = [
+    { kind: 'stadium', models: ['civic/stadium-school', 'civic/stadium-two-stands', 'civic/stadium-old', 'civic/stadium-soccer'], max: 1, apart: 0, types: ['midtown', 'industrial', 'suburb', 'residential'], front: 12 },
+    { kind: 'arena', models: ['civic/arena-small', 'civic/arena-round'], max: 1, apart: 0, types: ['midtown', 'downtown', 'industrial', 'suburb'], front: 10 },
+    { kind: 'hospital', models: ['civic/hospital-general', 'civic/hospital-modern', 'civic/hospital-brick', 'civic/hospital-ward', 'civic/hospital-small'], max: 2, apart: 1400, types: ['midtown', 'residential', 'suburb', 'downtown', 'oldtown'], front: 10, busy: true },
+    { kind: 'high-school', models: ['civic/school-high-1', 'civic/school-high-2', 'civic/school-high-old'], max: 2, apart: 1400, types: HOMES, front: 9, flag: true },
+    { kind: 'middle-school', models: ['civic/school-middle-1', 'civic/school-middle-2'], max: 2, apart: 1200, types: HOMES, front: 9, flag: true },
+    { kind: 'school', models: ['civic/school-elementary-1', 'civic/school-elementary-2', 'civic/school-elementary-3'], max: 8, apart: 600, types: HOMES, front: 8, flag: true },
+    { kind: 'university', models: ['civic/university-hall-tower', 'civic/university-hall-cupola', 'civic/university-lab'], max: 1, apart: 0, types: ['midtown', 'residential', 'oldtown'], front: 10 },
+    { kind: 'museum', models: ['civic/museum-classical', 'civic/museum-dome', 'civic/museum-modern'], max: 1, apart: 0, types: ['downtown', 'midtown', 'oldtown'], front: 7, plaza: true },
+    { kind: 'city-hall', models: ['civic/city-hall-dome', 'civic/city-hall-tower', 'civic/city-hall-brick', 'civic/city-hall-modern', 'civic/city-hall-old'], max: 1, apart: 0, types: ['downtown', 'oldtown', 'midtown'], front: 8, plaza: true, flag: true },
+    { kind: 'courthouse', models: ['civic/courthouse-dome', 'civic/courthouse-classical', 'civic/courthouse-modern', 'civic/courthouse-brick'], max: 1, apart: 0, types: ['downtown', 'midtown', 'oldtown'], front: 6, plaza: true, flag: true },
+    { kind: 'police', models: ['civic/police-brick', 'civic/police-brutal', 'civic/police-modern', 'civic/sheriff'], max: 2, apart: 1500, types: ['downtown', 'midtown', 'residential', 'suburb', 'oldtown', 'industrial'], front: 5, flag: true },
+    { kind: 'fire', models: ['civic/fire-brick-2', 'civic/fire-brick-3', 'civic/fire-modern-3', 'civic/fire-modern-4', 'civic/fire-rural-1', 'civic/fire-stucco-2'], max: 8, apart: 1200, types: ALL, front: 9, busy: true, flag: true },
+    { kind: 'library', models: ['civic/library-classical', 'civic/library-modern', 'civic/library-brick', 'civic/library-branch'], max: 4, apart: 1000, types: ALL, front: 5, plaza: true },
+    { kind: 'post-office', models: ['civic/post-office-brick', 'civic/post-office-deco', 'civic/post-office-modern'], max: 3, apart: 1400, types: ALL, front: 5, flag: true },
+    { kind: 'community', models: ['civic/community-1', 'civic/community-2', 'civic/community-3'], max: 5, apart: 900, types: HOMES, front: 5 },
+    { kind: 'clinic', models: ['civic/clinic-1', 'civic/clinic-2', 'civic/clinic-3'], max: 6, apart: 700, types: ALL, front: 5 },
+    {
+      kind: 'church',
+      models: ['civic/church-white-steeple', 'civic/church-brick-old', 'civic/church-gothic-brick', 'civic/church-gothic-stone', 'civic/church-mission', 'civic/church-mission-twin', 'civic/church-aframe', 'civic/church-chapel-stone', 'civic/church-chapel-wood', 'civic/church-cathedral'],
+      max: 40, apart: 280, types: ALL, front: 5,
+    },
+    { kind: 'police', models: ['civic/police-substation'], max: 6, apart: 700, types: ALL, front: 3 },
+    { kind: 'library', models: ['civic/library-branch'], max: 6, apart: 500, types: ALL, front: 4 },
+  ];
+  const civicAt: { kind: string; x: number; y: number }[] = [];
+  const civicLot = (f: Frame, c: Civic, salt: number): boolean => {
+    const lot = f.lot;
+    const edge = Math.max(0, f.v0);
+    const mid = at(f, 0, f.d / 2);
+    if (c.apart > 0 && civicAt.some((o) => o.kind === c.kind && Math.hypot(o.x - mid.x, o.y - mid.y) < c.apart)) return false;
+    for (const s of order(named(...c.models).map((s) => [s, 1 + (s.w * s.d) / 800] as [Shape, number]), lot, 170 + salt)) {
+      for (const [side, front] of [[3, c.front], [1.5, Math.min(c.front, 4)]]) {
+        const vf = Math.min(edge + front, f.d - 2.5 - s.d);
+        if (vf < edge + Math.min(front, 2.5)) continue;
+        const [lo, hi] = span(f, vf, vf + s.d, side);
+        if (hi - lo < s.w) continue;
+        const slack = hi - lo - s.w;
+        // To one side where the rest of the frontage can take the parking; in the middle of a lot it fills.
+        const uc = slack > 12 ? (rnd(lot.id, 171) < 0.5 ? lo + s.w / 2 : hi - s.w / 2) : (lo + hi) / 2;
+        const b = place(f, s.id, uc, vf, { civic: c.kind });
+        if (!b) continue;
+        civicAt.push({ kind: c.kind, x: mid.x, y: mid.y });
+        out.civic[c.kind] = (out.civic[c.kind] ?? 0) + 1;
+        const box: Rect = [uc - b.hx, uc + b.hx, vf, vf + 2 * b.hz];
+        const [L, R] = span(f, edge, f.d - 1, 0.6);
+        // Forecourt: paved across the front of a hall, an apron before the fire station's doors, else a path to the door.
+        const way: Rect = c.kind === 'fire' ? [box[0] + 0.5, box[1] - 0.5, -f.gap, vf + 0.2] : c.plaza ? [box[0] - 1, box[1] + 1, -f.gap, vf + 0.2] : [uc - 1.6, uc + 1.6, -f.gap, vf + 0.2];
+        pave(f, c.kind === 'fire' ? 'concrete/road-tined' : c.plaza ? 'paving/slabs-granite' : 'concrete/walk-square', way, 0.06, 2.4);
+        f.taken.push(way);
+        if (c.flag) small(f, 'civic/part-flagpole', 'yard', way[0] - 1.6 > L + 1 ? way[0] - 1.6 : way[1] + 1.6, edge + Math.min(2.5, (vf - edge) / 2), 0, 0.5);
+        // Parking beside the building where the frontage is long, else behind it.
+        const tex = asphalt(lot);
+        const [roomL, roomR] = [box[0] - L, R - box[1]];
+        if (Math.max(roomL, roomR) >= 14) {
+          const pad: Rect = roomL > roomR ? [L + 0.5, box[0] - 3, edge + 3, Math.min(f.d - 1.5, box[3] + 6)] : [box[1] + 3, R - 0.5, edge + 3, Math.min(f.d - 1.5, box[3] + 6)];
+          const [pl, pr] = span(f, pad[2], pad[3], 1);
+          pad[0] = Math.max(pad[0], pl);
+          pad[1] = Math.min(pad[1], pr);
+          pave(f, tex, pad, 0.05, 4);
+          const e = (pad[0] + pad[1]) / 2;
+          pave(f, tex, [e - 3.2, e + 3.2, -f.gap, pad[2] + 0.05], 0.05, 2.4);
+          stalls(f, [pad[0] + 0.3, pad[1] - 0.3, pad[2] + 0.3, pad[3] - 0.3], undefined, [[e - 3.2, e + 3.2]]);
+          f.taken.push(pad, [e - 3.2, e + 3.2, 0, pad[2]]);
+        } else rearParking(f, box, []);
+        // A school has a court in its yard.
+        if (c.kind.includes('school')) {
+          for (let k = 0; k < 8; k++) {
+            const [u, v] = [L + 9 + rnd(lot.id, 172, k) * Math.max(0, R - L - 18), edge + 10 + rnd(lot.id, 173, k) * Math.max(0, f.d - edge - 20)];
+            if (!open(f, u, v, 8.5, 8.5) || !open(f, u - 7, v - 7, 1, 1) || !open(f, u + 7, v + 7, 1, 1) || !open(f, u - 7, v + 7, 1, 1) || !open(f, u + 7, v - 7, 1, 1)) continue;
+            const p = at(f, u, v);
+            site.lay(['park/basketball-court', 'park/basketball-court-green', 'park/basketball-court-worn'][Math.floor(rnd(lot.id, 174) * 3)], 'sport', p.x, p.y, f.yaw);
+            f.taken.push([u - 8, u + 8, v - 7.5, v + 7.5]);
+            break;
+          }
+        }
+        for (let i = 0; i < 6; i++) if (rnd(lot.id, 175, i) < 0.7) tree(f, L + 2 + rnd(lot.id, 176, i) * (R - L - 4), edge + 1.6 + rnd(lot.id, 177, i) * (f.d - edge - 3.5), 178 + i, 3, 1.2);
+        return true;
+      }
+    }
+    return false;
+  };
+
+  // --- Every lot in turn ---
+  const frames: (Frame | null)[] = land.lots.map((lot, index) => (sand.has(index) || lot.use === 'OS' ? null : frameOf(lot)));
+  for (const f of frames) if (f && f.lot.use !== 'I1' && f.lot.use !== 'I2' && f.lot.use !== 'PK') extend(f);
+  out.plots = frames.map((f) => f?.poly ?? null);
+  out.owner = owner;
+  const done = new Set<number>();
+  const centre = (lot: Lot): number => lot.site.centre;
+  CIVIC.forEach((c, ci) => {
+    // The biggest and the most central halls take their pick first; the small kinds take the smallest lot that will do.
+    const lots = land.lots
+      .filter((lot) => lot.use === 'CV' && frames[lot.id] && !done.has(lot.id) && (!c.types || c.types.includes(lot.site.type)) && (!c.busy || lot.site.road === 'arterial' || lot.site.road === 'collector'))
+      .map((lot) => ({ lot, k: (c.kind === 'city-hall' || c.kind === 'courthouse' || c.kind === 'museum' ? -centre(lot) / 30 : 0) - (c.types ? c.types.indexOf(lot.site.type) : 0) * 0.6 - lot.area / 4000 + rnd(lot.id, 180, ci) }))
+      .sort((a, b) => b.k - a.k);
+    let n = 0;
+    for (const { lot } of lots) {
+      if (n >= c.max) break;
+      if (civicLot(frames[lot.id]!, c, ci)) {
+        done.add(lot.id);
+        n++;
+      }
+    }
+  });
+  for (const lot of land.lots) {
+    const f = frames[lot.id];
+    if (!f) {
+      if (lot.use !== 'OS' && !sand.has(lot.id)) out.vacant.push(lot.id);
+      continue;
+    }
+    if (lot.use === 'CV') {
+      if (!done.has(lot.id)) out.vacant.push(lot.id);
+      continue;
+    }
+    const t = f.type;
+    const wall = t === 'oldtown' || t === 'midtown' || t === 'downtown' || t === 'beach' || lot.width < 22 || lot.depth < 30;
+    const ok =
+      lot.use === 'R1' ? houseLot(f)
+      : lot.use === 'R2' ? flats(f) || houseLot(f)
+      : lot.use === 'R3' ? flats(f) || flats(f, 'R2')
+      : lot.use === 'C1' || lot.use === 'C2' ? (wall ? shopRow(f) || strip(f) : strip(f) || shopRow(f))
+      : lot.use === 'C3' ? strip(f) || shopRow(f)
+      : lot.use === 'C4' ? strip(f) || strip(f, 'C3')
+      : lot.use === 'O1' || lot.use === 'O2' ? offices(f)
+      : lot.use === 'I1' || lot.use === 'I2' ? works(f)
+      : lot.use === 'PK' ? parkingLot(f)
+      : true;
+    if (!ok) out.vacant.push(lot.id);
+  }
+  for (const b of out.list) if (b.main) out.count[b.use] = (out.count[b.use] ?? 0) + 1;
+  for (const b of builders.values()) out.tiles.push(b.build());
+  return out;
+}

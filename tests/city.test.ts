@@ -13,6 +13,7 @@ import { EDGE_STUB, RoadModel, buildRoadModel } from '../src/place/roadModel';
 import { RailModel, buildRailModel, crossingLook } from '../src/place/railModel';
 import { roadAt, trackAt } from '../src/place/railProfile';
 import { LOW_TREES, STREET_TREES, placeStreetFurniture } from '../src/place/streetFurniture';
+import { Building } from '../src/place/buildings';
 import { OpenSpace, placeOpenSpace } from '../src/place/openSpace';
 import { RAIL as ON_RAIL, ROAD as ON_ROAD, bbox } from '../src/place/site';
 import { RAIL_MAX_GRADE, RAIL_MIN_RADIUS, RAIL_STEP, RailIndex, sharpestRailTurn } from '../src/gen/rail';
@@ -1336,7 +1337,7 @@ describe('parks, waterfront and boundaries', () => {
   const opens = new Map<number, OpenSpace>();
   const open = (seed: number): OpenSpace => {
     let o = opens.get(seed);
-    if (!o) opens.set(seed, (o = placeOpenSpace(city(seed), buildRoadModel(city(seed)))));
+    if (!o) opens.set(seed, (o = placeOpenSpace(city(seed), model(seed))));
     return o;
   };
   /** Kinds that stand on the line of a road's edge or on the water by design. */
@@ -1560,5 +1561,184 @@ describe('parks, waterfront and boundaries', () => {
     // Groves have something growing under the trees.
     const under = o.items.filter((it) => it.kind === 'plant' && it.park !== undefined);
     expect(under.length).toBeGreaterThan(40);
+  });
+
+  // --- Buildings ---
+  const inside = (poly: Vec2[], x: number, y: number): boolean => {
+    let hit = false;
+    for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+      const [a, b] = [poly[i], poly[j]];
+      if (a.y > y !== b.y > y && x < ((b.x - a.x) * (y - a.y)) / (b.y - a.y) + a.x) hit = !hit;
+    }
+    return hit;
+  };
+  const toEdge = (poly: Vec2[], p: Vec2): number => {
+    let best = Infinity;
+    for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) best = Math.min(best, pointSeg(p.x, p.y, poly[j], poly[i]).d);
+    return best;
+  };
+  /** Corners of a building's footprint, `m` in from its walls. */
+  const corners = (b: Building, m = 0): Vec2[] => {
+    const [cx, cy] = [Math.cos(b.yaw), Math.sin(b.yaw)];
+    return [[-1, -1], [1, -1], [1, 1], [-1, 1]].map(([i, j]) => {
+      const [x, z] = [i * (b.hx - m), j * (b.hz - m)];
+      return { x: b.x + cx * x - cy * z, y: b.y + cy * x + cx * z };
+    });
+  };
+  /** Do two footprints overlap? Separating axes of two rectangles. */
+  const overlap = (a: Vec2[], b: Vec2[]): boolean => {
+    for (const q of [a, b])
+      for (let i = 0; i < 2; i++) {
+        const [nx, ny] = [q[i + 1].y - q[i].y, q[i].x - q[i + 1].x];
+        const pa = a.map((p) => p.x * nx + p.y * ny);
+        const pb = b.map((p) => p.x * nx + p.y * ny);
+        if (Math.max(...pa) <= Math.min(...pb) || Math.max(...pb) <= Math.min(...pa)) return false;
+      }
+    return true;
+  };
+  const BUILT: LandUse[] = ['R1', 'R2', 'R3', 'C1', 'C2', 'C3', 'C4', 'O1', 'O2', 'I1', 'I2', 'CV'];
+  const FAMILY: Record<string, RegExp> = {
+    R1: /^(house|apartment\/rowhouse)/, R2: /^(apartment|house)\//, R3: /^apartment\//, C1: /^(shop|office|apartment)\//, C2: /^(shop|office|apartment)\//, C3: /^(shop|apartment\/motel)/, C4: /^(shop|apartment\/motel)/,
+    O1: /^office\//, O2: /^office\//, I1: /^(industrial|infra\/tank)/, I2: /^(industrial|infra\/tank)/, PK: /^office\/carpark/, CV: /^civic\//,
+  };
+
+  it('stands the same buildings for the same seed', () => {
+    const a = placeOpenSpace(city(2), buildRoadModel(city(2)));
+    expect(a.buildings.list).toEqual(open(2).buildings.list);
+    expect(a.buildings.vacant).toEqual(open(2).buildings.vacant);
+  });
+
+  it.each(OPEN_SEEDS)('seed %i: nearly every lot zoned for building has one, of a kind that suits its use', (seed) => {
+    const o = open(seed);
+    const lots = city(seed).land.lots;
+    const b = o.buildings;
+    expect(b.list.length).toBeGreaterThan(5000);
+    const sand = new Set(o.shore.sandLots);
+    const built = new Set(b.list.map((x) => x.lot));
+    for (const use of BUILT) {
+      const all = lots.filter((l) => l.use === use && !sand.has(l.id));
+      if (all.length < 8) continue;
+      const have = all.filter((l) => built.has(l.id)).length;
+      // Steep hillside plots and slivers stay empty.
+      expect(have / all.length, use).toBeGreaterThan(use === 'R1' || use === 'C2' ? 0.88 : 0.9);
+    }
+    for (const x of b.list) {
+      const at = `${x.model} on lot ${x.lot} at ${x.x.toFixed(0)}, ${x.y.toFixed(0)}`;
+      expect(FAMILY[x.use].test(x.model), `${x.use}: ${at}`).toBe(true);
+      expect(sand.has(x.lot), at).toBe(false);
+    }
+    // No building on open space, and a vacant lot is one with no building.
+    for (const id of b.vacant) expect(built.has(id), `lot ${id}`).toBe(false);
+    expect(b.list.some((x) => lots[x.lot].use === 'OS')).toBe(false);
+    // Car parks have marked spaces; yards have fences.
+    expect(b.stalls).toBeGreaterThan(4000);
+    expect(b.fence).toBeGreaterThan(40_000);
+    for (const tile of b.tiles) expect(tile.min.every(Number.isFinite) && tile.max.every(Number.isFinite)).toBe(true);
+  });
+
+  it.each(OPEN_SEEDS)('seed %i: buildings stand on their own plot, off roads, tracks and water, clear of each other, facing their street', (seed) => {
+    const o = open(seed);
+    const c = city(seed);
+    const lots = c.land.lots;
+    const b = o.buildings;
+    const grid = new Map<number, number[]>();
+    const CELL = 64;
+    b.list.forEach((x, i) => {
+      const at = `${x.model} on lot ${x.lot} at ${x.x.toFixed(0)}, ${x.y.toFixed(0)}`;
+      const plot = b.plots[x.lot]!;
+      expect(plot, at).not.toBeNull();
+      expect(inside(plot, x.x, x.y), at).toBe(true);
+      for (const p of corners(x)) {
+        if (!inside(plot, p.x, p.y)) expect(toEdge(plot, p), at).toBeLessThan(x.party ? 1.2 : 0.6);
+        expect(waterDistAt(c.terrain, p.x, p.y), at).toBeGreaterThan(0);
+      }
+      for (const p of [...corners(x, 1.2), { x: x.x, y: x.y }]) {
+        expect(o.site.at(p.x, p.y), at).not.toBe(ON_RAIL);
+        expect(o.site.all(p.x, p.y, 1.5, ON_ROAD), at).toBe(false);
+      }
+      // The front of the model (+z) looks at the lot's frontage.
+      const lot = lots[x.lot];
+      const mid = { x: (lot.poly[0].x + lot.poly[lot.front - 1].x) / 2, y: (lot.poly[0].y + lot.poly[lot.front - 1].y) / 2 };
+      const front = { x: -Math.sin(x.yaw), y: Math.cos(x.yaw) };
+      const side = { x: lot.poly[lot.front - 1].x - lot.poly[0].x, y: lot.poly[lot.front - 1].y - lot.poly[0].y };
+      expect(Math.abs(front.x * side.x + front.y * side.y) / Math.hypot(side.x, side.y), at).toBeLessThan(0.02);
+      expect((mid.x - x.x) * front.x + (mid.y - x.y) * front.y, at).toBeGreaterThan(0);
+      expect(x.setback, at).toBeGreaterThanOrEqual(0);
+      // On the ground: the floor is at the door's level, never hanging far above the slope or dug deep into it.
+      expect(x.floor, at).toBeGreaterThan(x.ground[0]);
+      expect(x.floor - x.ground[0], at).toBeLessThan(5);
+      expect(x.ground[1] - x.floor, at).toBeLessThan(3);
+      const r = Math.hypot(x.hx, x.hz);
+      for (let gy = Math.floor((x.y - r) / CELL); gy <= Math.floor((x.y + r) / CELL); gy++)
+        for (let gx = Math.floor((x.x - r) / CELL); gx <= Math.floor((x.x + r) / CELL); gx++) {
+          const k = gy * 1000 + gx;
+          (grid.get(k) ?? grid.set(k, []).get(k)!).push(i);
+        }
+    });
+    const seen = new Set<number>();
+    for (const cell of grid.values())
+      for (let i = 0; i < cell.length; i++)
+        for (let j = i + 1; j < cell.length; j++) {
+          const [p, q] = [b.list[cell[i]], b.list[cell[j]]];
+          const key = cell[i] * 100000 + cell[j];
+          if (seen.has(key) || Math.hypot(p.x - q.x, p.y - q.y) > Math.hypot(p.hx, p.hz) + Math.hypot(q.hx, q.hz)) continue;
+          seen.add(key);
+          // Party walls touch; nothing else comes closer than its eaves.
+          expect(overlap(corners(p, 0.3), corners(q, 0.3)), `${p.model} at ${p.x.toFixed(0)}, ${p.y.toFixed(0)} / ${q.model} at ${q.x.toFixed(0)}, ${q.y.toFixed(0)}`).toBe(false);
+        }
+  });
+
+  it.each(OPEN_SEEDS)('seed %i: streets are mixed: neighbours differ, houses keep back from the street and shops come up to it', (seed) => {
+    const o = open(seed);
+    const lots = city(seed).land.lots;
+    const main = new Map<number, Building>();
+    for (const x of o.buildings.list) if (x.main && !main.has(x.lot)) main.set(x.lot, x);
+    let [pairs, same] = [0, 0];
+    for (let i = 1; i < lots.length; i++) {
+      const [p, q] = [lots[i - 1], lots[i]];
+      if (p.edge !== q.edge || p.side !== q.side || Math.abs(p.s1 - q.s0) > 0.5) continue;
+      const [a, b] = [main.get(p.id), main.get(q.id)];
+      if (!a || !b) continue;
+      pairs++;
+      if (a.model === b.model) same++;
+    }
+    expect(pairs).toBeGreaterThan(3000);
+    expect(same / pairs).toBeLessThan(0.02);
+    // Many kinds of house and of everything else are in use.
+    const models = new Set(o.buildings.list.map((x) => x.model));
+    expect([...models].filter((m) => m.startsWith('house/')).length).toBeGreaterThan(50);
+    expect([...models].filter((m) => m.startsWith('shop/')).length).toBeGreaterThan(35);
+    expect([...models].filter((m) => m.startsWith('apartment/')).length).toBeGreaterThan(30);
+    expect([...models].filter((m) => m.startsWith('office/')).length).toBeGreaterThan(15);
+    const median = (v: number[]): number => [...v].sort((a, b) => a - b)[Math.floor(v.length / 2)];
+    const setbacks = (use: LandUse, type: string, party?: boolean): number[] => [...main.values()].filter((x) => x.use === use && lots[x.lot].site.type === type && (party === undefined || x.party === party)).map((x) => x.setback);
+    expect(median(setbacks('R1', 'suburb'))).toBeGreaterThan(5.5);
+    expect(median(setbacks('R1', 'residential'))).toBeGreaterThan(3.5);
+    const rows = [...main.values()].filter((x) => x.party);
+    expect(rows.length).toBeGreaterThan(300);
+    expect(median(rows.map((x) => x.setback))).toBeLessThan(1.5);
+    // Towers stand where the plan calls for them; houses stay low.
+    const tall = o.buildings.list.filter((x) => bbox(x.model).max[1] > 60);
+    expect(tall.length).toBeGreaterThan(5);
+    for (const x of tall) expect(['O1', 'O2', 'R3', 'C2'], `${x.model} at ${x.x.toFixed(0)}, ${x.y.toFixed(0)}`).toContain(x.use);
+    for (const x of o.buildings.list) if (lots[x.lot].use === 'R1') expect(bbox(x.model).max[1], x.model).toBeLessThan(19);
+  });
+
+  it.each(OPEN_SEEDS)('seed %i: public buildings are on public lots, one city hall, fire stations and schools apart', (seed) => {
+    const o = open(seed);
+    const lots = city(seed).land.lots;
+    const civic = o.buildings.list.filter((x) => x.civic);
+    expect(civic.length).toBeGreaterThan(15);
+    for (const x of civic) expect(lots[x.lot].use, x.model).toBe('CV');
+    expect(o.buildings.civic['city-hall'] ?? 0).toBeLessThanOrEqual(1);
+    expect(o.buildings.civic.fire ?? 0).toBeGreaterThan(0);
+    expect(o.buildings.civic.church ?? 0).toBeGreaterThan(2);
+    expect(Object.keys(o.buildings.civic).length).toBeGreaterThan(7);
+    for (const [kind, apart] of [['fire', 1200], ['school', 600], ['hospital', 1400]] as [string, number][]) {
+      const of = civic.filter((x) => x.civic === kind);
+      // Measured between the middles of the lots; the buildings stand a little off them.
+      for (let i = 0; i < of.length; i++) for (let j = i + 1; j < of.length; j++) expect(Math.hypot(of[i].x - of[j].x, of[i].y - of[j].y), kind).toBeGreaterThan(apart - 120);
+    }
+    for (const x of civic.filter((y) => y.civic === 'city-hall')) expect(['downtown', 'oldtown', 'midtown']).toContain(lots[x.lot].site.type);
   });
 });
