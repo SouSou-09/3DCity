@@ -53,6 +53,8 @@ export class CityView {
   furniture: StreetFurniture | null = null;
   vehicles: Vehicles | null = null;
   private farCar: { geo: THREE.BufferGeometry; mat: THREE.Material } | null = null;
+  /** Geometry of the small things by model: kept from one city to the next, as the models do not change. */
+  private nearGeos = new Map<string, { geo: THREE.BufferGeometry; mat: THREE.Material; layer: number; tinted: boolean }[]>();
   /** Tracks, level crossings and stations along the railway. */
   rail: RailModel | null = null;
   /** Parks, the waterfront and fences as placed. */
@@ -136,12 +138,12 @@ export class CityView {
       else tiles.set(k, [it]);
     }
     const out = new THREE.Group();
-    const geos = new Map<string, { geo: THREE.BufferGeometry; mat: THREE.Material; layer: number; tinted: boolean }[]>();
     for (const list of tiles.values()) {
       const lod = new THREE.LOD();
       const c = list.reduce((a, it) => [a[0] + it.x / list.length, a[1] + it.h / list.length, a[2] + it.y / list.length], [0, 0, 0]);
       lod.position.set(c[0], c[1], c[2]);
-      const near = this.buildFurniture(list, TILE, geos);
+      // The geometry of a model is made once and kept for the next city too, so no tile owns it.
+      const near = this.buildFurniture(list, TILE, this.nearGeos);
       near.position.set(-c[0], -c[1], -c[2]);
       near.traverse((o) => (o.userData.sharedGeometry = true));
       lod.addLevel(near, 0);
