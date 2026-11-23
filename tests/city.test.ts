@@ -2134,6 +2134,26 @@ describe('parks, waterfront and boundaries', () => {
       }
     }
     expect(across).toBe(0);
+    // A place at the kerb is set out for a car 2.1 m wide: a wider van or lorry stands further out into the street, not over the pavement.
+    const places = new Map<number, typeof f.kerb>();
+    for (const k of f.kerb) {
+      const key = Math.floor(k.y / 16) * 4096 + Math.floor(k.x / 16);
+      (places.get(key) ?? places.set(key, []).get(key)!).push(k);
+    }
+    let [wide, over] = [0, 0];
+    for (const a of v.items) {
+      if (a.where !== 'kerb') continue;
+      let [best, side] = [Infinity, 0];
+      for (let dj = -1; dj <= 1; dj++) for (let di = -1; di <= 1; di++) for (const k of places.get((Math.floor(a.y / 16) + dj) * 4096 + Math.floor(a.x / 16) + di) ?? []) {
+        const far = Math.hypot(a.x - k.x, a.y - k.y);
+        if (far < best) [best, side] = [far, -(a.x - k.x) * Math.sin(k.yaw) + (a.y - k.y) * Math.cos(k.yaw)];
+      }
+      const wid = CAR_SIZE.get(a.model)!.wid;
+      if (wid > 2.3) wide++;
+      if (side + wid / 2 - 1.05 > 0.1) over++;
+    }
+    expect(wide).toBeGreaterThan(20);
+    expect(over).toBe(0);
   });
 
   it.each(OPEN_SEEDS)('seed %i: each chain restaurant has its room inside it, and the shop fronts their boards, banners, tables and crates', (seed) => {

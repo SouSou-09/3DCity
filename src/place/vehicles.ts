@@ -117,7 +117,8 @@ export function placeVehicles(city: City, buildings: Buildings, furniture: Stree
     // Nobody parks to the centimetre.
     const [c, s] = [Math.cos(yaw), Math.sin(yaw)];
     const along = (hash(seed, 9004, ...key) - 0.5) * (where === 'kerb' ? 0.7 : 0.5);
-    const across = (hash(seed, 9005, ...key) - 0.5) * (where === 'kerb' ? 0.16 : 0.3);
+    // The place at the kerb is set out for a car 2.1 m wide against the kerb: what is wider stands further out, not over the pavement.
+    const across = (hash(seed, 9005, ...key) - 0.5) * (where === 'kerb' ? 0.16 : 0.3) - (where === 'kerb' ? Math.max(0, (CAR_SIZE.get(`vehicle/${id}`)!.wid - 2.1) / 2) : 0);
     const model = `vehicle/${id}`;
     const v: Vehicle = { model, kind: 'car', x: x + c * along - s * across, y: y + s * along + c * across, h, yaw: yaw + (hash(seed, 9006, ...key) - 0.5) * 0.05, ...(Math.abs(slope) > 0.004 ? { slopeX: slope } : {}), tint, where };
     if (where === 'kerb' && overMouth(v.x, v.y, v.yaw, CAR_SIZE.get(model)!.len)) return;
