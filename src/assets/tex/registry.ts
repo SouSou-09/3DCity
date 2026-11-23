@@ -8,7 +8,7 @@ const add = (s: Omit<TextureSpec, 'tile' | 'decal' | 'density'> & Partial<Pick<T
 
 // --- Asphalt: one lane wide (3.5 m) with wheel paths, and plain tiles for junctions. ---
 const AGES: [string, string, number][] = [
-  ['fresh', '新しい', 0.05],
+  ['fresh', '新しい', 0.12],
   ['used', '使用感あり', 0.35],
   ['worn', '古い', 0.65],
   ['bleached', '白っぽく退色', 0.95],

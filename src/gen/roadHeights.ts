@@ -234,7 +234,14 @@ export function roadLevels(graph: RoadGraph, t: Terrain, rail: Rail): RoadLevels
   }
 
   function edgeLevel(e: RoadEdge): EdgeLevel {
-    const pts = resample(e.points, STEP);
+    // An edge that bends tightly somewhere is walked in half steps, which keeps the bend a curve.
+    let tight = false;
+    for (let i = 1; i + 1 < e.points.length && !tight; i++) {
+      const [a, p, b] = [e.points[i - 1], e.points[i], e.points[i + 1]];
+      const turn = Math.abs(Math.atan2((p.x - a.x) * (b.y - p.y) - (p.y - a.y) * (b.x - p.x), (p.x - a.x) * (b.x - p.x) + (p.y - a.y) * (b.y - p.y)));
+      tight = turn * 45 > 0.5 * (Math.hypot(p.x - a.x, p.y - a.y) + Math.hypot(b.x - p.x, b.y - p.y));
+    }
+    const pts = resample(e.points, tight && e.cls !== 'highway' && e.cls !== 'ramp' ? STEP / 2 : STEP);
     const s = [0];
     for (let i = 1; i < pts.length; i++) s.push(s[i - 1] + Math.hypot(pts[i].x - pts[i - 1].x, pts[i].y - pts[i - 1].y));
     const L = s[s.length - 1] || 1;

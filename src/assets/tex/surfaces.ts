@@ -68,7 +68,7 @@ export interface AsphaltOpts {
 export function asphalt(tex: Tex, o: AsphaltOpts): TextureData {
   const rnd = new Rand(o.seed);
   const age = o.age;
-  const base = lerp(0.07, 0.3, age);
+  const base = lerp(0.2, 0.55, age);
   const L = new Layers(tex, [base * 1.03, base, base * 0.96], 0.93);
   const stones = tex.cells(0.013 * (o.coarse ?? 1), o.seed);
   const mottle = tex.noise(0.9, 0.9, o.seed + 1, 3);

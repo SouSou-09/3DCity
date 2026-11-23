@@ -49,6 +49,13 @@ export interface Buildings {
   yards: number[];
   /** Metres of fence and wall built round house and shop lots. */
   fence: number;
+  /** Each piece of that fence, end to end on the map: [ax, ay, bx, by]. */
+  runs: [number, number, number, number][];
+  /** Garden sheds and washing lines behind the houses. */
+  sheds: number;
+  lines: number;
+  /** Paved terraces behind the houses. */
+  patios: number;
   /** Marked parking spaces. */
   stalls: number;
   /** Buildings per use, and public buildings per kind. */
@@ -143,6 +150,9 @@ function edgeDist(poly: Vec2[], x: number, y: number): number {
 }
 
 const ZINC = 'structure/steel-galvanized';
+const SHED_WALLS = ['wall/siding-white-peeling', 'wall/siding-green', 'wall/siding-grey', 'wall/siding-red', 'wall/siding-cream', 'wall/metal-ribbed-galvanized', 'site/fence-board-weathered', 'site/fence-board-cedar'];
+const SHED_ROOFS = ['roof/corrugated-galvanized', 'roof/corrugated-rusty', 'roof/corrugated-galvanized'];
+const WASHING = ['trim/paint-white', 'trim/paint-white', 'trim/paint-white-old', 'trim/awning-navy', 'trim/awning-red', 'trim/awning-green', 'trim/paint-tan', 'trim/awning-burgundy'];
 type FenceFn = (b: MeshBuilder, f: Pose, len: number) => void;
 /** A fence as a run of its texture between plain posts: there are hundreds of kilometres of it, so each piece is a few triangles. */
 const light = (tex: string, post: string, y0 = 0): FenceFn => (b, f, len) => {
@@ -207,14 +217,18 @@ const FRONT_FENCE: Record<DistrictType, string[]> = {
 };
 /** How often a house plot has a fenced back yard and a fence along the street. */
 const FENCED: Record<DistrictType, [back: number, front: number]> = {
-  suburb: [0.6, 0.06], residential: [0.7, 0.28], oldtown: [0.6, 0.45], beach: [0.55, 0.35], hills: [0.4, 0.3], industrial: [0.5, 0.25], midtown: [0.6, 0.4], downtown: [0.5, 0.3],
+  suburb: [0.85, 0.06], residential: [0.9, 0.28], oldtown: [0.8, 0.45], beach: [0.75, 0.35], hills: [0.4, 0.3], industrial: [0.6, 0.25], midtown: [0.8, 0.4], downtown: [0.6, 0.3],
 };
 
 const clamp = (x: number, a: number, b: number): number => Math.max(a, Math.min(b, x));
+/** How far the coping of a terraced house stands out past its side wall, m. */
+const ROW_TRIM = 0.03;
 
 interface Opt {
   stretch?: number;
   party?: boolean;
+  /** How far the trim at each side may run into the neighbour's, where the side walls themselves touch. */
+  lap?: number;
   main?: boolean;
   civic?: string;
   maxRelief?: number;
@@ -229,7 +243,7 @@ export function placeBuildings(site: Site, shore: Waterfront): Buildings {
   const land = city.land;
   const seed = site.seed;
   const rnd = (...v: number[]): number => hash(seed, 7717, ...v);
-  const out: Buildings = { list: [], tiles: [], plots: [], owner: new Int32Array(0), vacant: [], yards: [], fence: 0, stalls: 0, count: {}, civic: {} };
+  const out: Buildings = { list: [], tiles: [], plots: [], owner: new Int32Array(0), vacant: [], yards: [], fence: 0, runs: [], sheds: 0, lines: 0, patios: 0, stalls: 0, count: {}, civic: {} };
   const sand = new Set(shore.sandLots);
   const builders = new Map<string, MeshBuilder>();
   const tile = (x: number, y: number): MeshBuilder => {
@@ -288,28 +302,73 @@ export function placeBuildings(site: Site, shore: Waterfront): Buildings {
     return i < 0 || j < 0 || i >= site.n || j >= site.n ? -1 : j * site.n + i;
   };
   const tn = city.terrain.n;
+  /** The lot the land map gives a point to, -1 where it gives it to none. */
+  const lotAt = (x: number, y: number): number => {
+    const [i, j] = [Math.floor(x / land.cell), Math.floor(y / land.cell)];
+    return i < 0 || j < 0 || i >= land.n || j >= land.n ? -1 : land.grid[j * land.n + i] - 1;
+  };
+  /**
+   * A house plot on a slope is a platform cut into the hill and filled out from it, a step up or down from the next:
+   * the vertices of the ground inside the plot come to the height of the ground where the house will front, as far
+   * back as a bank of 5 m will take it. The ground beside the road is the road's and stays.
+   */
+  const terrace = (f: Frame): void => {
+    const cell = city.terrain.cell;
+    const xs = f.poly.map((p) => p.x);
+    const ys = f.poly.map((p) => p.y);
+    const v = Math.min(f.d - 6, Math.max(0, f.v0) + 9);
+    const h = ground(f, 0, v);
+    const nodes: number[] = [];
+    let [lo, hi] = [Infinity, -Infinity];
+    for (let j = Math.max(1, Math.ceil(Math.min(...ys) / cell)); j <= Math.min(tn - 2, Math.floor(Math.max(...ys) / cell)); j++)
+      for (let i = Math.max(1, Math.ceil(Math.min(...xs) / cell)); i <= Math.min(tn - 2, Math.floor(Math.max(...xs) / cell)); i++) {
+        const [x, y] = [i * cell, j * cell];
+        const k = j * tn + i;
+        if (!inPoly(f.poly, x, y)) continue;
+        const id = lotAt(x, y);
+        const c = cellOf(x, y);
+        if (id >= 0 ? id !== f.lot.id : owner[c] !== f.lot.id + 1) continue;
+        [lo, hi] = [Math.min(lo, site.ground[k]), Math.max(hi, site.ground[k])];
+        if ((x - f.ox) * f.nx + (y - f.oy) * f.ny > v + 22 || Math.abs(site.ground[k] - h) > 5) continue;
+        let clear = true;
+        for (let dy = -cell; dy <= cell && clear; dy += SITE_CELL)
+          for (let dx = -cell; dx <= cell; dx += SITE_CELL) {
+            const q = cellOf(x + dx, y + dy);
+            const code = q < 0 ? ROAD : site.grid[q];
+            if (code !== FREE && code !== LOT) {
+              clear = false;
+              break;
+            }
+          }
+        if (clear) nodes.push(k);
+      }
+    if (hi - lo < 1.5) return;
+    for (const k of nodes) site.ground[k] = h;
+  };
   const sandy = (x: number, y: number): boolean => shore.sand[clamp(Math.round(y / city.terrain.cell), 0, tn - 1) * tn + clamp(Math.round(x / city.terrain.cell), 0, tn - 1)] > 0.15;
   const extend = (f: Frame): void => {
     const rear = (c: number, k: number): Vec2 => at(f, f.ua + (f.ub - f.ua) * c, f.va + (f.vb - f.va) * c + k);
-    let [reach, beyond] = [0, FREE];
-    march: for (let k = 1; k <= 25; k += 2) {
-      for (const c of [0.1, 0.5, 0.9]) {
+    // A back garden does not run on for ever: what lies deeper in the block than this is left as the wood or the common behind the fences.
+    const most = f.lot.use === 'R1' || f.lot.use === 'R2' ? (f.type === 'suburb' || f.type === 'hills' ? 16 : 12) : 25;
+    /** How far the ground behind one point of the rear line is free, and what ends it. */
+    const march = (c: number): [number, number] => {
+      const base = rear(c, 0);
+      for (let k = 1; k <= most; k += 2) {
         const p = rear(c, k);
         const cell = cellOf(p.x, p.y);
         const code = cell < 0 ? ROAD : owner[cell] ? USED : site.at(p.x, p.y);
-        const base = rear(c, 0);
-        if (code !== FREE || waterDistAt(city.terrain, p.x, p.y) < 8 || sandy(p.x, p.y) || Math.abs(site.heightAt(p.x, p.y) - site.heightAt(base.x, base.y)) > 0.6 + 0.13 * k) {
-          beyond = code === FREE ? WATER : code;
-          break march;
-        }
+        if (code !== FREE || waterDistAt(city.terrain, p.x, p.y) < 8 || sandy(p.x, p.y) || Math.abs(site.heightAt(p.x, p.y) - site.heightAt(base.x, base.y)) > 0.6 + 0.13 * k) return [k - 1, code === FREE ? WATER : code];
       }
-      reach = k + 1;
-    }
+      return [most + 1, FREE];
+    };
     // Half way to a lot that backs on to the same ground, all the way to ground already taken by one, and short of anything else.
-    const ext = beyond === LOT ? reach / 2 : beyond === FREE || beyond === USED ? reach : reach - 2;
-    if (ext < 2.5) return;
+    const reach = ([k, beyond]: [number, number]): number => (beyond === LOT ? k / 2 : beyond === FREE || beyond === USED ? k : k - 2);
+    // The new rear line stays parallel to the old one: a garden that ran out to a point would look like a mistake.
+    const ea = Math.min(reach(march(0.1)), reach(march(0.5)), reach(march(0.9)));
+    const eb = ea;
+    if (ea < 2.5) return;
     const [a, b] = [rear(0, 0), rear(1, 0)];
-    const [a2, b2] = [rear(0, ext), rear(1, ext)];
+    const [a2, b2] = [rear(0, ea), rear(1, eb)];
     const quad = [a, b, b2, a2];
     const [x0, x1, y0, y1] = [Math.min(a.x, b.x, a2.x, b2.x), Math.max(a.x, b.x, a2.x, b2.x), Math.min(a.y, b.y, a2.y, b2.y), Math.max(a.y, b.y, a2.y, b2.y)];
     for (let y = Math.floor(y0 / SITE_CELL); y <= Math.floor(y1 / SITE_CELL); y++)
@@ -320,8 +379,8 @@ export function placeBuildings(site: Site, shore: Waterfront): Buildings {
       }
     const nf = f.lot.front;
     f.poly = [...f.lot.poly.slice(0, nf + 1), b2, a2, ...f.lot.poly.slice(nf + 1)];
-    f.va += ext;
-    f.vb += ext;
+    f.va += ea;
+    f.vb += eb;
     f.d = Math.min(f.va, f.vb);
   };
   const at = (f: Frame, u: number, v: number): Vec2 => ({ x: f.ox + f.tx * u + f.nx * v, y: f.oy + f.ty * u + f.ny * v });
@@ -390,7 +449,7 @@ export function placeBuildings(site: Site, shore: Waterfront): Buildings {
       }
     // Clear of every building already standing: walls that share a line may touch.
     const c = at(f, uc, vc);
-    const mine = footprint(c.x, c.y, f.yaw, hx - (o.party ? 0.15 : 0), hz);
+    const mine = footprint(c.x, c.y, f.yaw, hx - (o.party ? 0.15 : (o.lap ?? 0)), hz);
     const reach = Math.hypot(hx, hz);
     for (let gy = Math.floor((c.y - reach) / HASH); gy <= Math.floor((c.y + reach) / HASH); gy++)
       for (let gx = Math.floor((c.x - reach) / HASH); gx <= Math.floor((c.x + reach) / HASH); gx++) for (const other of placed.get(gy * 4096 + gx) ?? []) if (overlaps(mine, other)) return null;
@@ -408,9 +467,40 @@ export function placeBuildings(site: Site, shore: Waterfront): Buildings {
     const door = ground(f, o.doorU ?? uc, vf);
     const floor = (OPEN.test(model) ? g1 : Math.max(door, gf - 0.35, Math.min(g1 - 0.9, door + 1.7))) + 0.04;
     if (o.level && floor - ground(f, o.level[0], o.level[1]) > 0.4) return null;
+    // Where more of a slope is allowed under a house, it is to stand out from the hill on a wall, not to be dug in to its eaves.
+    if ((o.maxRelief ?? 0) > 3.5 && g1 - floor > 1.5) return null;
     for (let gy = Math.floor((c.y - reach) / HASH); gy <= Math.floor((c.y + reach) / HASH); gy++)
       for (let gx = Math.floor((c.x - reach) / HASH); gx <= Math.floor((c.x + reach) / HASH); gx++) (placed.get(gy * 4096 + gx) ?? placed.set(gy * 4096 + gx, []).get(gy * 4096 + gx)!).push(mine);
     site.put(model, 'building', c.x, c.y, f.yaw, { h: floor, ...(k !== 1 ? { stretch: k } : {}) });
+    // What a flat roof carries: air handlers and vents, more of them on a store or a works than on flats, and a water tank on the older blocks.
+    const top = deck(model);
+    if (top) {
+      const [mx, mz] = [(min[0] + max[0]) / 2, (min[2] + max[2]) / 2];
+      const share = /^(C|I)/.test(f.lot.use) ? 0.16 : 0.09;
+      const want = Math.max(1, Math.min(14, Math.round(top.spots.length * share)));
+      const put: Rect[] = [];
+      for (let i = 0; i < want; i++) {
+        const [sx, sz] = top.spots[Math.floor(rnd(f.lot.id, 700, i, uc) * top.spots.length)];
+        // The bigger units are wider than a spot: each needs roof under the whole of it, clear of the units already standing.
+        const room = (id: string, turn: number): Rect | null => {
+          const { min: lo, max: hi } = bbox(id);
+          const [px, pz] = [Math.max(-lo[0], hi[0]), Math.max(-lo[2], hi[2])];
+          const [rx, rz] = turn % 2 ? [pz, px] : [px, pz];
+          const r: Rect = [sx * k - rx, sx * k + rx, sz - rz, sz + rz];
+          return top.fits(sx, sz, rx / k, rz) && !put.some((o) => o[0] < r[1] + 0.4 && o[1] > r[0] - 0.4 && o[2] < r[3] + 0.4 && o[3] > r[2] - 0.4) ? r : null;
+        };
+        const tank = i === 0 && max[1] > 11 && /^R|^O/.test(f.lot.use) && (f.type === 'oldtown' || f.type === 'midtown' || f.type === 'downtown') && rnd(f.lot.id, 701, uc) < 0.5;
+        let part = tank ? `buildpart/water-tank-${1 + Math.floor(rnd(f.lot.id, 702) * 3)}` : rnd(f.lot.id, 703, i) < 0.62 ? ROOF_AC[Math.floor(rnd(f.lot.id, 704, i) * ROOF_AC.length)] : ROOF_SMALL[Math.floor(rnd(f.lot.id, 705, i) * ROOF_SMALL.length)];
+        let turn = Math.floor(rnd(f.lot.id, 706, i) * 4);
+        // Turned the other way if that is how it fits, and a small unit where a tank or a big one has no room.
+        let r = room(part, turn) ?? room(part, ++turn);
+        if (!r) r = room((part = ROOF_AC[0]), turn);
+        if (!r) continue;
+        put.push(r);
+        const p = Site.local(c.x, c.y, f.yaw, (sx - mx) * k, sz - mz);
+        site.set(part, 'roof', p.x, p.y, floor + top.y, f.yaw + turn * (Math.PI / 2));
+      }
+    }
     const [a, b] = [at(f, uc - Math.max(0.3, hx - 0.5), vc), at(f, uc + Math.max(0.3, hx - 0.5), vc)];
     site.stampBand(a.x, a.y, b.x, b.y, -Math.max(0.3, hz - 0.5), Math.max(0.3, hz - 0.5), USED);
     const rect: Rect = [uc - hx, uc + hx, vf, vf + 2 * hz];
@@ -522,6 +612,7 @@ export function placeBuildings(site: Site, shore: Waterfront): Buildings {
       const [h0, h1] = [site.heightAt(a.x, a.y), site.heightAt(a.x + dx * l, a.y + dy * l)];
       FENCES[style](tile(a.x, a.y), { o: [a.x, h0 - 0.03, a.y], x: [dx, (h1 - h0) / l, dy], y: [0, 1, 0], z: [-dy, 0, dx] }, l);
       out.fence += l;
+      out.runs.push([a.x, a.y, a.x + dx * l, a.y + dy * l]);
       for (let s = 0; s <= l; s += 1.2) {
         const m = { x: a.x + dx * s, y: a.y + dy * s };
         const key = Math.floor(m.y / FC) * 4096 + Math.floor(m.x / FC);
@@ -578,7 +669,7 @@ export function placeBuildings(site: Site, shore: Waterfront): Buildings {
     // A trunk stands a little off the middle of its crown: not at the very edge of what a junction takes.
     if ([[1.3, 0], [-1.3, 0], [0, 1.3], [0, -1.3]].some(([dx, dy]) => site.at(p.x + dx, p.y + dy) === ROAD)) return false;
     const list = TREES[f.type];
-    site.put(list[Math.floor(rnd(f.lot.id, salt, 1) * list.length)], 'tree', p.x, p.y, rnd(f.lot.id, salt, 2) * 6.28, { scale: 0.7 + rnd(f.lot.id, salt, 3) * 0.45 });
+    site.put(list[Math.floor(rnd(f.lot.id, salt, 1) * list.length)], 'tree', p.x, p.y, rnd(f.lot.id, salt, 2) * 6.28, { scale: 0.8 + rnd(f.lot.id, salt, 3) ** 2 * 0.7 });
     f.taken.push([u - 0.5, u + 0.5, v - 0.5, v + 0.5]);
     return true;
   };
@@ -698,6 +789,66 @@ export function placeBuildings(site: Site, shore: Waterfront): Buildings {
     }
   };
 
+  /** The flat roof of a model, if it has one: how high it lies, and where on it (model x, z) there is room to stand something. */
+interface Deck {
+  y: number;
+  spots: [number, number][];
+  /** Is there roof under the whole of a unit of these half sizes standing at (x, z), clear of what stands higher? */
+  fits: (x: number, z: number, hx: number, hz: number) => boolean;
+}
+const decks = new Map<string, Deck | null>();
+function deck(model: string): Deck | null {
+  const known = decks.get(model);
+  if (known !== undefined) return known;
+  const { parts, min, max } = MODELS.find((m) => m.id === model)!.build();
+  // Level faces looking up, by height: the roof is the widest of those in the upper part of the building.
+  const levels = new Map<number, { area: number; tris: number[][] }>();
+  const above: number[][] = [];
+  for (const p of parts) {
+    const P = p.positions;
+    for (let i = 0; i < p.indices.length; i += 3) {
+      const [a, b, c] = [p.indices[i] * 3, p.indices[i + 1] * 3, p.indices[i + 2] * 3];
+      const t = [P[a], P[a + 2], P[b], P[b + 2], P[c], P[c + 2]];
+      const [lo, hi] = [Math.min(P[a + 1], P[b + 1], P[c + 1]), Math.max(P[a + 1], P[b + 1], P[c + 1])];
+      if (hi > max[1] * 0.5) above.push([...t, hi]);
+      const area = ((t[2] - t[0]) * (t[5] - t[1]) - (t[4] - t[0]) * (t[3] - t[1])) / 2;
+      if (hi - lo > 0.02 || lo < Math.max(3, max[1] * 0.5) || Math.abs(area) < 0.5 || p.normals[a + 1] < 0.9) continue;
+      const l = levels.get(Math.round(lo * 5)) ?? levels.set(Math.round(lo * 5), { area: 0, tris: [] }).get(Math.round(lo * 5))!;
+      l.area += Math.abs(area);
+      l.tris.push([...t, lo]);
+    }
+  }
+  const best = [...levels.values()].sort((a, b) => b.area - a.area)[0];
+  let out: Deck | null = null;
+  if (best && best.area > Math.max(90, 0.45 * (max[0] - min[0]) * (max[2] - min[2]))) {
+    const y = best.tris[0][6];
+    const inTri = (t: number[], x: number, z: number): boolean => {
+      const s = (i: number, j: number): number => (t[j] - t[i]) * (z - t[i + 1]) - (t[j + 1] - t[i + 1]) * (x - t[i]);
+      const [d0, d1, d2] = [s(0, 2), s(2, 4), s(4, 0)];
+      return (d0 >= 0 && d1 >= 0 && d2 >= 0) || (d0 <= 0 && d1 <= 0 && d2 <= 0);
+    };
+    const on = (x: number, z: number): boolean => best.tris.some((t) => inTri(t, x, z));
+    // Whatever of the model stands higher than the roof (a parapet, a stair head, a sign) is not to be stood in.
+    const high = above.filter((t) => t[6] > y + 0.25);
+    const clear = (x: number, z: number): boolean => !high.some((t) => Math.min(t[0], t[2], t[4]) < x + 1.6 && Math.max(t[0], t[2], t[4]) > x - 1.6 && Math.min(t[1], t[3], t[5]) < z + 1.6 && Math.max(t[1], t[3], t[5]) > z - 1.6);
+    const spots: [number, number][] = [];
+    for (let x = min[0] + 2.4; x <= max[0] - 2.4; x += 3.2)
+      for (let z = min[2] + 2.4; z <= max[2] - 2.4; z += 3.2) if ([[0, 0], [-1.4, -1.4], [1.4, -1.4], [-1.4, 1.4], [1.4, 1.4]].every(([dx, dz]) => on(x + dx, z + dz)) && clear(x, z)) spots.push([x, z]);
+    const fits = (x: number, z: number, hx: number, hz: number): boolean => {
+      const [nx, nz] = [Math.max(1, Math.ceil(hx)), Math.max(1, Math.ceil(hz))];
+      for (let i = -nx; i <= nx; i++) for (let j = -nz; j <= nz; j++) if (!on(x + (i / nx) * hx, z + (j / nz) * hz)) return false;
+      return !high.some((t) => Math.min(t[0], t[2], t[4]) < x + hx + 0.2 && Math.max(t[0], t[2], t[4]) > x - hx - 0.2 && Math.min(t[1], t[3], t[5]) < z + hz + 0.2 && Math.max(t[1], t[3], t[5]) > z - hz - 0.2);
+    };
+    if (spots.length) out = { y, spots, fits };
+  }
+  decks.set(model, out);
+  return out;
+}
+const ROOF_AC = ['buildpart/ac-1', 'buildpart/ac-2', 'buildpart/ac-1-beige', 'buildpart/ac-2-beige', 'buildpart/ac-3', 'buildpart/ac-3-beige'];
+const ROOF_SMALL = ['buildpart/vent-1', 'buildpart/vent-2', 'buildpart/vent-3', 'buildpart/skylight-1', 'buildpart/skylight-2', 'buildpart/duct-1'];
+
+const BACK_TABLES = ['park/picnic-table-wood', 'park/picnic-table-red', 'park/picnic-table-metal', 'furniture/bench-picnic-weathered'];
+  const BACK_PLAY = ['park/swing-2', 'park/swing-toddler', 'park/sandbox', 'park/swing-old', 'park/pergola'];
   const POINTS = ['furniture/bin-point-block', 'furniture/bin-point-block-empty', 'furniture/bin-point-cage', 'furniture/bin-point-cage-carts'];
   const kerb = new Map<string, number>();
   const houseLot = (f: Frame): boolean => {
@@ -722,7 +873,7 @@ export function placeBuildings(site: Site, shore: Waterfront): Buildings {
         const t = !plan?.garage && slack > 2.4 && slack < 7 ? (rnd(lot.id, 25) < 0.5 ? 0.04 : 0.96) : 0.3 + 0.4 * rnd(lot.id, 26);
         uc = lo + s.w / 2 + slack * t;
         const door = plan ? modelUV(f, s.id, uc, vf, plan.door[0], plan.door[1])[0] : uc;
-        made = place(f, s.id, uc, vf, { maxRelief: 3.2, doorU: plan?.garage ? modelUV(f, s.id, uc, vf, plan.garage.x, plan.garage.z)[0] : door, ...(plan?.garage ? { level: modelUV(f, s.id, uc, vf, plan.garage.x, plan.garage.z + 1.5) } : {}) });
+        made = place(f, s.id, uc, vf, { maxRelief: f.type === 'hills' ? 4.6 : 3.2, doorU: plan?.garage ? modelUV(f, s.id, uc, vf, plan.garage.x, plan.garage.z)[0] : door, ...(plan?.garage ? { level: modelUV(f, s.id, uc, vf, plan.garage.x, plan.garage.z + 1.5) } : {}) });
         if (made || ++tries >= 6) break;
       }
       if (made) break;
@@ -781,7 +932,65 @@ export function placeBuildings(site: Site, shore: Waterfront): Buildings {
     const pt = { suburb: 0.55, residential: 0.4, oldtown: 0.15, beach: 0.3, hills: 0.6, industrial: 0.1, midtown: 0.15, downtown: 0.1 }[f.type];
     if (rnd(lot.id, 45) < pt && wallV > 4.5) for (let i = 0; i < 3; i++) if (tree(f, lo + 2 + rnd(lot.id, 46, i) * (hi - lo - 4), 1.8 + rnd(lot.id, 47, i) * (wallV - 4), 48 + i, 2.2)) break;
     const yard = f.d - house[3];
-    for (let i = 0; i < 2; i++) if (rnd(lot.id, 50, i) < (i ? 0.25 : 0.55) * lush && yard > 5) tree(f, lo + 2 + rnd(lot.id, 51, i) * (hi - lo - 4), house[3] + 2.6 + rnd(lot.id, 52, i) * (yard - 4.4), 53 + i, 2.4);
+    // What a back garden is kept for: a terrace behind the house with a table on it, somewhere to grill, a swing or a sand pit for the children.
+    if (yard > 6.5 && f.type !== 'industrial') {
+      const w = Math.min(house[1] - house[0] - 1, 3.2 + 2 * rnd(lot.id, 301));
+      const pu = (house[0] + house[1]) / 2 + (rnd(lot.id, 302) - 0.5) * (house[1] - house[0] - w);
+      const patio: Rect = [pu - w / 2, pu + w / 2, house[3], house[3] + 2.8];
+      const [plo, phi] = span(f, patio[2], patio[3], 0.5);
+      if (rnd(lot.id, 300) < 0.55 && w > 2.6 && patio[0] > plo && patio[1] < phi && f.taken.every(([u0, u1, v0, v1]) => patio[1] <= u0 || patio[0] >= u1 || patio[3] <= v0 || patio[2] >= v1 - 0.01) && Math.abs(ground(f, pu, house[3] + 2.8) - ground(f, pu, house[3])) < 0.5) {
+        pave(f, WALKS[Math.floor(rnd(lot.id, 303) * WALKS.length)], patio, 0.06, 3);
+        f.taken.push(patio);
+        out.patios++;
+        if (rnd(lot.id, 304) < 0.7) stand(f, BACK_TABLES[Math.floor(rnd(lot.id, 305) * BACK_TABLES.length)], 'yard', pu + (rnd(lot.id, 306) - 0.5) * (w - 2.2), house[3] + 1.5);
+        if (rnd(lot.id, 307) < 0.4) stand(f, 'park/grill', 'yard', pu + (rnd(lot.id, 308) < 0.5 ? -1 : 1) * (w / 2 - 0.5), house[3] + 2.2);
+      }
+      const [qu, qv] = [lo + 3.2 + rnd(lot.id, 310) * Math.max(0, hi - lo - 6.4), house[3] + 5 + rnd(lot.id, 311) * Math.max(0, yard - 8.5)];
+      if (yard > 9.5 && hi - lo > 8 && rnd(lot.id, 309) < (f.type === 'suburb' ? 0.3 : 0.2) && free(f, qu, qv, 2.8) && Math.abs(ground(f, qu - 2, qv) - ground(f, qu + 2, qv)) < 0.4) stand(f, BACK_PLAY[Math.floor(rnd(lot.id, 312) * BACK_PLAY.length)], 'yard', qu, qv);
+    }
+    // A shed in a back corner, and washing on a line.
+    if (yard > 7 && hi - lo > 9 && rnd(lot.id, 320) < { suburb: 0.45, residential: 0.4, oldtown: 0.25, beach: 0.25, hills: 0.3, industrial: 0.3, midtown: 0.2, downtown: 0.1 }[f.type]) {
+      const [hw, hd] = [1.1 + 0.5 * rnd(lot.id, 321), 0.85 + 0.35 * rnd(lot.id, 322)];
+      const s = rnd(lot.id, 323) < 0.5 ? -1 : 1;
+      const [u, v] = [s < 0 ? lo + hw + 0.9 : hi - hw - 0.9, f.d - hd - 1];
+      const p = at(f, u, v);
+      if (free(f, u, v, hw + 0.3) && site.at(p.x, p.y) !== ROAD && Math.abs(ground(f, u - hw, v) - ground(f, u + hw, v)) < 0.25) {
+        const b = tile(p.x, p.y);
+        const y = Math.max(ground(f, u - hw, v), ground(f, u + hw, v));
+        const pose = (tilt: number): Pose => ({ o: [p.x, y, p.y], x: [f.tx, 0, f.ty], y: [0, 1, 0], z: [f.nx, tilt, f.ny] });
+        box(b, SHED_WALLS[Math.floor(rnd(lot.id, 324) * SHED_WALLS.length)], pose(0), [0, 1, 0], [hw, 1.05, hd], 'y');
+        box(b, SHED_ROOFS[Math.floor(rnd(lot.id, 325) * SHED_ROOFS.length)], pose(-0.16), [0, 2.1, 0], [hw + 0.18, 0.04, hd + 0.22]);
+        box(b, 'trim/paint-white-old', pose(0), [(rnd(lot.id, 326) - 0.5) * hw, 0.92, -hd - 0.02], [0.42, 0.92, 0.02], 'y');
+        f.taken.push([u - hw, u + hw, v - hd, v + hd]);
+        f.solid.push([u - hw, u + hw, v - hd, v + hd]);
+        out.sheds++;
+      }
+    }
+    if (yard > 8 && hi - lo > 9 && f.type !== 'hills' && f.type !== 'downtown' && rnd(lot.id, 330) < (f.type === 'suburb' ? 0.12 : 0.24)) {
+      const [u, v] = [lo + 3.6 + rnd(lot.id, 331) * Math.max(0, hi - lo - 7.2), house[3] + 4.4 + rnd(lot.id, 332) * Math.max(0, yard - 7.4)];
+      const p = at(f, u, v);
+      if (free(f, u, v, 2.6) && site.at(p.x, p.y) !== ROAD && Math.abs(ground(f, u - 2.2, v) - ground(f, u + 2.2, v)) < 0.2) {
+        const b = tile(p.x, p.y);
+        const pose: Pose = { o: [p.x, ground(f, u, v), p.y], x: [f.tx, 0, f.ty], y: [0, 1, 0], z: [f.nx, 0, f.ny] };
+        for (const e of [-2.2, 2.2]) {
+          box(b, ZINC, pose, [e, 0.9, 0], [0.03, 0.9, 0.03], 'y');
+          box(b, ZINC, pose, [e, 1.8, 0], [0.025, 0.025, 0.45]);
+        }
+        for (const z of [-0.4, 0.4]) {
+          box(b, ZINC, pose, [0, 1.8, z], [2.2, 0.006, 0.006], 'xX');
+          let x = -1.9 + 0.5 * rnd(lot.id, 333, z);
+          for (let i = 0; i < 4 && x < 1.7; i++) {
+            const [w, h] = [0.22 + 0.3 * rnd(lot.id, 334, i, z), 0.28 + 0.3 * rnd(lot.id, 335, i, z)];
+            if (rnd(lot.id, 336, i, z) < 0.75) box(b, WASHING[Math.floor(rnd(lot.id, 337, i, z) * WASHING.length)], pose, [x + w, 1.79 - h, z], [w, h, 0.008]);
+            x += 2 * w + 0.12 + 0.3 * rnd(lot.id, 338, i, z);
+          }
+        }
+        f.taken.push([u - 2.4, u + 2.4, v - 0.6, v + 0.6]);
+        f.solid.push([u - 2.4, u + 2.4, v - 0.6, v + 0.6]);
+        out.lines++;
+      }
+    }
+    for (let i = 0; i < 3; i++) if (rnd(lot.id, 50, i) < [0.7, 0.4, 0.25][i] * lush && yard > 5) tree(f, lo + 2 + rnd(lot.id, 51, i) * (hi - lo - 4), house[3] + 2.6 + rnd(lot.id, 52, i) * (yard - 4.4), 53 + i, 2.4);
     if (!old && rnd(lot.id, 55) < (f.type === 'suburb' || f.type === 'hills' ? 0.85 : 0.4)) {
       const u = drive ? (drive[0] - 0.6 > lo + 0.5 ? drive[0] - 0.6 : drive[1] + 0.6) : du + 1.2;
       small(f, ['furniture/mail-curb-black', 'furniture/mail-curb-white', 'furniture/mail-curb-galvanized'][Math.floor(rnd(lot.id, 56) * 3)], 'yard', u, Math.max(0, f.v0) + 0.5, Math.PI, 0.3);
@@ -870,10 +1079,30 @@ export function placeBuildings(site: Site, shore: Waterfront): Buildings {
   };
 
   // --- Flats ---
+  // Where the plots around are nearly all houses, a block of flats keeps to their height: four storeys alone among bungalows are out of place.
+  const mid = (lot: Lot): Vec2 => ({ x: lot.poly.reduce((a, p) => a + p.x, 0) / lot.poly.length, y: lot.poly.reduce((a, p) => a + p.y, 0) / lot.poly.length });
+  const HOOD = 90;
+  const hood = new Map<number, [x: number, y: number, house: boolean][]>();
+  for (const lot of land.lots) {
+    if (lot.use === 'OS' || lot.use === 'PK') continue;
+    const c = mid(lot);
+    const key = Math.floor(c.x / HOOD) * 4096 + Math.floor(c.y / HOOD);
+    (hood.get(key) ?? hood.set(key, []).get(key)!).push([c.x, c.y, lot.use === 'R1']);
+  }
+  const amongHouses = (lot: Lot): boolean => {
+    const c = mid(lot);
+    let [all, houses] = [0, 0];
+    for (let i = -1; i <= 1; i++)
+      for (let j = -1; j <= 1; j++)
+        for (const [x, y, house] of hood.get((Math.floor(c.x / HOOD) + i) * 4096 + Math.floor(c.y / HOOD) + j) ?? [])
+          if (Math.hypot(x - c.x, y - c.y) < HOOD) [all, houses] = [all + 1, houses + (house ? 1 : 0)];
+    return houses >= 0.6 * all;
+  };
   const flats = (f: Frame, use: LandUse = f.lot.use): boolean => {
     const lot = f.lot;
     const high = use === 'R3';
-    const floors = high ? Math.max(6, lot.floors) : Math.min(6, Math.max(2, lot.floors));
+    const low = !high && f.type !== 'oldtown' && f.type !== 'midtown' && f.type !== 'downtown' && amongHouses(lot);
+    const floors = high ? Math.max(6, lot.floors) : low ? 2 : Math.min(6, Math.max(2, lot.floors));
     const target = floors * 3.05 + 2;
     const t = f.type;
     const soft = t === 'suburb' || t === 'residential' || t === 'beach';
@@ -886,10 +1115,10 @@ export function placeBuildings(site: Site, shore: Waterfront): Buildings {
           ...family('apartment/dingbat').map((s) => [s, (soft ? 2 : 0.3) * tall(s, target)] as [Shape, number]),
           ...family('apartment/motel').map((s) => [s, (soft ? 1 : 0.2) * tall(s, target)] as [Shape, number]),
           ...family('apartment/rowhouse').map((s) => [s, (urban ? 2 : t === 'residential' ? 0.8 : 0.2) * tall(s, target)] as [Shape, number]),
-          ...family('house/duplex').map((s) => [s, (urban ? 0.2 : 1) * tall(s, target)] as [Shape, number]),
-        ];
+          ...family('house/duplex').map((s) => [s, (urban ? 0.2 : low ? 2.5 : 1) * tall(s, target)] as [Shape, number]),
+        ].filter(([s]) => !low || s.h < 9.5) as [Shape, number][];
     const front = Math.max(0, f.v0) + (high ? 4 + 4 * rnd(lot.edge, lot.side, 81) : 3 + 2 * rnd(lot.edge, lot.side, 81));
-    const between = high ? 10 : 3.5;
+    const apart = high ? 10 : 3.5;
     let group: Rect | null = null;
     const gaps: [number, number][] = [];
     let tries = 0;
@@ -899,20 +1128,25 @@ export function placeBuildings(site: Site, shore: Waterfront): Buildings {
         if (vf + s.d > f.d - 1.2) continue;
         const [lo, hi] = span(f, vf, vf + s.d, side);
         if (hi - lo < s.w) continue;
-        const n = clamp(Math.floor((hi - lo + between) / (s.w + between)), 1, 3);
+        // A terrace stands wall to wall, and not as one thin house alone on a lawn.
+        const row = !high && s.id.startsWith('apartment/rowhouse');
+        // The coping of its parapet stands out past the side wall, and it is the walls that touch.
+        const between = row ? -2 * ROW_TRIM : apart;
+        const n = clamp(Math.floor((hi - lo + between) / (s.w + between)), 1, row ? 6 : 3);
+        if (row && n < 2 && hi - lo > s.w + 5) continue;
         const width = n * s.w + (n - 1) * between;
         const slack = hi - lo - width;
         // Room for a drive down one side, or the block stands in the middle.
         const pass = slack + side >= 3.4 && f.d - (vf + s.d) > 9;
         const start = pass ? (rnd(lot.id, 83) < 0.5 ? lo : hi - width) : lo + slack / 2;
-        const same = shapes.get(s.id.replace(/-\d+$/, ''))!.filter((x) => x.w <= s.w + 0.01 && x.d <= s.d + 0.01);
+        const same = shapes.get(s.id.replace(/-\d+$/, ''))!.filter((x) => x.w <= s.w + 0.01 && x.d <= s.d + 0.01 && (!row || x.w > s.w - 0.01));
         let first: Building | null = null;
         for (let i = 0; i < n; i++) {
           const m = i === 0 ? s : same[Math.floor(rnd(lot.id, 84, i) * same.length)];
           const uc = start + i * (s.w + between) + s.w / 2;
-          const b = place(f, m.id, uc, vf, { main: i === 0 });
+          const b = place(f, m.id, uc, vf, { main: i === 0, ...(row ? { lap: ROW_TRIM + 0.005 } : {}) });
           if (!b) {
-            if (i === 0) break;
+            if (i === 0 || row) break;
             continue;
           }
           first ??= b;
@@ -1404,6 +1638,7 @@ export function placeBuildings(site: Site, shore: Waterfront): Buildings {
   const frames: (Frame | null)[] = land.lots.map((lot, index) => (sand.has(index) ? null : frameOf(lot)));
   // Works, car parks and open ground keep to their own fences.
   for (const f of frames) if (f && f.lot.use !== 'I1' && f.lot.use !== 'I2' && f.lot.use !== 'PK' && f.lot.use !== 'OS') extend(f);
+  for (const f of frames) if (f && (f.lot.use === 'R1' || f.lot.use === 'R2')) terrace(f);
   out.plots = frames.map((f) => f?.poly ?? null);
   out.owner = owner;
   const done = new Set<number>();

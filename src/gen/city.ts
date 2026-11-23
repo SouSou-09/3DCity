@@ -4,7 +4,7 @@ import { Districts, generateDistricts } from './districts';
 import { Highways } from './highways';
 import { LandUsePlan, planLandUse } from './landuse';
 import { Rail, RailCrossing, RailIndex, railCrossings } from './rail';
-import { RoadGraph, buildRoadGraph } from './roadGraph';
+import { RoadGraph, buildRoadGraph, roundBends } from './roadGraph';
 import { RoadProfile, roadProfiles } from './roadSections';
 import { generateRoads } from './roads';
 import { Station, placeStations } from './stations';
@@ -70,6 +70,7 @@ export function generateCity(config: CityConfig = DEFAULT_CONFIG): City {
   const railIndex = new RailIndex(roads.rail);
   const graph = buildRoadGraph(roads.lines, terrain, districts, rng.fork('graph'), railIndex);
   const infill = addInfillRoads(graph, terrain, districts, roads.rail, rng.fork('infill'));
+  roundBends(graph);
   const crossings = railCrossings(railIndex, graph);
   const stations = placeStations(roads.rail, terrain, districts, rng.fork('stations'), graph, crossings);
   const land = planLandUse(graph, terrain, districts, roads.rail, stations, rng.fork('land'));

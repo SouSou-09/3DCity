@@ -55,6 +55,8 @@ export interface BlockOpts {
   roof?: string;
   parapet?: number;
   cornice?: boolean;
+  /** One of a terrace: the trim stops at the side walls, which stand against the neighbours'. */
+  terrace?: boolean;
   fire?: boolean;
   /** Railing texture: gives every upper window a balcony. */
   balcony?: string;
@@ -130,11 +132,12 @@ export function block(b: MeshBuilder, o: BlockOpts): void {
   wall(b, o.wall, { ...S[0].f, o: [S[0].f.o[0], gh, S[0].f.o[2]] }, w, upH, front, 0, gh);
   for (const k of [1, 3]) wall(b, side, { ...S[k].f, o: [S[k].f.o[0], gh, S[k].f.o[2]] }, d, upH, rows(d, sideN, { sill: o.trim, depth: 0.1 }), 0, gh);
   wall(b, side, { ...S[2].f, o: [S[2].f.o[0], gh, S[2].f.o[2]] }, w, upH, rows(w, Math.max(1, maxWin - 1), { sill: o.trim, depth: 0.1 }), 0, gh);
-  if (floors > 1) box(b, o.trim, S[0].f, [w / 2, gh - 0.02, 0.04], [w / 2 + 0.05, 0.1, 0.07]);
+  const over = o.terrace ? 0 : 1;
+  if (floors > 1) box(b, o.trim, S[0].f, [w / 2, gh - 0.02, 0.04], [w / 2 + 0.05 * over, 0.1, 0.07]);
   if (o.cornice) {
-    box(b, o.trim, S[0].f, [w / 2, top + par - 0.45, 0.12], [w / 2 + 0.2, 0.09, 0.2]);
-    box(b, o.trim, S[0].f, [w / 2, top + par - 0.2, 0.2], [w / 2 + 0.3, 0.17, 0.3]);
-    box(b, o.trim, S[0].f, [w / 2, top + par - 0.75, 0.04], [w / 2 + 0.06, 0.07, 0.06]);
+    box(b, o.trim, S[0].f, [w / 2, top + par - 0.45, 0.12], [w / 2 + 0.2 * over, 0.09, 0.2]);
+    box(b, o.trim, S[0].f, [w / 2, top + par - 0.2, 0.2], [w / 2 + 0.3 * over, 0.17, 0.3]);
+    box(b, o.trim, S[0].f, [w / 2, top + par - 0.75, 0.04], [w / 2 + 0.06 * over, 0.07, 0.06]);
   }
   if (o.balcony) for (const q of front) balcony(b, stand([q.x + q.w / 2 - w / 2, gh + q.y - 0.02, d / 2]), q.w + 0.7, 1.15, { rail: o.balcony, ...(o.solidBalcony ? { solid: true } : {}) });
   if (o.fire && floors > 2) {
@@ -175,7 +178,7 @@ export function addBlocks(): void {
   // Brownstones and row houses.
   const ROW: [string, string, string][] = [['stone-brownstone', 'brown', 'sash-tall-black'], ['stone-limestone', 'cream', 'sash-tall-white'], ['brick-red', 'white', 'sash-tall-white'], ['brick-painted-blue', 'white', 'sash-tall-white'], ['brick-painted-grey', 'black', 'sash-tall-black'], ['stone-sandstone', 'tan', 'arch-brown']];
   ROW.forEach(([wl, tr, wn], i) => apt(`rowhouse-${i + 1}`, `連棟の町屋(ブラウンストーン) ${i + 1}`, {
-    w: 6 + (i % 2), d: 13, floors: 3 + (i % 2), fh: 3.4, wall: W(wl), side: W('brick-red-common'), trim: T(tr), win: WIN(wn), dress: 'head', cornice: true, stoop: 1.5, door: `door/front-${['black-2', 'green-0', 'red-1', 'white-2', 'yellow-1', 'brown-1'][i]}`, maxWin: 3, plant: 1, parapet: 0.6,
+    w: 6 + (i % 2), d: 13, floors: 3 + (i % 2), fh: 3.4, wall: W(wl), side: W('brick-red-common'), trim: T(tr), win: WIN(wn), dress: 'head', cornice: true, terrace: true, stoop: 1.5, door: `door/front-${['black-2', 'green-0', 'red-1', 'white-2', 'yellow-1', 'brown-1'][i]}`, maxWin: 3, plant: 1, parapet: 0.6,
   }));
   // Stucco blocks with balconies.
   const BALC: [string, string, string, string][] = [['stucco-white', 'grey', 'patio-aluminium', 'rail-white'], ['stucco-peach', 'white', 'patio-white', 'rail-black'], ['stucco-sand', 'brown', 'patio-bronze', 'rail-brown'], ['stucco-teal', 'white', 'patio-white', 'rail-cable'],

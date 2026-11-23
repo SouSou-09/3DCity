@@ -15,8 +15,9 @@ import { roadAt, trackAt } from '../src/place/railProfile';
 import { LOW_TREES, STREET_TREES, placeStreetFurniture } from '../src/place/streetFurniture';
 import { Building } from '../src/place/buildings';
 import { landCover } from '../src/place/landCover';
+import { BELT, COPSE, RIVERSIDE, WILD, YARD } from '../src/place/leftover';
 import { OpenSpace, placeOpenSpace } from '../src/place/openSpace';
-import { RAIL as ON_RAIL, ROAD as ON_ROAD, bbox } from '../src/place/site';
+import { FREE as ON_FREE, LOT as ON_LOT, RAIL as ON_RAIL, ROAD as ON_ROAD, SITE_CELL, bbox } from '../src/place/site';
 import { RAIL_MAX_GRADE, RAIL_MIN_RADIUS, RAIL_STEP, RailIndex, sharpestRailTurn } from '../src/gen/rail';
 import { STATION_HALF } from '../src/gen/stations';
 import { isStreet } from '../src/gen/streamlines';
@@ -473,6 +474,24 @@ const model = (seed: number): RoadModel => {
 };
 
 describe('roads in 3D', () => {
+  it.each(MODEL_SEEDS)('seed %i: a street bends as a curve, not at a corner', (seed) => {
+    const m = model(seed);
+    const c = city(seed);
+    let [sharp, all] = [0, 0];
+    m.lines.forEach((l, id) => {
+      const cls = c.graph.edges[id].cls;
+      if (!l || cls === 'highway' || cls === 'ramp') return;
+      for (let i = 1; i + 1 < l.length; i++) {
+        const [a, b, d] = [l[i - 1], l[i], l[i + 1]];
+        const turn = Math.abs(Math.atan2((b[0] - a[0]) * (d[2] - b[2]) - (b[2] - a[2]) * (d[0] - b[0]), (b[0] - a[0]) * (d[0] - b[0]) + (b[2] - a[2]) * (d[2] - b[2])));
+        all++;
+        if (turn > (30 * Math.PI) / 180) sharp++;
+      }
+    });
+    expect(all).toBeGreaterThan(10000);
+    expect(sharp).toBeLessThan(8);
+    expect(m.stats.folds).toBeLessThan(12);
+  });
   it('is deterministic', () => {
     const a = model(3);
     const b = buildRoadModel(city(3));
@@ -880,7 +899,9 @@ describe('street furniture', () => {
         const [vx, vy] = [q[0] - p[0], q[2] - p[2]];
         const l = Math.hypot(vx, vy) || 1;
         const u = clamp(((it.x - p[0]) * vx + (it.y - p[2]) * vy) / (l * l), 0, 1);
-        offs.push([Math.hypot(p[0] + vx * u - it.x, p[2] + vy * u - it.y), ((it.x - p[0]) * -vy + (it.y - p[2]) * vx) / l, s + u * l]);
+        const [d, side] = [Math.hypot(p[0] + vx * u - it.x, p[2] + vy * u - it.y), ((it.x - p[0]) * -vy + (it.y - p[2]) * vx) / l];
+        // Outside a bend the nearest point of a stretch is its end, and the offset is the distance to it.
+        offs.push([d, u > 0 && u < 1 ? side : Math.sign(side) * d, s + u * l]);
         s += l;
       }
       const best = Math.min(...offs.map((o) => o[0]));
@@ -1809,5 +1830,171 @@ describe('parks, waterfront and boundaries', () => {
       expect(s).toBeGreaterThan(0.04);
       expect(s).toBeLessThan(0.9);
     }
+  });
+  it.each(OPEN_SEEDS)('seed %i: the ground no lot took is put to use: it goes with the lot beside it, or is wood, bank, belt or yard', (seed) => {
+    const o = open(seed);
+    const c = city(seed);
+    const { claim, kind } = o.leftover;
+    const n = o.site.n;
+    const lots = c.land.lots;
+    const area = new Array(8).fill(0);
+    const vacant = new Set(o.buildings.vacant);
+    let [claimed, bare] = [0, 0];
+    for (let k = 0; k < n * n; k++) {
+      if (!claim[k] && !kind[k]) {
+        if (o.site.grid[k] === ON_FREE && !o.buildings.owner[k]) bare++;
+        continue;
+      }
+      // Only open ground is handed out, and never twice: nobody's, or a plot nothing was built on, which is left to grow over.
+      if (o.site.grid[k] === ON_LOT) {
+        const [li, lj] = [Math.floor(((k % n) + 0.5) * SITE_CELL / c.land.cell), Math.floor((Math.floor(k / n) + 0.5) * SITE_CELL / c.land.cell)];
+        expect(vacant.has(c.land.grid[lj * c.land.n + li] - 1), `cell ${k % n}, ${Math.floor(k / n)}`).toBe(true);
+        expect(claim[k]).toBe(0);
+      } else expect(o.site.grid[k], `cell ${k % n}, ${Math.floor(k / n)}`).toBe(ON_FREE);
+      expect(o.buildings.owner[k]).toBe(0);
+      if (claim[k]) {
+        claimed++;
+        expect(lots[claim[k] - 1], `claim ${claim[k]}`).toBeDefined();
+        expect(kind[k]).toBe(0);
+      }
+      area[kind[k]]++;
+    }
+    const ha = (cells: number): number => (cells * SITE_CELL * SITE_CELL) / 1e4;
+    expect(ha(claimed)).toBeGreaterThan(80);
+    expect(ha(area[WILD])).toBeGreaterThan(20);
+    expect(ha(area[RIVERSIDE])).toBeGreaterThan(3);
+    expect(ha(area[BELT]) + ha(area[COPSE]) + ha(area[YARD])).toBeGreaterThan(30);
+    // What is left over after that is sand and the like, not fields of bare earth.
+    expect(ha(bare)).toBeLessThan(120);
+    // The hills are not parcelled out between their houses.
+    for (let k = 0; k < n * n; k += 97) if (claim[k]) expect(districtAt(c.terrain, c.districts, ((k % n) + 0.5) * SITE_CELL, (Math.floor(k / n) + 0.5) * SITE_CELL).type).not.toBe('hills');
+  });
+
+  it.each(OPEN_SEEDS)('seed %i: the hills and the waste ground carry trees, dry grass and rocks, on open ground only and light enough to draw', (seed) => {
+    const o = open(seed);
+    const { trees, rocks, tufts } = o.leftover;
+    expect(trees).toBeGreaterThan(6000);
+    expect(trees).toBeLessThan(40000);
+    expect(rocks).toBeGreaterThan(200);
+    expect(tufts).toBeGreaterThan(3000);
+    const wood = o.items.filter((i) => i.model.startsWith('plant/wood-'));
+    expect(wood.length).toBe(trees);
+    for (const i of wood) expect(o.site.at(i.x, i.y), `${i.model} at ${i.x.toFixed(0)}, ${i.y.toFixed(0)}`).not.toBe(ON_ROAD);
+    // Trees for woods are a fraction of the weight of a street tree.
+    const tris = (id: string): number => (MODELS.find((m) => m.id === id)!.build() as unknown as { triangles: number }).triangles;
+    for (const id of new Set(wood.map((i) => i.model))) expect(tris(id), id).toBeLessThan(560);
+  });
+
+  it.each(OPEN_SEEDS)('seed %i: most plots on the hills carry a house, on ground levelled for it', (seed) => {
+    const o = open(seed);
+    const lots = city(seed).land.lots;
+    const hill = lots.filter((l) => l.site.type === 'hills' && l.use === 'R1');
+    const built = new Set(o.buildings.list.map((b) => b.lot));
+    if (hill.length > 40) expect(hill.filter((l) => built.has(l.id)).length / hill.length).toBeGreaterThan(0.7);
+    // No house stands with a corner in the air or buried: the ground under it is within a storey of its floor.
+    for (const b of o.buildings.list) {
+      if (lots[b.lot].site.type !== 'hills') continue;
+      const at = `${b.model} at ${b.x.toFixed(0)}, ${b.y.toFixed(0)}`;
+      expect(b.ground[1] - b.ground[0], at).toBeLessThan(5);
+      expect(b.floor - b.ground[0], at).toBeLessThan(5);
+      expect(b.ground[1] - b.floor, at).toBeLessThan(1.9);
+    }
+  });
+  it.each(OPEN_SEEDS)('seed %i: flat roofs carry plant that stands on the roof of a building, and the courts of the parks are fenced and lit', (seed) => {
+    const o = open(seed);
+    const roof = o.items.filter((i) => i.kind === 'roof');
+    expect(roof.length).toBeGreaterThan(1500);
+    expect(new Set(roof.map((i) => i.model)).size).toBeGreaterThan(8);
+    const G = 64;
+    const near = new Map<number, typeof o.buildings.list>();
+    for (const b of o.buildings.list) {
+      const r = Math.hypot(b.hx, b.hz);
+      for (let gy = Math.floor((b.y - r) / G); gy <= Math.floor((b.y + r) / G); gy++)
+        for (let gx = Math.floor((b.x - r) / G); gx <= Math.floor((b.x + r) / G); gx++) (near.get(gy * 1000 + gx) ?? near.set(gy * 1000 + gx, []).get(gy * 1000 + gx)!).push(b);
+    }
+    for (const it of roof) {
+      const at = `${it.model} at ${it.x.toFixed(0)}, ${it.y.toFixed(0)}`;
+      // Inside the walls of a building with a roof to stand on, and at the height of that roof: above the first storey, below the top of the model.
+      const under = (near.get(Math.floor(it.y / G) * 1000 + Math.floor(it.x / G)) ?? []).filter((b) => {
+        const [dx, dy] = [it.x - b.x, it.y - b.y];
+        const [c, sn] = [Math.cos(b.yaw), Math.sin(b.yaw)];
+        // The whole of the unit, whichever way it is turned, and not only its middle.
+        const { min, max } = bbox(it.model);
+        const [px, pz] = [Math.max(-min[0], max[0]), Math.max(-min[2], max[2])];
+        const [rx, rz] = Math.round((it.yaw - b.yaw) / (Math.PI / 2)) % 2 ? [pz, px] : [px, pz];
+        return Math.abs(dx * c + dy * sn) < b.hx - Math.max(1, rx + 0.2) && Math.abs(-dx * sn + dy * c) < b.hz - Math.max(1, rz + 0.2) && it.h > b.floor + 2.9 && it.h <= b.floor + bbox(b.model).max[1];
+      });
+      expect(under.length, at).toBeGreaterThan(0);
+    }
+    // A block of flats with houses on most of the plots around it keeps to their height.
+    const mid = (l: { poly: { x: number; y: number }[] }): { x: number; y: number } => ({ x: l.poly.reduce((a, p) => a + p.x, 0) / l.poly.length, y: l.poly.reduce((a, p) => a + p.y, 0) / l.poly.length });
+    const plots = city(seed).land.lots.filter((l) => l.use !== 'OS' && l.use !== 'PK').map((l) => ({ ...mid(l), house: l.use === 'R1' }));
+    let among = 0;
+    for (const b of o.buildings.list) {
+      const lot = city(seed).land.lots[b.lot];
+      if (!b.main || b.use !== 'R2' || !/^apartment\//.test(b.model) || !lot || ['oldtown', 'midtown', 'downtown'].includes(lot.site.type)) continue;
+      const c = mid(lot);
+      const near = plots.filter((l) => Math.hypot(l.x - c.x, l.y - c.y) < 90);
+      if (near.filter((l) => l.house).length < 0.6 * near.length) continue;
+      among++;
+      expect(bbox(b.model).max[1], `${b.model} at ${b.x.toFixed(0)}, ${b.y.toFixed(0)}`).toBeLessThan(9.5);
+    }
+    expect(among).toBeGreaterThan(100);
+    // A terrace is houses wall to wall: where a plot holds more than one, each touches the next.
+    const terraces = new Map<number, typeof o.buildings.list>();
+    for (const b of o.buildings.list) if (b.use === 'R2' && b.model.startsWith('apartment/rowhouse')) (terraces.get(b.lot) ?? terraces.set(b.lot, []).get(b.lot)!).push(b);
+    const rows = [...terraces.values()].filter((t) => t.length > 1);
+    expect(rows.length).toBeGreaterThan(40);
+    for (const t of rows)
+      for (const b of t) expect(Math.min(...t.filter((x) => x !== b).map((x) => Math.abs((x.x - b.x) * Math.cos(b.yaw) + (x.y - b.y) * Math.sin(b.yaw)) - x.hx - b.hx)), `${b.model} at ${b.x.toFixed(0)}, ${b.y.toFixed(0)}`).toBeLessThan(0.01);
+    // And it is the side walls that touch: nothing of the model stands out past them but the coping.
+    for (let i = 1; i <= 6; i++) expect(bbox(`apartment/rowhouse-${i}`).max[0] - bbox(`apartment/rowhouse-${i}`).min[0]).toBeLessThan(6 + ((i - 1) % 2) + 0.07);
+    // Behind the houses: sheds, and washing on the line.
+    expect(o.buildings.sheds).toBeGreaterThan(900);
+    expect(o.buildings.lines).toBeGreaterThan(250);
+    expect(o.buildings.patios).toBeGreaterThan(1200);
+    const masts = o.items.filter((i) => i.model === 'furniture/light-flood-4' && i.park !== undefined);
+    const courts = o.parks.flatMap((p) => p.features.filter((f) => f.type === 'tennis' || f.type === 'basketball').map((f) => ({ f, tier: p.tier })));
+    expect(masts.length).toBe(2 * courts.filter((c) => c.tier !== 'pocket').length);
+    for (const { f } of courts) expect(o.items.some((i) => i.model === 'boundary/chainlink-sports-3600' && Math.hypot(i.x - f.x, i.y - f.y) < Math.hypot(f.hx, f.hz) + 3), `${f.type} at ${f.x.toFixed(0)}, ${f.y.toFixed(0)}`).toBe(true);
+  });
+
+  it.each(OPEN_SEEDS)('seed %i: fences close: a run ends on another fence or beside a building, but for the gateways', (seed) => {
+    const o = open(seed);
+    const runs = o.buildings.runs;
+    expect(runs.reduce((a, r) => a + Math.hypot(r[2] - r[0], r[3] - r[1]), 0)).toBeCloseTo(o.buildings.fence, 0);
+    const G = 4;
+    const key = (x: number, y: number): number => Math.floor(y / G) * 4096 + Math.floor(x / G);
+    const byCell = new Map<number, number[]>();
+    runs.forEach((r, i) => {
+      const n = Math.ceil(Math.hypot(r[2] - r[0], r[3] - r[1]) / 1.5);
+      for (let s = 0; s <= n; s++) {
+        const k = key(r[0] + ((r[2] - r[0]) * s) / n, r[1] + ((r[3] - r[1]) * s) / n);
+        const list = byCell.get(k) ?? byCell.set(k, []).get(k)!;
+        if (list[list.length - 1] !== i) list.push(i);
+      }
+    });
+    const walls = new Map<number, typeof o.buildings.list>();
+    for (const b of o.buildings.list) {
+      const r = Math.hypot(b.hx, b.hz) + 2.6;
+      for (let y = b.y - r; y <= b.y + r + G; y += G) for (let x = b.x - r; x <= b.x + r + G; x += G) (walls.get(key(x, y)) ?? walls.set(key(x, y), []).get(key(x, y))!).push(b);
+    }
+    const off = (r: number[], x: number, y: number): number => {
+      const [vx, vy] = [r[2] - r[0], r[3] - r[1]];
+      const t = clamp(((x - r[0]) * vx + (y - r[1]) * vy) / (vx * vx + vy * vy), 0, 1);
+      return Math.hypot(r[0] + vx * t - x, r[1] + vy * t - y);
+    };
+    let loose = 0;
+    runs.forEach((r, i) => {
+      for (const [x, y] of [[r[0], r[1]], [r[2], r[3]]]) {
+        let met = (walls.get(key(x, y)) ?? []).some((b) => {
+          const [c, sn] = [Math.cos(b.yaw), Math.sin(b.yaw)];
+          return Math.abs((x - b.x) * c + (y - b.y) * sn) < b.hx + 2.6 && Math.abs(-(x - b.x) * sn + (y - b.y) * c) < b.hz + 2.6;
+        });
+        for (let dy = -G; dy <= G && !met; dy += G) for (let dx = -G; dx <= G && !met; dx += G) met = (byCell.get(key(x + dx, y + dy)) ?? []).some((j) => j !== i && off(runs[j], x, y) < 1.9);
+        if (!met) loose++;
+      }
+    });
+    expect(loose).toBeLessThan(0.09 * 2 * runs.length);
   });
 });

@@ -3,6 +3,7 @@ import { City } from '../gen/city';
 import { LandUse } from '../gen/landuse';
 import { Boundaries, placeBoundaries } from './boundaries';
 import { Buildings, placeBuildings } from './buildings';
+import { Leftover, placeLeftover } from './leftover';
 import { ParkPlan, placeParks } from './parks';
 import { RoadModel } from './roadModel';
 import { PARK, SITE_CELL, SITE_KINDS, Site, SiteItem, SiteKind } from './site';
@@ -18,6 +19,8 @@ export interface OpenSpace {
   shore: Waterfront;
   bounds: Boundaries;
   buildings: Buildings;
+  /** What became of the ground no lot took. */
+  leftover: Leftover;
   site: Site;
   stats: Record<SiteKind, number>;
   /** Whether a point is park land. */
@@ -37,6 +40,7 @@ export function placeOpenSpace(city: City, roads: RoadModel): OpenSpace {
   const buildings = placeBuildings(site, shore);
   tiles.push(...buildings.tiles);
   const bounds = placeBoundaries(site, shore);
+  const leftover = placeLeftover(site, shore, buildings);
   const stats = Object.fromEntries(SITE_KINDS.map((k) => [k, 0])) as Record<SiteKind, number>;
   for (const it of site.items) stats[it.kind]++;
   const land = city.land;
@@ -48,5 +52,5 @@ export function placeOpenSpace(city: City, roads: RoadModel): OpenSpace {
     const id = lot >= 0 ? lot : buildings.owner[Math.floor(y / SITE_CELL) * site.n + Math.floor(x / SITE_CELL)] - 1;
     return id >= 0 && !sand.has(id) && GREEN[land.lots[id].use] === true;
   };
-  return { items: site.items, tiles, ground: site.ground, parks, shore, bounds, buildings, site, stats, isPark: (x, y) => site.at(x, y) === PARK, isYard };
+  return { items: site.items, tiles, ground: site.ground, parks, shore, bounds, buildings, leftover, site, stats, isPark: (x, y) => site.at(x, y) === PARK, isYard };
 }

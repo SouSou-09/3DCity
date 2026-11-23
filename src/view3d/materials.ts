@@ -56,6 +56,15 @@ export class Materials {
       t.needsUpdate = true;
       return t;
     };
+    if (spec.cutout) {
+      // What is cut away still has a colour and a gloss, and the smaller copies of the texture average them in: give it those of what is kept, or foliage pales to white with distance.
+      const a = d.albedo;
+      for (const px of [d.albedo, d.orm, d.normal]) {
+        const sum = [0, 0, 0, 0];
+        for (let i = 0; i < px.length; i += 4) if (a[i + 3] > 128) for (let q = 0; q < 3; q++) sum[q] += px[i + q], (sum[3] += q ? 0 : 1);
+        if (sum[3]) for (let i = 0; i < px.length; i += 4) if (a[i + 3] < 26) for (let q = 0; q < 3; q++) px[i + q] = sum[q] / sum[3];
+      }
+    }
     const orm = make(d.orm, false);
     const albedo = make(d.albedo, true);
     m = new THREE.MeshStandardMaterial({
@@ -63,6 +72,14 @@ export class Materials {
       transparent: spec.decal, depthWrite: !spec.decal, ...(spec.cutout ? { alphaTest: 0.4, alphaToCoverage: true } : {}), polygonOffset: layer > 0, polygonOffsetFactor: -layer * 2, polygonOffsetUnits: -layer * 4,
       side: spec.decal || spec.cutout ? THREE.FrontSide : THREE.DoubleSide, shadowSide: THREE.DoubleSide,
     });
+    // Leaves on flat cards catch the sun and the sky as one sheet, and a tree of them shines pale: no gloss, and the shade a crown throws on itself.
+    if (spec.cutout && /^plant\//.test(id)) {
+      const leaf = m as THREE.MeshStandardMaterial;
+      [leaf.roughnessMap, leaf.metalnessMap, leaf.roughness, leaf.metalness] = [null, null, 1, 0];
+      // Seen small, a spray of leaves is mostly gaps and its smaller copies fall under the cut: the leaves went, and a tree far off was its pale branches. Cut lower, so that the spray closes up with distance instead.
+      leaf.alphaTest = 0.12;
+      if (/^plant\/(leaf|frond|fan|foliage)/.test(id)) leaf.color.setRGB(0.66, 0.72, 0.6);
+    }
     this.mats.set(key, m);
     return m;
   }

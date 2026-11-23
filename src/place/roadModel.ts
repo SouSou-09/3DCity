@@ -767,7 +767,9 @@ export function buildRoadModel(city: City): RoadModel {
       cross.push(c);
     });
 
-    const keep = thin(pts.map((p, k) => [p.x, hs[k], p.y, cross[k] * 8]), e.cls === 'highway' ? 0.06 : 0.1);
+    // A bend seen from above shows its corners sooner than a change of grade does: the plan is kept two and a half times as closely as the heights.
+    const plan = e.cls === 'highway' ? 1 : 2.5;
+    const keep = thin(pts.map((p, k) => [p.x * plan, hs[k], p.y * plan, cross[k] * 8]), e.cls === 'highway' ? 0.06 : 0.1);
     const line: V3[] = keep.map((k) => [pts[k].x, hs[k], pts[k].y]);
     // The two carriageways that run through a freeway node meet on one line across it.
     const through = (node: number, end: 0 | 1): Vec2 | undefined => {

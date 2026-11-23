@@ -25,6 +25,8 @@ function setMode(mode: '2d' | '3d'): void {
     const cam = (params.get('cam') ?? '').split(',').map(Number);
     if (cam.length === 6 && cam.every(Number.isFinite)) view3d.look([cam[0], cam[1], cam[2]], [cam[3], cam[4], cam[5]]);
     view3d.start();
+    // For moving the camera from the browser console while developing.
+    if (import.meta.env.DEV) (window as unknown as { view3d: CityView }).view3d = view3d;
   } else {
     view3d?.stop();
     view.render();

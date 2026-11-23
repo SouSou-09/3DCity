@@ -94,11 +94,16 @@ export function groundMaterial(materials: Materials, waterY: number, land: THREE
         // Mown in stripes, each pass of the mower bending the grass the other way.
         lawn *= 1.0 + 0.09 * (smoothstep(-0.25, 0.25, sin(dot(gp, vec2(0.8, 0.6)) * 1.745)) - 0.5) * (1.0 - tired);
         // What covers the made ground of the town: rough grass with bare patches, earth and gravel, hard standing, and lawn over them.
-        vec4 land = texture2D(uLand, gp / uLandSize);
+        // The map of it is in squares of 2 m: read a little to one side and the other, so that its edges wander as worn ground does.
+        vec4 land = texture2D(uLand, (gp + (texture2D(uNoise, gp / 13.0).rg + texture2D(uNoise, gp / 4.1).gb - 1.0) * 1.6) / uLandSize);
         vec3 weeds = mix(texture2D(uWeeds, gp / 2.6).rgb, texture2D(uRough, gp / 6.1).rgb, 0.45) * (0.95 + 0.5 * wide.g) * mix(vec3(1.0), vec3(1.12, 1.02, 0.8), smoothstep(0.4, 0.75, mid.b));
         vec3 earth = mix(texture2D(uDirt, gp / 3.0).rgb, texture2D(uEarth, gp / 4.7).rgb, smoothstep(0.35, 0.7, mid.g)) * (1.05 + 0.3 * wide.b);
         // Old concrete and asphalt, patched: the texture only for its grain, so that its joints do not show as a grid.
         vec3 hard = mix(vec3(0.46, 0.46, 0.45), texture2D(uHard, gp / 3.1).rgb, 0.25) * (0.86 + 0.16 * mid.r + 0.08 * fine) * mix(vec3(1.0), vec3(0.86, 0.85, 0.84), smoothstep(0.5, 0.8, wide.r));
+        // Laid a pour at a time, and dug up and patched since: each bay a shade of its own, some of them in asphalt.
+        vec2 bay = floor(gp / vec2(13.0, 8.0));
+        float pour = fract(sin(dot(bay, vec2(12.9898, 78.233))) * 43758.5453);
+        hard *= mix(vec3(0.9 + 0.16 * pour), vec3(0.7, 0.71, 0.73), step(0.9, fract(pour * 7.31)));
         ground = mix(ground, weeds, land.g);
         // Rough grass wears through to the earth where it is walked on and where nothing will grow.
         float bare = smoothstep(0.6, 0.82, mid.r * 0.55 + wide.b * 0.3 + fine * 0.15);

@@ -6,7 +6,16 @@ type Gen = (tex: Tex, seed: number) => TextureData;
 type Extra = Partial<Pick<TextureSpec, 'tile' | 'density' | 'reflect'>>;
 function add(category: TextureCategory, id: string, label: string, meters: readonly [number, number], generate: Gen, o: Extra = {}): void {
   const seed = 20000 + list.length * 7;
-  list.push({ id: `${category}/${id}`, label, category, meters, tile: 'xy', decal: false, density: 256, ...o, generate: (tex) => generate(tex, seed) });
+  list.push({ id: `${category}/${id}`, label, category, meters, tile: 'xy', decal: false, density: 256, ...o, generate: category === 'roof' ? (tex) => faded(generate(tex, seed)) : (tex) => generate(tex, seed) });
+}
+/** A roof that has had years of sun and rain on it: the colour it was laid in has gone out of it. */
+function faded(d: TextureData): TextureData {
+  const a = d.albedo;
+  for (let i = 0; i < a.length; i += 4) {
+    const l = 0.3 * a[i] + 0.59 * a[i + 1] + 0.11 * a[i + 2];
+    for (let q = 0; q < 3; q++) a[i + q] = (l + (a[i + q] - l) * 0.6) * 0.96;
+  }
+  return d;
 }
 const grey = (c: RGB): number => (c[0] + c[1] + c[2]) / 3;
 
