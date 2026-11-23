@@ -49,6 +49,9 @@ export interface Buildings {
   yards: number[];
   /** Metres of fence and wall built round house and shop lots. */
   fence: number;
+  /** Garden sheds and washing lines behind the houses. */
+  sheds: number;
+  lines: number;
   /** Marked parking spaces. */
   stalls: number;
   /** Buildings per use, and public buildings per kind. */
@@ -143,6 +146,9 @@ function edgeDist(poly: Vec2[], x: number, y: number): number {
 }
 
 const ZINC = 'structure/steel-galvanized';
+const SHED_WALLS = ['wall/siding-white-peeling', 'wall/siding-green', 'wall/siding-grey', 'wall/siding-red', 'wall/siding-cream', 'wall/metal-ribbed-galvanized', 'site/fence-board-weathered', 'site/fence-board-cedar'];
+const SHED_ROOFS = ['roof/corrugated-galvanized', 'roof/corrugated-rusty', 'roof/corrugated-galvanized'];
+const WASHING = ['trim/paint-white', 'trim/paint-white', 'trim/paint-white-old', 'trim/awning-navy', 'trim/awning-red', 'trim/awning-green', 'trim/paint-tan', 'trim/awning-burgundy'];
 type FenceFn = (b: MeshBuilder, f: Pose, len: number) => void;
 /** A fence as a run of its texture between plain posts: there are hundreds of kilometres of it, so each piece is a few triangles. */
 const light = (tex: string, post: string, y0 = 0): FenceFn => (b, f, len) => {
@@ -229,7 +235,7 @@ export function placeBuildings(site: Site, shore: Waterfront): Buildings {
   const land = city.land;
   const seed = site.seed;
   const rnd = (...v: number[]): number => hash(seed, 7717, ...v);
-  const out: Buildings = { list: [], tiles: [], plots: [], owner: new Int32Array(0), vacant: [], yards: [], fence: 0, stalls: 0, count: {}, civic: {} };
+  const out: Buildings = { list: [], tiles: [], plots: [], owner: new Int32Array(0), vacant: [], yards: [], fence: 0, sheds: 0, lines: 0, stalls: 0, count: {}, civic: {} };
   const sand = new Set(shore.sandLots);
   const builders = new Map<string, MeshBuilder>();
   const tile = (x: number, y: number): MeshBuilder => {
@@ -334,25 +340,27 @@ export function placeBuildings(site: Site, shore: Waterfront): Buildings {
   const sandy = (x: number, y: number): boolean => shore.sand[clamp(Math.round(y / city.terrain.cell), 0, tn - 1) * tn + clamp(Math.round(x / city.terrain.cell), 0, tn - 1)] > 0.15;
   const extend = (f: Frame): void => {
     const rear = (c: number, k: number): Vec2 => at(f, f.ua + (f.ub - f.ua) * c, f.va + (f.vb - f.va) * c + k);
-    let [reach, beyond] = [0, FREE];
-    march: for (let k = 1; k <= 25; k += 2) {
-      for (const c of [0.1, 0.5, 0.9]) {
+    // A back garden does not run on for ever: what lies deeper in the block than this is left as the wood or the common behind the fences.
+    const most = f.lot.use === 'R1' || f.lot.use === 'R2' ? (f.type === 'suburb' || f.type === 'hills' ? 16 : 12) : 25;
+    /** How far the ground behind one point of the rear line is free, and what ends it. */
+    const march = (c: number): [number, number] => {
+      const base = rear(c, 0);
+      for (let k = 1; k <= most; k += 2) {
         const p = rear(c, k);
         const cell = cellOf(p.x, p.y);
         const code = cell < 0 ? ROAD : owner[cell] ? USED : site.at(p.x, p.y);
-        const base = rear(c, 0);
-        if (code !== FREE || waterDistAt(city.terrain, p.x, p.y) < 8 || sandy(p.x, p.y) || Math.abs(site.heightAt(p.x, p.y) - site.heightAt(base.x, base.y)) > 0.6 + 0.13 * k) {
-          beyond = code === FREE ? WATER : code;
-          break march;
-        }
+        if (code !== FREE || waterDistAt(city.terrain, p.x, p.y) < 8 || sandy(p.x, p.y) || Math.abs(site.heightAt(p.x, p.y) - site.heightAt(base.x, base.y)) > 0.6 + 0.13 * k) return [k - 1, code === FREE ? WATER : code];
       }
-      reach = k + 1;
-    }
+      return [most + 1, FREE];
+    };
     // Half way to a lot that backs on to the same ground, all the way to ground already taken by one, and short of anything else.
-    const ext = beyond === LOT ? reach / 2 : beyond === FREE || beyond === USED ? reach : reach - 2;
-    if (ext < 2.5) return;
+    const reach = ([k, beyond]: [number, number]): number => (beyond === LOT ? k / 2 : beyond === FREE || beyond === USED ? k : k - 2);
+    // The new rear line stays parallel to the old one: a garden that ran out to a point would look like a mistake.
+    const ea = Math.min(reach(march(0.1)), reach(march(0.5)), reach(march(0.9)));
+    const eb = ea;
+    if (ea < 2.5) return;
     const [a, b] = [rear(0, 0), rear(1, 0)];
-    const [a2, b2] = [rear(0, ext), rear(1, ext)];
+    const [a2, b2] = [rear(0, ea), rear(1, eb)];
     const quad = [a, b, b2, a2];
     const [x0, x1, y0, y1] = [Math.min(a.x, b.x, a2.x, b2.x), Math.max(a.x, b.x, a2.x, b2.x), Math.min(a.y, b.y, a2.y, b2.y), Math.max(a.y, b.y, a2.y, b2.y)];
     for (let y = Math.floor(y0 / SITE_CELL); y <= Math.floor(y1 / SITE_CELL); y++)
@@ -363,8 +371,8 @@ export function placeBuildings(site: Site, shore: Waterfront): Buildings {
       }
     const nf = f.lot.front;
     f.poly = [...f.lot.poly.slice(0, nf + 1), b2, a2, ...f.lot.poly.slice(nf + 1)];
-    f.va += ext;
-    f.vb += ext;
+    f.va += ea;
+    f.vb += eb;
     f.d = Math.min(f.va, f.vb);
   };
   const at = (f: Frame, u: number, v: number): Vec2 => ({ x: f.ox + f.tx * u + f.nx * v, y: f.oy + f.ty * u + f.ny * v });
@@ -908,6 +916,48 @@ const BACK_TABLES = ['park/picnic-table-wood', 'park/picnic-table-red', 'park/pi
       const [qu, qv] = [lo + 3.2 + rnd(lot.id, 310) * Math.max(0, hi - lo - 6.4), house[3] + 5 + rnd(lot.id, 311) * Math.max(0, yard - 8.5)];
       if (yard > 9.5 && hi - lo > 8 && rnd(lot.id, 309) < (f.type === 'suburb' ? 0.3 : 0.2) && free(f, qu, qv, 2.8) && Math.abs(ground(f, qu - 2, qv) - ground(f, qu + 2, qv)) < 0.4) stand(f, BACK_PLAY[Math.floor(rnd(lot.id, 312) * BACK_PLAY.length)], 'yard', qu, qv);
     }
+    // A shed in a back corner, and washing on a line.
+    if (yard > 7 && hi - lo > 9 && rnd(lot.id, 320) < { suburb: 0.45, residential: 0.4, oldtown: 0.25, beach: 0.25, hills: 0.3, industrial: 0.3, midtown: 0.2, downtown: 0.1 }[f.type]) {
+      const [hw, hd] = [1.1 + 0.5 * rnd(lot.id, 321), 0.85 + 0.35 * rnd(lot.id, 322)];
+      const s = rnd(lot.id, 323) < 0.5 ? -1 : 1;
+      const [u, v] = [s < 0 ? lo + hw + 0.9 : hi - hw - 0.9, f.d - hd - 1];
+      const p = at(f, u, v);
+      if (free(f, u, v, hw + 0.3) && site.at(p.x, p.y) !== ROAD && Math.abs(ground(f, u - hw, v) - ground(f, u + hw, v)) < 0.25) {
+        const b = tile(p.x, p.y);
+        const y = Math.max(ground(f, u - hw, v), ground(f, u + hw, v));
+        const pose = (tilt: number): Pose => ({ o: [p.x, y, p.y], x: [f.tx, 0, f.ty], y: [0, 1, 0], z: [f.nx, tilt, f.ny] });
+        box(b, SHED_WALLS[Math.floor(rnd(lot.id, 324) * SHED_WALLS.length)], pose(0), [0, 1, 0], [hw, 1.05, hd], 'y');
+        box(b, SHED_ROOFS[Math.floor(rnd(lot.id, 325) * SHED_ROOFS.length)], pose(-0.16), [0, 2.1, 0], [hw + 0.18, 0.04, hd + 0.22]);
+        box(b, 'trim/paint-white-old', pose(0), [(rnd(lot.id, 326) - 0.5) * hw, 0.92, -hd - 0.02], [0.42, 0.92, 0.02], 'y');
+        f.taken.push([u - hw, u + hw, v - hd, v + hd]);
+        f.solid.push([u - hw, u + hw, v - hd, v + hd]);
+        out.sheds++;
+      }
+    }
+    if (yard > 8 && hi - lo > 9 && f.type !== 'hills' && f.type !== 'downtown' && rnd(lot.id, 330) < (f.type === 'suburb' ? 0.12 : 0.24)) {
+      const [u, v] = [lo + 3.6 + rnd(lot.id, 331) * Math.max(0, hi - lo - 7.2), house[3] + 4.4 + rnd(lot.id, 332) * Math.max(0, yard - 7.4)];
+      const p = at(f, u, v);
+      if (free(f, u, v, 2.6) && site.at(p.x, p.y) !== ROAD && Math.abs(ground(f, u - 2.2, v) - ground(f, u + 2.2, v)) < 0.2) {
+        const b = tile(p.x, p.y);
+        const pose: Pose = { o: [p.x, ground(f, u, v), p.y], x: [f.tx, 0, f.ty], y: [0, 1, 0], z: [f.nx, 0, f.ny] };
+        for (const e of [-2.2, 2.2]) {
+          box(b, ZINC, pose, [e, 0.9, 0], [0.03, 0.9, 0.03], 'y');
+          box(b, ZINC, pose, [e, 1.8, 0], [0.025, 0.025, 0.45]);
+        }
+        for (const z of [-0.4, 0.4]) {
+          box(b, ZINC, pose, [0, 1.8, z], [2.2, 0.006, 0.006], 'xX');
+          let x = -1.9 + 0.5 * rnd(lot.id, 333, z);
+          for (let i = 0; i < 4 && x < 1.7; i++) {
+            const [w, h] = [0.22 + 0.3 * rnd(lot.id, 334, i, z), 0.28 + 0.3 * rnd(lot.id, 335, i, z)];
+            if (rnd(lot.id, 336, i, z) < 0.75) box(b, WASHING[Math.floor(rnd(lot.id, 337, i, z) * WASHING.length)], pose, [x + w, 1.79 - h, z], [w, h, 0.008]);
+            x += 2 * w + 0.12 + 0.3 * rnd(lot.id, 338, i, z);
+          }
+        }
+        f.taken.push([u - 2.4, u + 2.4, v - 0.6, v + 0.6]);
+        f.solid.push([u - 2.4, u + 2.4, v - 0.6, v + 0.6]);
+        out.lines++;
+      }
+    }
     for (let i = 0; i < 3; i++) if (rnd(lot.id, 50, i) < [0.7, 0.4, 0.25][i] * lush && yard > 5) tree(f, lo + 2 + rnd(lot.id, 51, i) * (hi - lo - 4), house[3] + 2.6 + rnd(lot.id, 52, i) * (yard - 4.4), 53 + i, 2.4);
     if (!old && rnd(lot.id, 55) < (f.type === 'suburb' || f.type === 'hills' ? 0.85 : 0.4)) {
       const u = drive ? (drive[0] - 0.6 > lo + 0.5 ? drive[0] - 0.6 : drive[1] + 0.6) : du + 1.2;
@@ -997,10 +1047,30 @@ const BACK_TABLES = ['park/picnic-table-wood', 'park/picnic-table-red', 'park/pi
   };
 
   // --- Flats ---
+  // Where the plots around are nearly all houses, a block of flats keeps to their height: four storeys alone among bungalows are out of place.
+  const mid = (lot: Lot): Vec2 => ({ x: lot.poly.reduce((a, p) => a + p.x, 0) / lot.poly.length, y: lot.poly.reduce((a, p) => a + p.y, 0) / lot.poly.length });
+  const HOOD = 90;
+  const hood = new Map<number, [x: number, y: number, house: boolean][]>();
+  for (const lot of land.lots) {
+    if (lot.use === 'OS' || lot.use === 'PK') continue;
+    const c = mid(lot);
+    const key = Math.floor(c.x / HOOD) * 4096 + Math.floor(c.y / HOOD);
+    (hood.get(key) ?? hood.set(key, []).get(key)!).push([c.x, c.y, lot.use === 'R1']);
+  }
+  const amongHouses = (lot: Lot): boolean => {
+    const c = mid(lot);
+    let [all, houses] = [0, 0];
+    for (let i = -1; i <= 1; i++)
+      for (let j = -1; j <= 1; j++)
+        for (const [x, y, house] of hood.get((Math.floor(c.x / HOOD) + i) * 4096 + Math.floor(c.y / HOOD) + j) ?? [])
+          if (Math.hypot(x - c.x, y - c.y) < HOOD) [all, houses] = [all + 1, houses + (house ? 1 : 0)];
+    return houses >= 0.6 * all;
+  };
   const flats = (f: Frame, use: LandUse = f.lot.use): boolean => {
     const lot = f.lot;
     const high = use === 'R3';
-    const floors = high ? Math.max(6, lot.floors) : Math.min(6, Math.max(2, lot.floors));
+    const low = !high && f.type !== 'oldtown' && f.type !== 'midtown' && f.type !== 'downtown' && amongHouses(lot);
+    const floors = high ? Math.max(6, lot.floors) : low ? 2 : Math.min(6, Math.max(2, lot.floors));
     const target = floors * 3.05 + 2;
     const t = f.type;
     const soft = t === 'suburb' || t === 'residential' || t === 'beach';
@@ -1013,8 +1083,8 @@ const BACK_TABLES = ['park/picnic-table-wood', 'park/picnic-table-red', 'park/pi
           ...family('apartment/dingbat').map((s) => [s, (soft ? 2 : 0.3) * tall(s, target)] as [Shape, number]),
           ...family('apartment/motel').map((s) => [s, (soft ? 1 : 0.2) * tall(s, target)] as [Shape, number]),
           ...family('apartment/rowhouse').map((s) => [s, (urban ? 2 : t === 'residential' ? 0.8 : 0.2) * tall(s, target)] as [Shape, number]),
-          ...family('house/duplex').map((s) => [s, (urban ? 0.2 : 1) * tall(s, target)] as [Shape, number]),
-        ];
+          ...family('house/duplex').map((s) => [s, (urban ? 0.2 : low ? 2.5 : 1) * tall(s, target)] as [Shape, number]),
+        ].filter(([s]) => !low || s.h < 9.5) as [Shape, number][];
     const front = Math.max(0, f.v0) + (high ? 4 + 4 * rnd(lot.edge, lot.side, 81) : 3 + 2 * rnd(lot.edge, lot.side, 81));
     const between = high ? 10 : 3.5;
     let group: Rect | null = null;

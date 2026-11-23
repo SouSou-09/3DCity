@@ -474,6 +474,24 @@ const model = (seed: number): RoadModel => {
 };
 
 describe('roads in 3D', () => {
+  it.each(MODEL_SEEDS)('seed %i: a street bends as a curve, not at a corner', (seed) => {
+    const m = model(seed);
+    const c = city(seed);
+    let [sharp, all] = [0, 0];
+    m.lines.forEach((l, id) => {
+      const cls = c.graph.edges[id].cls;
+      if (!l || cls === 'highway' || cls === 'ramp') return;
+      for (let i = 1; i + 1 < l.length; i++) {
+        const [a, b, d] = [l[i - 1], l[i], l[i + 1]];
+        const turn = Math.abs(Math.atan2((b[0] - a[0]) * (d[2] - b[2]) - (b[2] - a[2]) * (d[0] - b[0]), (b[0] - a[0]) * (d[0] - b[0]) + (b[2] - a[2]) * (d[2] - b[2])));
+        all++;
+        if (turn > (30 * Math.PI) / 180) sharp++;
+      }
+    });
+    expect(all).toBeGreaterThan(10000);
+    expect(sharp).toBeLessThan(8);
+    expect(m.stats.folds).toBeLessThan(12);
+  });
   it('is deterministic', () => {
     const a = model(3);
     const b = buildRoadModel(city(3));
@@ -881,7 +899,9 @@ describe('street furniture', () => {
         const [vx, vy] = [q[0] - p[0], q[2] - p[2]];
         const l = Math.hypot(vx, vy) || 1;
         const u = clamp(((it.x - p[0]) * vx + (it.y - p[2]) * vy) / (l * l), 0, 1);
-        offs.push([Math.hypot(p[0] + vx * u - it.x, p[2] + vy * u - it.y), ((it.x - p[0]) * -vy + (it.y - p[2]) * vx) / l, s + u * l]);
+        const [d, side] = [Math.hypot(p[0] + vx * u - it.x, p[2] + vy * u - it.y), ((it.x - p[0]) * -vy + (it.y - p[2]) * vx) / l];
+        // Outside a bend the nearest point of a stretch is its end, and the offset is the distance to it.
+        offs.push([d, u > 0 && u < 1 ? side : Math.sign(side) * d, s + u * l]);
         s += l;
       }
       const best = Math.min(...offs.map((o) => o[0]));
@@ -1897,6 +1917,23 @@ describe('parks, waterfront and boundaries', () => {
       });
       expect(under.length, at).toBeGreaterThan(0);
     }
+    // A block of flats with houses on most of the plots around it keeps to their height.
+    const mid = (l: { poly: { x: number; y: number }[] }): { x: number; y: number } => ({ x: l.poly.reduce((a, p) => a + p.x, 0) / l.poly.length, y: l.poly.reduce((a, p) => a + p.y, 0) / l.poly.length });
+    const plots = city(seed).land.lots.filter((l) => l.use !== 'OS' && l.use !== 'PK').map((l) => ({ ...mid(l), house: l.use === 'R1' }));
+    let among = 0;
+    for (const b of o.buildings.list) {
+      const lot = city(seed).land.lots[b.lot];
+      if (!b.main || b.use !== 'R2' || !/^apartment\//.test(b.model) || !lot || ['oldtown', 'midtown', 'downtown'].includes(lot.site.type)) continue;
+      const c = mid(lot);
+      const near = plots.filter((l) => Math.hypot(l.x - c.x, l.y - c.y) < 90);
+      if (near.filter((l) => l.house).length < 0.6 * near.length) continue;
+      among++;
+      expect(bbox(b.model).max[1], `${b.model} at ${b.x.toFixed(0)}, ${b.y.toFixed(0)}`).toBeLessThan(9.5);
+    }
+    expect(among).toBeGreaterThan(100);
+    // Behind the houses: sheds, and washing on the line.
+    expect(o.buildings.sheds).toBeGreaterThan(900);
+    expect(o.buildings.lines).toBeGreaterThan(250);
     const masts = o.items.filter((i) => i.model === 'furniture/light-flood-4' && i.park !== undefined);
     const courts = o.parks.flatMap((p) => p.features.filter((f) => f.type === 'tennis' || f.type === 'basketball').map((f) => ({ f, tier: p.tier })));
     expect(masts.length).toBe(2 * courts.filter((c) => c.tier !== 'pocket').length);

@@ -49,6 +49,9 @@ const MERGE_RADIUS = 6;
 const SNAP_DIST = 2.5;
 /** A junction this close to another street's centre line is joined to it. */
 const NEAR_MISS = 6;
+/** A turn at one vertex of a centre line that is seen as a corner. */
+const BEND = (5 * Math.PI) / 180;
+const BEND_STEP = 2;
 const MIN_EDGE = 22;
 const MIN_DEAD_END = 35;
 const MAX_DEAD_END = 130;
@@ -905,4 +908,42 @@ export function buildRoadGraph(lines: RoadLine[], t: Terrain, districts: Distric
     }
   }
   return { nodes, edges, crossings };
+}
+
+/**
+ * Rounds the bends inside each street. The centre line is walked in short even steps and each point is drawn towards its two neighbours,
+ * a few times over, with the two ends held: a corner or a jog between two junctions becomes a curve the width of the road can follow,
+ * and what was straight stays where it was. Freeways and ramps are drawn as curves already, and bridges stay straight.
+ */
+export function roundBends(graph: RoadGraph): number {
+  let rounded = 0;
+  for (const e of graph.edges) {
+    if (e.cls === 'highway' || e.cls === 'ramp' || e.bridge || e.points.length < 3 || e.length < 3 * BEND_STEP) continue;
+    const src = e.points;
+    let sharp = false;
+    for (let i = 1; i + 1 < src.length && !sharp; i++) {
+      const [a, p, b] = [src[i - 1], src[i], src[i + 1]];
+      sharp = Math.abs(Math.atan2((p.x - a.x) * (b.y - p.y) - (p.y - a.y) * (b.x - p.x), (p.x - a.x) * (b.x - p.x) + (p.y - a.y) * (b.y - p.y))) > BEND;
+    }
+    if (!sharp) continue;
+    let pts = resample(src, e.length / Math.ceil(e.length / BEND_STEP));
+    pts[0] = src[0];
+    pts[pts.length - 1] = src[src.length - 1];
+    // What a corner is rounded to grows with the square root of the passes: about 10 m on a street, 13 m on a collector, 18 m on a main road.
+    const passes = e.cls === 'arterial' ? 60 : e.cls === 'collector' ? 32 : e.cls === 'path' ? 5 : 18;
+    const turnAt = (q: Vec2[], i: number): number =>
+      Math.abs(Math.atan2((q[i].x - q[i - 1].x) * (q[i + 1].y - q[i].y) - (q[i].y - q[i - 1].y) * (q[i + 1].x - q[i].x), (q[i].x - q[i - 1].x) * (q[i + 1].x - q[i].x) + (q[i].y - q[i - 1].y) * (q[i + 1].y - q[i].y)));
+    // A hairpin is still tight after that: it is drawn out further, until a step along it turns no more than a curve of some 10 m does.
+    for (let k = 0; k < 5 * passes; k++) {
+      if (k >= passes && k % 6 === 0 && !pts.some((_, i) => i > 0 && i + 1 < pts.length && turnAt(pts, i) > 0.2)) break;
+      pts = pts.map((p, i) => (i === 0 || i === pts.length - 1 ? p : { x: 0.25 * pts[i - 1].x + 0.5 * p.x + 0.25 * pts[i + 1].x, y: 0.25 * pts[i - 1].y + 0.5 * p.y + 0.25 * pts[i + 1].y }));
+    }
+    // Points on a straight are dropped again.
+    const out = simplify(pts, 0.03);
+    e.points = out;
+    e.length = 0;
+    for (let i = 1; i < out.length; i++) e.length += Math.hypot(out[i].x - out[i - 1].x, out[i].y - out[i - 1].y);
+    rounded++;
+  }
+  return rounded;
 }
