@@ -14,7 +14,7 @@ const GLASS: RGB = [0.1, 0.14, 0.2];
 const shadeC = (c: RGB, m: number): RGB => [c[0] * m, c[1] * m, c[2] * m];
 
 /** Flat artwork built from rectangles, discs and lettering, then weathered. */
-class Art {
+export class Art {
   readonly L: Layers;
   readonly w: number;
   readonly h: number;
@@ -245,7 +245,7 @@ const SHUTTERS: [string, string, number | null, number, number][] = [['steel', '
 for (const [id, label, c, rust, tags] of SHUTTERS) add('door', `shutter-${id}`, `巻き上げシャッター ${label}`, [2.4, 2.4], (t, s) => shutter(t, s, c === null ? null : hex(c), rust, tags), { tile: 'xy', density: 200 });
 
 // --- Paint for trim, gutters, railings and frames. ---
-function paint(tex: Tex, seed: number, c: RGB, o: { metal?: number; rough?: number; wear?: number } = {}): TextureData {
+export function paint(tex: Tex, seed: number, c: RGB, o: { metal?: number; rough?: number; wear?: number } = {}): TextureData {
   const L = new Layers(tex, c, o.rough ?? 0.5);
   const tone = tex.noise(0.4, 0.4, seed, 3);
   const fine = tex.noise(0.01, 0.01, seed + 1, 2);

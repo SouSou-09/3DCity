@@ -36,6 +36,15 @@ export interface Building {
   civic?: string;
 }
 
+export interface ParkSpot {
+  x: number;
+  y: number;
+  h: number;
+  yaw: number;
+  lot: number;
+  kind: 'stall' | 'drive';
+}
+
 export interface Buildings {
   list: Building[];
   tiles: ModelData[];
@@ -67,6 +76,8 @@ export interface Buildings {
   hard: Map<number, [number, number, number, number, number]>;
   /** Marked parking spaces. */
   stalls: number;
+  /** Where a car may stand off the street: each marked space and the drives of the houses. `yaw` is the way a car driven in forwards faces. */
+  spots: ParkSpot[];
   /** Buildings per use, and public buildings per kind. */
   count: Partial<Record<LandUse, number>>;
   civic: Record<string, number>;
@@ -254,7 +265,7 @@ export function placeBuildings(site: Site, shore: Waterfront): Buildings {
   const land = city.land;
   const seed = site.seed;
   const rnd = (...v: number[]): number => hash(seed, 7717, ...v);
-  const out: Buildings = { list: [], tiles: [], plots: [], owner: new Int32Array(0), vacant: [], yards: [], fence: 0, runs: [], sheds: 0, garages: 0, hedges: 0, lines: 0, hard: new Map(), patios: 0, stalls: 0, count: {}, civic: {} };
+  const out: Buildings = { list: [], tiles: [], plots: [], owner: new Int32Array(0), vacant: [], yards: [], fence: 0, runs: [], sheds: 0, garages: 0, hedges: 0, lines: 0, spots: [], hard: new Map(), patios: 0, stalls: 0, count: {}, civic: {} };
   const sand = new Set(shore.sandLots);
   const builders = new Map<string, MeshBuilder>();
   const tile = (x: number, y: number): MeshBuilder => {
@@ -969,6 +980,11 @@ const BACK_TABLES = ['park/picnic-table-wood', 'park/picnic-table-red', 'park/pi
       pave(f, f.type === 'industrial' && !plan?.garage ? 'ground/gravel-dirt' : dtex, drive, 0.05, 3);
       f.taken.push(drive);
       gaps.push([drive[0] - 0.2, drive[1] + 0.2]);
+      // Room on it for a car, clear of the pavement.
+      if (drive[3] >= 5.6 && drive[1] - drive[0] >= 2.5) {
+        const p = at(f, (drive[0] + drive[1]) / 2, Math.max(2.9, drive[3] - 2.9 - 1.5 * rnd(lot.id, 35)));
+        out.spots.push({ x: p.x, y: p.y, h: site.heightAt(p.x, p.y) + 0.06, yaw: Math.atan2(f.ny, f.nx), lot: lot.id, kind: 'drive' });
+      }
     }
     // Path from the door to the pavement, or across to the drive.
     const [du, dv0] = plan ? modelUV(f, model, uc, vf, plan.door[0], plan.door[1]) : [uc, vf];
@@ -1132,6 +1148,7 @@ const BACK_TABLES = ['park/picnic-table-wood', 'park/picnic-table-red', 'park/pi
         // The closed end of a space is away from its aisle: the far row and every second one after it open towards the road,
         // and the texture's closed end is on the road side as it comes.
         mark(tile(p.x, p.y), worn ? 'symbol/parking-stall-white-worn' : 'symbol/parking-stall-white-new', p.x, p.y, f.yaw + (k % 2 ? 0 : Math.PI));
+        out.spots.push({ x: p.x, y: p.y, h: site.heightAt(p.x, p.y) + 0.06, yaw: Math.atan2(f.ny, f.nx) + (k % 2 ? Math.PI : 0), lot: f.lot.id, kind: 'stall' });
         count++;
       }
     });

@@ -45,6 +45,22 @@ export interface StreetFurniture {
   /** Spans of wire from pole to pole: `low` is the least height of a wire above the line between the feet of the poles, `crossing` whether it passes over a carriageway. */
   spans: { a: Vec2; b: Vec2; low: number; crossing: boolean }[];
   stats: Record<FurnitureKind, number>;
+  /** Lengths of kerb where a car may be left, one for each car: in the parking lanes, clear of the corners and the bus stops. */
+  kerb: KerbSpace[];
+}
+
+export interface KerbSpace {
+  x: number;
+  y: number;
+  h: number;
+  /** The way the traffic on that side runs. */
+  yaw: number;
+  /** Rise per metre that way. */
+  slope: number;
+  edge: number;
+  side: number;
+  type: DistrictType;
+  cls: RoadClass;
 }
 
 /** Signal masts by the length of their arm. */
@@ -833,6 +849,7 @@ export function placeStreetFurniture(city: City, roads: RoadModel): StreetFurnit
   });
   const mails: Vec2[] = [];
   const busZones = new Map<number, { side: number; from: number; to: number }[]>();
+  const kerbSpaces: KerbSpace[] = [];
 
   graph.edges.forEach((e) => {
     const cls: RoadClass = e.cls;
@@ -1019,6 +1036,20 @@ export function placeStreetFurniture(city: City, roads: RoadModel): StreetFurnit
           const q = at(d, off(side, 0.5));
           if (w(side) >= 2.2 && dry(q) && !zones.some((z) => z.side === side && d > z.from - 1 && d < z.to + 1)) put({ model: gone(d + 2) ? pick(['furniture/meter-expired', 'furniture/meter-old', 'furniture/meter-bagged'], e.id, d, 69) : model, kind: 'meter', x: q.x, y: q.y, h: q.h, yaw: facing(rev(away(q, side))), edge: e.id }, 1.05);
         }
+      }
+    }
+    // Room at the kerb for parked cars.
+    for (const side of [1, -1]) {
+      const ln = lay.lanes.find((l) => l.lane.kind === 'parking' && (l.x0 + l.x1) * side > 0);
+      if (!ln || ln.x1 - ln.x0 < 1.9) continue;
+      const x = (ln.x0 + ln.x1) / 2 + side * Math.max(0, (ln.x1 - ln.x0 - 2.1) / 2);
+      for (let d = 11 + 3 * hash(seed, e.id, side, 160); d < len - 11; d += 6.2) {
+        if (zones.some((z) => z.side === side && d > z.from - 4 && d < z.to + 4)) continue;
+        const q = at(d, x);
+        if (!dry(q) || indent(d, side) > 0 || widen(d, side) > 0) continue;
+        const [qa, qb] = [at(Math.max(0, d - 2), x), at(Math.min(len, d + 2), x)];
+        const t = side > 0 ? q.t : rev(q.t);
+        kerbSpaces.push({ x: q.x, y: q.y, h: q.h, yaw: along(t), slope: (side * (qb.h - qa.h)) / Math.max(0.5, Math.hypot(qb.x - qa.x, qb.y - qa.y)), edge: e.id, side, type: p.type as DistrictType, cls });
       }
     }
     // A mail box at a corner now and then.
@@ -1234,5 +1265,5 @@ export function placeStreetFurniture(city: City, roads: RoadModel): StreetFurnit
     }
   });
 
-  return { items, tiles: [...wires.values()].map((b) => b.build()), spans, stats };
+  return { items, tiles: [...wires.values()].map((b) => b.build()), spans, stats, kerb: kerbSpaces };
 }

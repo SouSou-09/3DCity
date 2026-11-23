@@ -9,6 +9,7 @@ import { landCover } from '../place/landCover';
 import { OpenSpace, placeOpenSpace } from '../place/openSpace';
 import { SITE_CELL } from '../place/site';
 import { StreetFurniture, placeStreetFurniture } from '../place/streetFurniture';
+import { Vehicles, placeVehicles } from '../place/vehicles';
 import { WATER_Y } from '../place/waterfront';
 import { bedTexture, groundMaterial, waterMaterial } from './ground';
 import { Materials } from './materials';
@@ -25,6 +26,8 @@ interface Instance {
   scale?: number;
   /** Scale along the model's own x axis. */
   stretch?: number;
+  /** Colour of the body paint, for the cars. */
+  tint?: number;
 }
 
 /**
@@ -47,6 +50,7 @@ export class CityView {
   roads: RoadModel | null = null;
   /** Signals, signs and lights standing along the roads. */
   furniture: StreetFurniture | null = null;
+  vehicles: Vehicles | null = null;
   /** Tracks, level crossings and stations along the railway. */
   rail: RailModel | null = null;
   /** Parks, the waterfront and fences as placed. */
@@ -80,7 +84,8 @@ export class CityView {
       else groups.set(k, [it]);
     }
     const out = new THREE.Group();
-    const geos = new Map<string, { geo: THREE.BufferGeometry; mat: THREE.Material; layer: number }[]>();
+    const geos = new Map<string, { geo: THREE.BufferGeometry; mat: THREE.Material; layer: number; tinted: boolean }[]>();
+    const tint = new THREE.Color();
     const m = new THREE.Matrix4();
     const size = new THREE.Vector3();
     for (const [k, list] of groups) {
@@ -95,7 +100,7 @@ export class CityView {
           geo.setAttribute('normal', new THREE.Float32BufferAttribute(p.normals, 3));
           geo.setAttribute('uv', new THREE.Float32BufferAttribute(p.uvs, 2));
           geo.setIndex(p.indices);
-          return { geo, mat: this.materials.material(p.material, p.layer), layer: p.layer };
+          return { geo, mat: this.materials.material(p.material, p.layer), layer: p.layer, tinted: p.material.startsWith('vehicle/paint') };
         });
         geos.set(id, parts);
       }
@@ -109,7 +114,9 @@ export class CityView {
           m.elements[9] = it.slopeZ ?? 0;
           m.setPosition(it.x, it.h, it.y);
           mesh.setMatrixAt(i, m);
+          if (p.tinted && it.tint !== undefined) mesh.setColorAt(i, tint.setHex(it.tint, THREE.SRGBColorSpace));
         });
+        if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
         mesh.instanceMatrix.needsUpdate = true;
         mesh.computeBoundingSphere();
         mesh.renderOrder = p.layer;
@@ -149,6 +156,8 @@ export class CityView {
     this.content.add(this.buildFurniture(rail.items));
     for (const tile of open.tiles) this.content.add(this.materials.group(tile));
     this.content.add(this.buildFurniture(open.items));
+    this.vehicles = placeVehicles(city, open.buildings, this.furniture);
+    this.content.add(this.buildFurniture(this.vehicles.items));
     const s = city.config.size;
     const dt = city.districts.downtown.center;
     this.controls.target.set(dt.x, 0, dt.y);
