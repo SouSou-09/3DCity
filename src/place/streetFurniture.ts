@@ -4,7 +4,7 @@ import { MeshBuilder, ModelData, V3 } from '../assets/mesh/builder';
 import { CABLE, POLE_TAPS, Taps } from '../assets/mesh/furniture';
 import { catenary, pipe } from '../assets/mesh/kit';
 import { Layout, Side, bayReach, layout, reversed, sideWidth } from '../assets/mesh/section';
-import { Vec2 } from '../core/vec2';
+import { Vec2, clamp } from '../core/vec2';
 import { City } from '../gen/city';
 import { DistrictType } from '../gen/districts';
 import { RailIndex } from '../gen/rail';
@@ -411,6 +411,77 @@ export function placeStreetFurniture(city: City, roads: RoadModel): StreetFurnit
       const c = graph.edges[a.edge].cls;
       return c !== 'highway' && c !== 'ramp' && c !== 'path';
     };
+    if (j.roundabout) {
+      const { radius: R, island } = j.roundabout;
+      const type = profiles[arms[0].edge].type as DistrictType;
+      // Give way on the driver's right at each entry, an arrow on the island ahead of him, the warning further back on the bigger roads.
+      arms.forEach((a) => {
+        const ai = j.arms.indexOf(a);
+        const lay = armLay(a);
+        const cls = graph.edges[a.edge].cls;
+        const [wl, wr] = [lay.road[0] - lay.outer[0], lay.outer[1] - lay.road[1]];
+        // An entry with an island in it widens towards the circle.
+        const flare = (d: number): number => (a.reach > R + 10 ? clamp((a.reach - d) / 12, 0, 1) : 0);
+        if (arrives(a)) {
+          const d = Math.min(R + 5.5, a.reach - 1);
+          const model = hash(seed, ji, ai, 121) < 0.12 ? 'sign/yield-old' : 'sign/yield';
+          put({ model, kind: 'stop', ...armPoint(j, a, lay, d, lay.road[0] - flare(d) - behind(wl)), yaw: facing(a.dir), junction: ji, arm: ai, edge: a.edge }, 0.8);
+          const r = island - 0.9;
+          const p = { x: j.x + a.dir.x * r, y: j.y + a.dir.y * r };
+          add({ model: 'sign/marker-chevron-right', kind: 'oneway', ...p, h: j.plane.h + j.plane.gx * (p.x - j.x) + j.plane.gy * (p.y - j.y) + 0.21, yaw: facing(a.dir), junction: ji, arm: ai, edge: a.edge });
+          if (cls !== 'local') put({ model: 'sign/warn-roundabout', kind: 'warning', ...armPoint(j, a, lay, a.reach + 22, lay.road[0] - behind(wl)), yaw: facing(a.dir), junction: ji, arm: ai, edge: a.edge }, 0.8);
+        }
+        // A light where each street comes in, on the left of the arm.
+        const set = LIGHTS[type] ?? LIGHTS.residential;
+        const model = set[cls === 'arterial' ? 0 : 1];
+        const d = Math.min(R + 7.5, a.reach - 0.5);
+        if (model) put({ model, kind: 'light', ...armPoint(j, a, lay, d, lay.road[1] + flare(d) + behind(wr)), yaw: along(rev(right(a.dir))), junction: ji, edge: a.edge }, 1.5);
+      });
+      // The island is planted: low towards its edge, where drivers look across it, and higher in the middle.
+      const mound = Math.min(0.6, (island + 0.15) * 0.08);
+      const grow = (model: string, kind: 'tree' | 'plant', r: number, ang: number, yaw = hash(seed, ji, Math.round(r * 10), Math.round(ang * 100), 122) * 6.283): void => {
+        const p = { x: j.x + Math.cos(ang) * r, y: j.y + Math.sin(ang) * r };
+        add({ model, kind, ...p, h: j.plane.h + j.plane.gx * (p.x - j.x) + j.plane.gy * (p.y - j.y) + 0.21 + mound * (1 - r / island), yaw, junction: ji });
+      };
+      const of = <T>(list: T[], ...v: number[]): T => list[Math.floor(hash(seed, ji, ...v) * list.length)];
+      const turn = hash(seed, ji, 123) * 6.283;
+      const style = island < 5 ? 3 : Math.floor(hash(seed, ji, 124) * 3);
+      const warm = type === 'beach' || type === 'midtown';
+      const SHRUBS = warm ? ['plant/shrub-hibiscus-red', 'plant/shrub-hibiscus-pink', 'plant/shrub-bougainvillea', 'plant/shrub-plumbago'] : ['plant/shrub-rose-mixed', 'plant/shrub-camellia', 'plant/shrub-rose-pink', 'plant/shrub-broadleaf', 'plant/shrub-rose-white'];
+      const FLOWERS = ['plant/flower-petunia', 'plant/flower-marigold', 'plant/flower-geranium', 'plant/flower-vinca', 'plant/flower-daisy-mixed', 'plant/flower-tulip-mixed', 'plant/flower-lavender', 'plant/flower-aster'];
+      const GRASSES = ['plant/grass-fountain', 'plant/grass-fescue', 'plant/grass-patch'];
+      const ring = (models: string[], r: number, gap: number, salt: number, tangent = false): void => {
+        const n = Math.max(3, Math.round((2 * Math.PI * r) / gap));
+        const one = of(models, salt);
+        for (let k = 0; k < n; k++) {
+          const ang = turn + (k / n) * 2 * Math.PI;
+          grow(models.length > 3 && salt % 2 ? of(models, salt, k) : one, 'plant', r, ang, tangent ? ang + Math.PI / 2 : undefined);
+        }
+      };
+      if (style === 0) {
+        // One big tree, shrubs round its foot and a band of flowers.
+        grow(warm ? of(['plant/palm-date', 'plant/palm-fan'], 125) : of(['plant/street-plane-large', 'plant/street-oak-old', 'plant/street-elm', 'plant/street-magnolia'], 125), 'tree', 0, 0);
+        ring(SHRUBS, island * 0.3, 1.9, 126);
+        ring(FLOWERS, island * 0.62, 1.1, 128);
+      } else if (style === 1) {
+        // A clump of small trees in rough grass, flowers at the middle.
+        const n = island > 9 ? 5 : 3;
+        for (let k = 0; k < n; k++) grow(warm ? of(['plant/palm-queen', 'plant/palm-fan'], 130) : of(LOW_TREES, 130, k), 'tree', island * (0.34 + 0.12 * hash(seed, ji, k, 131)), turn + ((k + 0.3 * hash(seed, ji, k, 132)) / n) * 2 * Math.PI);
+        grow('plant/flower-bed-round', 'plant', 0, 0);
+        for (let k = 0; k < Math.round(island * 2.2); k++) grow(of(GRASSES, 133, k), 'plant', island * (0.15 + 0.7 * Math.sqrt(hash(seed, ji, k, 134))), hash(seed, ji, k, 135) * 6.283);
+      } else if (style === 2) {
+        // Formal: a round bed, clipped box in a circle and a low hedge of flowers outside it.
+        grow('plant/flower-bed-round', 'plant', 0, 0);
+        ring(['plant/shrub-box', 'plant/shrub-box-large', 'plant/shrub-box-light'], island * 0.36, 2.2, 136);
+        ring(['plant/flower-lavender-row', 'plant/flower-strip', 'plant/flower-strip-red', 'plant/grass-fountain-row'], island * 0.68, 2.6, 138, true);
+        for (let k = 0; k < 4; k++) grow(of(SHRUBS, 139), 'plant', island * 0.52, turn + (k / 4) * 2 * Math.PI + Math.PI / 4);
+      } else {
+        // Too small for more than a bed of flowers.
+        grow('plant/flower-bed-round', 'plant', 0, 0);
+        if (island > 2.5) ring(FLOWERS, island * 0.6, 1, 140);
+      }
+      return;
+    }
     if (j.signal) {
       arms.forEach((a) => {
         const ai = j.arms.indexOf(a);

@@ -1,4 +1,4 @@
-import { MeshBuilder, Path, V3, placePath, straight } from './builder';
+import { MeshBuilder, Path, V3, placePath, slicePath, straight, sweep } from './builder';
 import { Layout, Section, Side, crossBand, layout, stamp, sweepSection } from './section';
 
 type P2 = [number, number];
@@ -327,7 +327,7 @@ export function roundabout(b: MeshBuilder, o: RoundaboutOpts): void {
       b.triUp(o.island ?? 'ground/grass-lush', [0, base + 0.15 + Math.min(0.6, rc * 0.08), 0], [i0[0], base + 0.15, i0[1]], [i1[0], base + 0.15, i1[1]]);
     }
   }
-  const { fl, fr, flare, taper, mouthAt } = entries(arms, o);
+  const { fl, fr, flare, taper, mouthAt, rf } = entries(arms, o);
   for (let i = 0; i < n; i++) {
     const a = arms[i];
     const c = arms[(i + 1) % n];
@@ -337,7 +337,8 @@ export function roundabout(b: MeshBuilder, o: RoundaboutOpts): void {
     while (m0 < m1) m0 += Math.PI * 2;
     while (m0 - m1 > Math.PI * 2) m0 -= Math.PI * 2;
     const mouth: P2[] = [rightEdge(a, a.L), leftEdge(a, a.L), ...(flare[i] ? [leftEdge(a, mouthAt[i], flare[i])] : []), ...fl[i].pts];
-    for (let k = 1; k < 8; k++) mouth.push(on(m0 + ((m1 - m0) * k) / 8));
+    // (Inside the circle by a little: the chords would otherwise leave slivers open between this floor and the ring's.)
+    for (let k = 1; k < 8; k++) mouth.push(on(m0 + ((m1 - m0) * k) / 8, R - 0.4));
     mouth.push(...[...fr[i].pts].reverse(), ...(flare[i] ? [rightEdge(a, mouthAt[i], flare[i])] : []));
     b.fan(o.floor, add([0, 0], a.d, R + 0.4 * (mouthAt[i] - R)), mouth, 0);
     b.fan('ground/dirt', add([0, 0], a.d, R + 0.4 * (mouthAt[i] - R)), [...mouth].reverse(), -0.4);
@@ -401,18 +402,23 @@ export function roundabout(b: MeshBuilder, o: RoundaboutOpts): void {
     // A flared entry: give-way line at the circle, the crossing a car's length back from it, and an island between the two directions
     // that the crossing passes through.
     const F = flare[i];
-    const [t0, t1] = [R + 1, g.L];
+    const [t0, t1] = [R + 0.7, g.L];
     const [m0, m1] = divide(g)!;
     const [cx, end] = [(m0 + m1) / 2, Math.max(0.1, (m1 - m0) / 2)];
     const out = (t: number): number => F * clamp01((g.L - t) / taper);
     const path = placePath(straight(g.L - R, 1), [g.d[0] * R, 0, g.d[1] * R], g.yaw);
     const inbound = g.lay.lanes.filter((l) => l.lane.dir === -1 && l.lane.kind !== 'parking');
     const sgn = (inbound[0].x0 + inbound[inbound.length - 1].x1) / 2 < cx ? -1 : 1;
+    // The give-way line lies at the edge of the circulating road, from the island to the kerb where it curves away; its teeth point at the driver.
     const teeth = `crosswalk/yield-teeth-${paint}`;
-    const ty = mouthAt[i] - 0.4;
-    const reach = (sgn < 0 ? g.hl : g.hr) + out(ty) - 0.1;
-    const near = cx + sgn * (end + out(ty) + 0.25);
-    crossBand(b, path, teeth, ty - R - b.part(teeth, 2).mh, ty - R, Math.min(near, sgn * reach), Math.max(near, sgn * reach));
+    const tp = b.part(teeth, 2);
+    const ty = R + 0.9 + tp.mh;
+    const f = sgn < 0 ? fl[i] : fr[i];
+    const kerb = (sgn < 0 ? g.hl : g.hr) + F + (ty < f.t ? rf - Math.sqrt(Math.max(0, rf * rf - (f.t - ty) ** 2)) : 0);
+    const near = cx + sgn * (end + out(ty) + 0.3);
+    const [x0, x1] = [Math.min(near, sgn * (kerb - 0.2)), Math.max(near, sgn * (kerb - 0.2))];
+    const reps = Math.max(1, Math.round((x1 - x0) / tp.mw));
+    sweep(b, slicePath(path, ty - tp.mh - R, ty - R), [{ material: teeth, layer: 2, pts: [[x0, 0], [x1, 0]], uv: 'tile', c: [0, reps * tp.mw], fitTo: [ty - tp.mh - R, ty - R], flip: true }]);
     let cut: [number, number] | null = null;
     if (g.arm.crosswalk) {
       const id = `${g.arm.crosswalk}-${paint}`;
@@ -423,7 +429,8 @@ export function roundabout(b: MeshBuilder, o: RoundaboutOpts): void {
       cut = [from - 0.15, from + depth + 0.15];
     }
     const P = (t: number, x: number, y: number): V3 => [g.d[0] * t + g.r[0] * x, y, g.d[1] * t + g.r[1] * x];
-    const tex = o.apronTex ?? 'paving/setts-granite';
+    const tex = o.walk?.tex ?? sideTex(g.arm.section.left);
+    const E = 0.16;
     for (const [ta, tb] of cut ? ([[t0, cut[0]], [cut[1], t1]] as const) : ([[t0, t1]] as const)) {
       if (tb - ta < 0.6) continue;
       const ts: number[] = [];
@@ -435,7 +442,10 @@ export function roundabout(b: MeshBuilder, o: RoundaboutOpts): void {
       for (let k = 0; k < m; k++) {
         const [u0, u1] = [ts[k], ts[k + 1]];
         const [w0, w1] = [hw(u0), hw(u1)];
-        b.quadUp(tex, P(u0, cx - w0, H), P(u0, cx + w0, H), P(u1, cx + w1, H), P(u1, cx - w1, H));
+        // Paved between kerbstones where it is wide enough for more than the stones.
+        const [e0, e1] = [Math.min(E, w0), Math.min(E, w1)];
+        if (w0 > E || w1 > E) b.quadUp(tex, P(u0, cx - w0 + e0, H), P(u0, cx + w0 - e0, H), P(u1, cx + w1 - e1, H), P(u1, cx - w1 + e1, H));
+        for (const s of [-1, 1]) b.quadUp('curb/plain', P(u0, cx + s * (w0 - e0), H), P(u0, cx + s * w0, H), P(u1, cx + s * w1, H), P(u1, cx + s * (w1 - e1), H));
         for (const s of [-1, 1])
           b.quadFacing('curb/plain', P(u0, cx + s * w0, 0), P(u1, cx + s * w1, 0), P(u1, cx + s * w1, H), P(u0, cx + s * w0, H), [g.r[0] * s, 0, g.r[1] * s], [[u0, 0], [u1, 0], [u1, 0.25], [u0, 0.25]]);
       }
@@ -466,7 +476,7 @@ interface Fillet { pts: P2[]; t: number; phi: number }
  * How each arm (sorted by angle) enters the circle: the kerb fillets, how far the road widens towards the circle (flare) over what length,
  * and where the mouth ends. Sets each arm's L to where its own road starts.
  */
-function entries(arms: ArmGeo[], o: RoundaboutOpts): { fl: Fillet[]; fr: Fillet[]; flare: number[]; taper: number; mouthAt: number[] } {
+function entries(arms: ArmGeo[], o: RoundaboutOpts): { fl: Fillet[]; fr: Fillet[]; flare: number[]; taper: number; mouthAt: number[]; rf: number } {
   const R = o.radius;
   const n = arms.length;
   const rf = o.entryRadius ?? Math.min(4, R * 0.35);
@@ -503,7 +513,7 @@ function entries(arms: ArmGeo[], o: RoundaboutOpts): { fl: Fillet[]; fr: Fillet[
     return Math.max(fl[i].t, fr[i].t, ta - 0.2, tc - 0.2) + 0.5;
   });
   arms.forEach((g, i) => (g.L = mouthAt[i] + (flare[i] ? taper : 0)));
-  return { fl, fr, flare, taper, mouthAt };
+  return { fl, fr, flare, taper, mouthAt, rf };
 }
 
 /** Distance from the centre at which each arm's approach starts on a roundabout, in the order the arms were given. */
