@@ -93,8 +93,8 @@ const SHARE: Record<DistrictType, Partial<Record<LandUse, number>>> = {
   downtown: { R3: 12, C1: 3, C2: 15, O1: 10, O2: 40, PK: 8, CV: 6, OS: 6 },
   midtown: { R2: 12, R3: 20, C1: 8, C2: 20, C3: 4, C4: 2, O1: 16, O2: 6, PK: 5, CV: 4, OS: 3 },
   oldtown: { R1: 5, R2: 30, R3: 3, C1: 15, C2: 30, O1: 5, I1: 2, PK: 2, CV: 5, OS: 3 },
-  residential: { R1: 52, R2: 22, R3: 3, C1: 5, C2: 4, C3: 4, C4: 1, O1: 1, PK: 1, CV: 4, OS: 3 },
-  suburb: { R1: 74, R2: 5, C1: 3, C3: 5, C4: 4, O1: 1, CV: 4, OS: 4 },
+  residential: { R1: 52, R2: 22, R3: 3, C1: 5, C2: 4, C3: 4, C4: 1, O1: 1, PK: 1, CV: 4, OS: 1.5 },
+  suburb: { R1: 74, R2: 5, C1: 3, C3: 5, C4: 4, O1: 1, CV: 4, OS: 1.5 },
   hills: { R1: 40, R2: 2, C1: 1, CV: 1, OS: 6 },
   beach: { R1: 25, R2: 22, R3: 10, C1: 14, C2: 12, C3: 5, O2: 4, PK: 4, CV: 1, OS: 3 },
   industrial: { C1: 2, C3: 6, C4: 2, O1: 4, I1: 48, I2: 22, PK: 6, OS: 10 },
@@ -108,15 +108,15 @@ interface Dim {
 }
 /** Frontage and depth per use (placement plan §6.3). */
 const DIM: Record<LandUse, Dim> = {
-  R1: { w: [12, 16], d: [28, 35], run: 260 },
-  R2: { w: [15, 30], d: [28, 38], run: 180 },
-  R3: { w: [30, 60], d: [35, 50], run: 160 },
+  R1: { w: [11, 14.5], d: [28, 35], run: 260 },
+  R2: { w: [13, 24], d: [28, 38], run: 180 },
+  R3: { w: [24, 46], d: [32, 46], run: 160 },
   C1: { w: [6, 18], d: [20, 32], run: 150 },
   C2: { w: [6, 18], d: [20, 32], run: 170 },
   C3: { w: [35, 60], d: [35, 50], run: 70 },
   C4: { w: [80, 170], d: [70, 150], run: 180 },
-  O1: { w: [25, 45], d: [30, 45], run: 120 },
-  O2: { w: [32, 70], d: [30, 70], run: 150 },
+  O1: { w: [22, 38], d: [30, 45], run: 120 },
+  O2: { w: [28, 56], d: [30, 70], run: 150 },
   I1: { w: [40, 90], d: [50, 100], run: 260 },
   I2: { w: [80, 160], d: [80, 160], run: 260 },
   PK: { w: [18, 45], d: [20, 45], run: 45 },
@@ -124,10 +124,10 @@ const DIM: Record<LandUse, Dim> = {
   OS: { w: [12, 30], d: [20, 35], run: 40 },
 };
 const R1_DIM: Partial<Record<DistrictType, Dim>> = {
-  suburb: { w: [17, 24], d: [30, 38], run: 300 },
+  suburb: { w: [14, 18], d: [30, 38], run: 300 },
   beach: { w: [8, 11], d: [20, 28], run: 200 },
   oldtown: { w: [8, 11], d: [20, 28], run: 150 },
-  hills: { w: [25, 45], d: [30, 60], run: 400 },
+  hills: { w: [20, 32], d: [30, 60], run: 400 },
 };
 const dimOf = (use: LandUse, type: DistrictType): Dim => (use === 'R1' ? R1_DIM[type] ?? DIM.R1 : DIM[use]);
 /** Uses that may run through a block from one street to the next. */
@@ -285,14 +285,15 @@ function floorsFor(use: LandUse, site: Site, corner: boolean, rng: Rng): number 
       return Math.min(6, rng.int(2, 5) + (near ? 1 : 0));
     case 'R3': {
       const base = site.type === 'downtown' ? rng.int(8, 22) : site.type === 'beach' && site.sea < 150 ? rng.int(4, 12) : rng.int(5, 10);
-      return Math.min(site.type === 'downtown' ? 30 : 20, Math.round(base * main) + bonus);
+      // Height steps down from the middle of town: among houses a block of flats is tall only by a station.
+      return Math.min(site.type === 'downtown' ? 30 : site.type === 'residential' || site.type === 'suburb' ? (near ? 14 : 8) : 20, Math.round(base * main) + bonus);
     }
     case 'C1':
       return rng.chance(0.3) ? 2 : 1;
     case 'C2':
       return Math.min(site.type === 'oldtown' ? 6 : 12, rng.int(2, site.type === 'downtown' || site.type === 'midtown' ? 7 : 5) + bonus);
     case 'O1':
-      return Math.min(12, rng.int(2, 7) + bonus);
+      return Math.min(site.type === 'downtown' || site.type === 'midtown' ? 12 : near ? 8 : 4, rng.int(2, 7) + bonus);
     case 'O2': {
       if (site.type !== 'downtown') return Math.min(20, rng.int(6, 13) + bonus);
       const peak = Math.exp(-site.centre / 45);
@@ -581,6 +582,11 @@ export function planLandUse(graph: RoadGraph, t: Terrain, districts: Districts, 
         const endsAtCorner = clear >= e.length - s - 1 && e.length - s < 70 && nodes[e.b].degree >= 3;
         const corner = startsAtCorner || (endsAtCorner && clear < 40);
         const w = useWeights(site, corner);
+        // A block too shallow for two rows of a use is one row of it, from this street to the one behind.
+        const through = (u: LandUse): boolean => {
+          const dim = dimOf(u, site.type);
+          return !!THROUGH[u] || (room < dim.d[0] * MIN_DEPTH && roomThrough <= dim.d[1] * 1.3);
+        };
         // A use needs enough frontage and depth here.
         let total = 0;
         let top = 0;
@@ -589,7 +595,7 @@ export function planLandUse(graph: RoadGraph, t: Terrain, districts: Districts, 
         for (const u of LAND_USES) {
           const dim = dimOf(u, site.type);
           wanted += w[u];
-          if (clear < dim.w[0] * 0.85 || (THROUGH[u] ? roomThrough : room) < dim.d[0] * MIN_DEPTH) w[u] = 0;
+          if (clear < dim.w[0] * 0.85 || (through(u) ? roomThrough : room) < dim.d[0] * MIN_DEPTH) w[u] = 0;
           else if (w[u] > 0) {
             fits += w[u];
             w[u] *= (0.45 + 1.1 * clamp(0.5 + 0.9 * noise.fbm(centre.x / 260 + LAND_USES.indexOf(u) * 31.7, centre.y / 260, 2), 0, 1)) * balance(site.type, u);
@@ -624,7 +630,8 @@ export function planLandUse(graph: RoadGraph, t: Terrain, districts: Districts, 
         width = Math.min(width, clear);
         const rest = clear - width;
         if (rest < dim.w[0] * 0.85) width = rest + width <= dim.w[1] * 1.5 ? clear : clear / 2;
-        const avail = THROUGH[use] ? roomThrough : room;
+        const thru = through(use);
+        const avail = thru ? roomThrough : room;
         let depth = Math.min(avail, r.range(dim.d[0], dim.d[1]));
         // A strip too thin to use on its own goes to this lot.
         if (avail - depth < 12 && avail <= dim.d[1] * 1.3) depth = avail;
@@ -632,7 +639,7 @@ export function planLandUse(graph: RoadGraph, t: Terrain, districts: Districts, 
         const fe = frame(s + width);
         const fc = frame(s + width / 2);
         const fo = frame(s + width - INSET);
-        depth = Math.min(depth, probe(fo.p, fo.nx, fo.ny, row, depth + G, THROUGH[use]), probe(fc.p, fc.nx, fc.ny, row, depth + G, THROUGH[use]));
+        depth = Math.min(depth, probe(fo.p, fo.nx, fo.ny, row, depth + G, thru), probe(fc.p, fc.nx, fc.ny, row, depth + G, thru));
         let made = false;
         for (let attempt = 0; attempt < 3 && depth >= dim.d[0] * MIN_DEPTH; attempt++, depth *= 0.8) {
           const poly: Vec2[] = [];
@@ -690,6 +697,82 @@ export function planLandUse(graph: RoadGraph, t: Terrain, districts: Districts, 
       }
     }
   }
+
+  // --- The wedge beside a lot ---
+  /**
+   * The side line of a lot is square to its street, so where the street turns, or meets another at an angle, a wedge is left
+   * between the lot and whatever comes next. That wedge is the side garden of the house: the side line swings out over it, its
+   * front end along the street and its rear end along the rear line, as far as the ground is nobody's. Before the scraps of
+   * frontage are shared out, a piece wide enough to be a plot of its own is left for that.
+   */
+  const widen = (keepPlots: boolean): void => {
+    for (const l of lots) {
+      if (l.use !== 'R1' && l.use !== 'R2') continue;
+      const e = edges[l.edge];
+      const row = widthOf[e.id] / 2;
+      const own = l.id + 1;
+      const mine = (p: Vec2): boolean => {
+        const [i, j] = [Math.floor(p.x / G), Math.floor(p.y / G)];
+        return i >= 0 && j >= 0 && i < n && j < n && (kind[j * n + i] === FREE || grid[j * n + i] === own);
+      };
+      const clearTo = (p: Vec2, q: Vec2): boolean => {
+        const len = dist(p, q);
+        for (let d = 1.5; d < len; d += 1.5) if (!mine({ x: p.x + ((q.x - p.x) * d) / len, y: p.y + ((q.y - p.y) * d) / len })) return false;
+        return mine(q);
+      };
+      const corner = (s: number): Vec2 | null => {
+        const q = pointAt(e.points, clamp(s, 0, e.length));
+        const [nx, ny] = [-q.tan.y * l.side, q.tan.x * l.side];
+        return at(q.p.x + nx * (row + 2), q.p.y + ny * (row + 2)) === FREE || grid[Math.floor((q.p.y + ny * (row + 2)) / G) * n + Math.floor((q.p.x + nx * (row + 2)) / G)] === own
+          ? { x: q.p.x + nx * row, y: q.p.y + ny * row }
+          : null;
+      };
+      for (const end of [0, 1] as const) {
+        const nf = l.front;
+        const [fi, ri, oi] = end === 0 ? [0, nf + 1, nf] : [nf - 1, nf, nf + 1];
+        const [f0, r0, other] = [l.poly[fi], l.poly[ri], l.poly[oi]];
+        const span = dist(r0, other);
+        if (span < 1) continue;
+        const [dx, dy] = [(r0.x - other.x) / span, (r0.y - other.y) / span];
+        // The front corner along the street.
+        let [kf, f1] = [0, f0];
+        for (let k = 1.5; k <= 12; k += 1.5) {
+          const s = end === 0 ? l.s0 - k : l.s1 + k;
+          if (s < 0 || s > e.length) break;
+          const c = corner(s);
+          if (!c || !clearTo(c, r0)) break;
+          [kf, f1] = [k, c];
+        }
+        // The rear corner along the rear line.
+        let [kr, r1] = [0, r0];
+        for (let k = 1.5; k <= Math.min(16, 0.6 * l.depth); k += 1.5) {
+          const c = { x: r0.x + dx * k, y: r0.y + dy * k };
+          if (!clearTo(f1, c) || !clearTo(r0, c)) break;
+          [kr, r1] = [k, c];
+        }
+        if (kf < 1.5 && kr < 3) continue;
+        if (keepPlots && kf >= 7.5 && kr >= 7.5) continue;
+        let gain = 0;
+        for (const c of raster([f0, f1, r1, r0], n)) {
+          if (kind[c] !== FREE) continue;
+          kind[c] = TAKEN;
+          grid[c] = own;
+          gain += G * G;
+        }
+        if (!gain) continue;
+        l.area += gain;
+        l.poly[ri] = r1;
+        if (kf > 0) {
+          l.poly.splice(end === 0 ? 0 : nf, 0, f1);
+          l.front++;
+          l.width += kf;
+          if (end === 0) l.s0 -= kf;
+          else l.s1 += kf;
+        }
+      }
+    }
+  };
+  widen(true);
 
   // --- What is left of the frontage ---
   // A strip too shallow or too short to build on is still somebody's land: a row of parking spaces or a patch of green.
@@ -751,7 +834,7 @@ export function planLandUse(graph: RoadGraph, t: Terrain, districts: Districts, 
         const level = site.slope < 0.08 && site.relief < 2.5;
         const town = site.type === 'downtown' || site.type === 'midtown' || site.type === 'oldtown';
         const use: LandUse =
-          level && depth >= 15 && width >= 10 && e.cls !== 'alley' ? (site.type === 'industrial' ? 'I1' : town || (site.type === 'beach' && e.cls !== 'local') ? 'C1' : 'R1')
+          level && e.cls !== 'alley' && ((depth >= 15 && width >= 10) || (depth >= 12 && width >= 12.5 && (site.type === 'residential' || site.type === 'suburb'))) ? (site.type === 'industrial' ? 'I1' : town || (site.type === 'beach' && e.cls !== 'local') ? 'C1' : 'R1')
           : level && depth >= 5.5 && width >= 7.5 && e.cls !== 'alley' && r.next() < FILL[site.type] ? 'PK'
           : 'OS';
         lots.push({ id, use, poly, front, edge: e.id, side, s0: s, s1: s + width, width, depth, area, corner: false, floors: use === 'R1' || use === 'C1' ? floorsFor(use, site, false, r) : 0, site });
@@ -759,6 +842,8 @@ export function planLandUse(graph: RoadGraph, t: Terrain, districts: Districts, 
       }
     }
   }
+
+  widen(false);
 
   // --- Big neighbours ---
   // A hospital, a mall, an office tower or a works does not stand wall to wall with small houses: the lots beside one
