@@ -1225,9 +1225,22 @@ const BACK_TABLES = ['park/picnic-table-wood', 'park/picnic-table-red', 'park/pi
    * `lanes` are the u ranges of the ways in: every row but the far one leaves them open, so that each aisle is reached.
    */
   const stalls = (f: Frame, r: Rect, keep?: Rect, lanes: [number, number][] = []): number => {
+    const spots = stallSpots(f, r, keep, lanes);
+    const worn = rnd(f.lot.id, 79) < 0.6;
+    // The closed end of a space is away from its aisle: the far row and every second one after it open towards the road,
+    // and the texture's closed end is on the road side as it comes.
+    for (const [p, k] of spots) {
+      mark(tile(p.x, p.y), worn ? 'symbol/parking-stall-white-worn' : 'symbol/parking-stall-white-new', p.x, p.y, f.yaw + (k % 2 ? 0 : Math.PI));
+      out.spots.push({ x: p.x, y: p.y, h: site.heightAt(p.x, p.y) + 0.06, yaw: Math.atan2(f.ny, f.nx) + (k % 2 ? Math.PI : 0), lot: f.lot.id, kind: 'stall' });
+    }
+    out.stalls += spots.length;
+    return spots.length;
+  };
+  /** Where `stalls` would mark its spaces, each with the number of its row. */
+  const stallSpots = (f: Frame, r: Rect, keep?: Rect, lanes: [number, number][] = []): [Vec2, number][] => {
     const [u0, u1, v0, v1] = r;
     const n = Math.floor((u1 - u0) / 2.6);
-    if (n < 2 || v1 - v0 < 5.4) return 0;
+    if (n < 2 || v1 - v0 < 5.4) return [];
     const rows: number[] = [];
     // A row against the far edge, an aisle, then rows back to back with an aisle between each pair.
     for (let v = v1 - 5.4, k = 1; v >= v0 - 0.01; k++) {
@@ -1235,8 +1248,7 @@ const BACK_TABLES = ['park/picnic-table-wood', 'park/picnic-table-red', 'park/pi
       rows.push(v);
       v -= 5.4 + (k % 2 === 1 ? 6.2 : 0);
     }
-    let count = 0;
-    const worn = rnd(f.lot.id, 79) < 0.6;
+    const spots: [Vec2, number][] = [];
     const start = (u0 + u1) / 2 - (n * 2.6) / 2;
     rows.forEach((v, k) => {
       for (let i = 0; i < n; i++) {
@@ -1245,20 +1257,18 @@ const BACK_TABLES = ['park/picnic-table-wood', 'park/picnic-table-red', 'park/pi
         if (k > 0 && lanes.some(([a, b]) => u + 1.3 > a && u - 1.3 < b)) continue;
         const p = at(f, u, vc);
         if (site.at(p.x, p.y) !== LOT && site.at(p.x, p.y) !== FREE) continue;
-        // The closed end of a space is away from its aisle: the far row and every second one after it open towards the road,
-        // and the texture's closed end is on the road side as it comes.
-        mark(tile(p.x, p.y), worn ? 'symbol/parking-stall-white-worn' : 'symbol/parking-stall-white-new', p.x, p.y, f.yaw + (k % 2 ? 0 : Math.PI));
-        out.spots.push({ x: p.x, y: p.y, h: site.heightAt(p.x, p.y) + 0.06, yaw: Math.atan2(f.ny, f.nx) + (k % 2 ? Math.PI : 0), lot: f.lot.id, kind: 'stall' });
-        count++;
+        spots.push([p, k]);
       }
     });
-    out.stalls += count;
-    return count;
+    return spots;
   };
   /** Width between a block and the boundary that is kept clear for the drive to a car park behind: 3.25 m by the car park's own measure. */
   const LANE = 3.75;
-  /** A paved yard behind the buildings with marked spaces, and a drive to it down one side of the lot where there is room. */
-  const rearParking = (f: Frame, group: Rect, gaps: [number, number][]): Rect | null => {
+  /**
+   * A paved yard behind the buildings with marked spaces, and a drive to it down one side of the lot where there is room: returns the drive.
+   * 'bins' where there is to be no car park but the bins already stand behind the buildings.
+   */
+  const rearParking = (f: Frame, group: Rect, gaps: [number, number][]): Rect | 'bins' | null => {
     const lot = f.lot;
     const [L, R] = span(f, 0, f.d - 1, 0.5);
     const from = group[3] + 1.5;
@@ -1268,13 +1278,20 @@ const BACK_TABLES = ['park/picnic-table-wood', 'park/picnic-table-red', 'park/pi
     if (Math.max(roomL, roomR) < 2.9) return null;
     const tex = asphalt(lot);
     const drive: Rect = roomL > roomR ? [L, L + Math.min(roomL - 0.2, 5.5), -f.gap, from] : [R - Math.min(roomR - 0.2, 5.5), R, -f.gap, from];
+    const park: Rect = [L + 0.3, R - 0.3, from + 0.2, f.d - 1.2];
+    // The bins go in first, for the spaces are marked around them. No car park where they leave no room to park: the land behind stays a yard.
+    const built = f.solid.length;
+    const bins = refuse(f, roomL > roomR ? 1 : -1, lot.area > 1100 || lot.floors >= 4, f.d - 1.1);
+    if (stallSpots(f, park, undefined, [[drive[0], drive[1]]]).length < 2) return bins ? 'bins' : null;
     pave(f, tex, drive, 0.05, 4);
     const pad: Rect = [L, R, from, f.d - 1];
+    // The bins stand on the car park: it is paved under them, as under nothing else that is built.
+    const onPad = f.solid.splice(built);
     pave(f, tex, pad, 0.05, 4);
+    f.solid.push(...onPad);
     f.taken.push(drive, pad);
     gaps.push([drive[0] - 0.2, drive[1] + 0.2]);
-    refuse(f, roomL > roomR ? 1 : -1, lot.area > 1100 || lot.floors >= 4, f.d - 1.1);
-    stalls(f, [L + 0.3, R - 0.3, from + 0.2, f.d - 1.2], undefined, [[drive[0], drive[1]]]);
+    stalls(f, park, undefined, [[drive[0], drive[1]]]);
     return drive;
   };
 
@@ -1348,29 +1365,34 @@ const BACK_TABLES = ['park/picnic-table-wood', 'park/picnic-table-red', 'park/pi
         const width = n * sw + (n - 1) * between;
         const slack = hi - lo - width;
         const pass = lane > 0 || (slack + side >= LANE && f.d - (vf + s.d) >= 8.5);
-        const start = pass ? (rnd(lot.id, 83) < 0.5 ? lo : hi - width) : lo + slack / 2;
+        // To one side of the lot for the drive; in the middle where there is none, or where the block does not stand at the side.
+        const starts = pass ? [rnd(lot.id, 83) < 0.5 ? lo : hi - width, lo + slack / 2] : [lo + slack / 2];
         const same = shapes.get(s.id.replace(/-\d+$/, ''))!.filter((x) => x.w <= s.w + 0.01 && x.d <= s.d + 0.01 && (!row || x.w > s.w - 0.01));
         let first: Building | null = null;
-        for (let i = 0; i < n; i++) {
-          const m = i === 0 ? s : same[Math.floor(rnd(lot.id, 84, i) * same.length)];
-          const uc = start + i * (sw + between) + sw / 2;
-          const b = place(f, m.id, uc, vf, { main: i === 0, stretch: k, ...(row ? { lap: ROW_TRIM + 0.005 } : {}) });
-          if (!b) {
-            if (i === 0 || row) break;
-            continue;
+        for (const start of starts) {
+          for (let i = 0; i < n; i++) {
+            const m = i === 0 ? s : same[Math.floor(rnd(lot.id, 84, i) * same.length)];
+            const uc = start + i * (sw + between) + sw / 2;
+            const b = place(f, m.id, uc, vf, { main: i === 0, stretch: k, ...(row ? { lap: ROW_TRIM + 0.005 } : {}) });
+            if (!b) {
+              if (i === 0 || row) break;
+              continue;
+            }
+            first ??= b;
+            remember(lot, m.id);
+            group = group ? [Math.min(group[0], uc - b.hx), Math.max(group[1], uc + b.hx), vf, Math.max(group[3], vf + 2 * b.hz)] : [uc - b.hx, uc + b.hx, vf, vf + 2 * b.hz];
+            const walk: Rect = [uc - 0.8, uc + 0.8, -f.gap, vf];
+            pave(f, 'concrete/walk-plain', walk, 0.06, 3);
+            f.taken.push(walk);
+            gaps.push([uc - 1, uc + 1]);
           }
-          first ??= b;
-          remember(lot, m.id);
-          group = group ? [Math.min(group[0], uc - b.hx), Math.max(group[1], uc + b.hx), vf, Math.max(group[3], vf + 2 * b.hz)] : [uc - b.hx, uc + b.hx, vf, vf + 2 * b.hz];
-          const walk: Rect = [uc - 0.8, uc + 0.8, -f.gap, vf];
-          pave(f, 'concrete/walk-plain', walk, 0.06, 3);
-          f.taken.push(walk);
-          gaps.push([uc - 1, uc + 1]);
+          if (first) break;
         }
         if (first || ++tries >= 5) break search;
       }
     if (!group) return false;
-    const drive = rearParking(f, group, gaps);
+    const rear = rearParking(f, group, gaps);
+    const drive = rear === 'bins' ? null : rear;
     // Houses divided in two keep their gardens like the houses beside them. Flats do not stand in a lawn: the forecourt and the passages
     // beside the block are paved, and behind it is the car park, a paved yard in town, or a fenced garden further out.
     const homely = !high && out.list[out.list.length - 1].model.startsWith('house/');
@@ -1379,7 +1401,7 @@ const BACK_TABLES = ['park/picnic-table-wood', 'park/picnic-table-red', 'park/pi
       court(f, courtTex(lot), -f.gap, yard ? group[3] : f.d - 0.3);
       harden(f, yard ? group[3] : Infinity);
     }
-    if (!drive) refuse(f, rnd(lot.id, 84) < 0.5 ? -1 : 1, false);
+    if (!rear) refuse(f, rnd(lot.id, 84) < 0.5 ? -1 : 1, false);
     const [lo, hi] = span(f, 0, f.d, 0);
     for (let i = 0; i < (high ? 4 : 2); i++) if (rnd(lot.id, 85, i) < 0.6) tree(f, lo + 2 + rnd(lot.id, 86, i) * (hi - lo - 4), 1.7 + rnd(lot.id, 87, i) * Math.max(0, group[2] - 3), 88 + i, 2.2);
     for (let i = 0; i < 4; i++) if (rnd(lot.id, 92, i) < 0.4) small(f, BEDS[Math.floor(rnd(lot.id, 93, i) * BEDS.length)], 'plant', group[0] + 1 + rnd(lot.id, 94, i) * (group[1] - group[0] - 2), group[2] - 0.8, rnd(lot.id, 95, i) * 6, 0.6);
