@@ -17,7 +17,7 @@ import { Building } from '../src/place/buildings';
 import { landCover } from '../src/place/landCover';
 import { BELT, COPSE, RIVERSIDE, WILD, YARD } from '../src/place/leftover';
 import { OpenSpace, placeOpenSpace } from '../src/place/openSpace';
-import { FREE as ON_FREE, RAIL as ON_RAIL, ROAD as ON_ROAD, SITE_CELL, bbox } from '../src/place/site';
+import { FREE as ON_FREE, LOT as ON_LOT, RAIL as ON_RAIL, ROAD as ON_ROAD, SITE_CELL, bbox } from '../src/place/site';
 import { RAIL_MAX_GRADE, RAIL_MIN_RADIUS, RAIL_STEP, RailIndex, sharpestRailTurn } from '../src/gen/rail';
 import { STATION_HALF } from '../src/gen/stations';
 import { isStreet } from '../src/gen/streamlines';
@@ -1838,14 +1838,19 @@ describe('parks, waterfront and boundaries', () => {
     const n = o.site.n;
     const lots = c.land.lots;
     const area = new Array(8).fill(0);
+    const vacant = new Set(o.buildings.vacant);
     let [claimed, bare] = [0, 0];
     for (let k = 0; k < n * n; k++) {
       if (!claim[k] && !kind[k]) {
         if (o.site.grid[k] === ON_FREE && !o.buildings.owner[k]) bare++;
         continue;
       }
-      // Only open ground is handed out, and never twice.
-      expect(o.site.grid[k], `cell ${k % n}, ${Math.floor(k / n)}`).toBe(ON_FREE);
+      // Only open ground is handed out, and never twice: nobody's, or a plot nothing was built on, which is left to grow over.
+      if (o.site.grid[k] === ON_LOT) {
+        const [li, lj] = [Math.floor(((k % n) + 0.5) * SITE_CELL / c.land.cell), Math.floor((Math.floor(k / n) + 0.5) * SITE_CELL / c.land.cell)];
+        expect(vacant.has(c.land.grid[lj * c.land.n + li] - 1), `cell ${k % n}, ${Math.floor(k / n)}`).toBe(true);
+        expect(claim[k]).toBe(0);
+      } else expect(o.site.grid[k], `cell ${k % n}, ${Math.floor(k / n)}`).toBe(ON_FREE);
       expect(o.buildings.owner[k]).toBe(0);
       if (claim[k]) {
         claimed++;

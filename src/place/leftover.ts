@@ -1,6 +1,6 @@
 import { districtAt } from '../gen/districts';
 import { Buildings } from './buildings';
-import { FREE, SITE_CELL, Site, clearance, hash, pick } from './site';
+import { FREE, LOT, SITE_CELL, Site, clearance, hash, pick } from './site';
 import { Waterfront } from './waterfront';
 
 /** What the ground between the lots is, where it is nobody's lot. */
@@ -81,7 +81,7 @@ export function placeLeftover(site: Site, shore: Waterfront, buildings: Building
       const lot = id >= 0 ? land.lots[id] : null;
       if (lot && !sandLot.has(id) && lot.use !== 'OS') {
         whose[c] = id + 1;
-        if (vacant.has(id) && site.grid[c] === FREE && lot.use !== 'PK') open[c] = 1;
+        if (vacant.has(id) && site.grid[c] === LOT && lot.use !== 'PK') open[c] = 1;
       } else if (buildings.owner[c]) whose[c] = buildings.owner[c];
       else if (site.grid[c] === FREE && !sandy((i + 0.5) * SITE_CELL, (j + 0.5) * SITE_CELL)) {
         whose[c] = -1;
