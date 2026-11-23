@@ -1138,8 +1138,8 @@ const BACK_TABLES = ['park/picnic-table-wood', 'park/picnic-table-red', 'park/pi
     out.stalls += count;
     return count;
   };
-  /** Width between a block and the boundary that is kept clear for the drive to a car park behind. */
-  const LANE = 3.9;
+  /** Width between a block and the boundary that is kept clear for the drive to a car park behind: 3.25 m by the car park's own measure. */
+  const LANE = 3.75;
   /** A paved yard behind the buildings with marked spaces, and a drive to it down one side of the lot where there is room. */
   const rearParking = (f: Frame, group: Rect, gaps: [number, number][]): Rect | null => {
     const lot = f.lot;
@@ -1147,7 +1147,8 @@ const BACK_TABLES = ['park/picnic-table-wood', 'park/picnic-table-red', 'park/pi
     const from = group[3] + 1.5;
     if (f.d - 1 - from < 6 || R - L < 8) return null;
     const [roomL, roomR] = [group[0] - L, R - group[1]];
-    if (Math.max(roomL, roomR) < 3.2) return null;
+    // (Measured over the whole depth of the lot, which on a tapering one is a little less than the lane kept beside the block.)
+    if (Math.max(roomL, roomR) < 2.9) return null;
     const tex = asphalt(lot);
     const drive: Rect = roomL > roomR ? [L, L + Math.min(roomL - 0.2, 5.5), -f.gap, from] : [R - Math.min(roomR - 0.2, 5.5), R, -f.gap, from];
     pave(f, tex, drive, 0.05, 4);
@@ -1224,13 +1225,12 @@ const BACK_TABLES = ['park/picnic-table-wood', 'park/picnic-table-red', 'park/pi
         const n = clamp(Math.floor((hi - lo + between) / (s.w + between)), 1, row ? 6 : 4);
         if (row && n < 2 && hi - lo > s.w + 5) continue;
         // Room for a drive down one side, or the block stands in the middle. What frontage is left after that the block is built out to fill.
-        // (The car park measures its drive from half a metre inside the boundary and wants 3.2 m.)
-        const lane = hi - lo - (n * s.w + (n - 1) * between) + side >= LANE && f.d - (vf + s.d) > 9 ? Math.max(0, LANE - side) : 0;
+        const lane = hi - lo - (n * s.w + (n - 1) * between) + side >= LANE && f.d - (vf + s.d) >= 8.5 ? Math.max(0, LANE - side) : 0;
         const k = row || s.id.startsWith('house/') ? 1 : clamp((hi - lo - lane - (n - 1) * between) / (n * s.w), 1, 1.15);
         const sw = s.w * k;
         const width = n * sw + (n - 1) * between;
         const slack = hi - lo - width;
-        const pass = lane > 0 || (slack + side >= LANE && f.d - (vf + s.d) > 9);
+        const pass = lane > 0 || (slack + side >= LANE && f.d - (vf + s.d) >= 8.5);
         const start = pass ? (rnd(lot.id, 83) < 0.5 ? lo : hi - width) : lo + slack / 2;
         const same = shapes.get(s.id.replace(/-\d+$/, ''))!.filter((x) => x.w <= s.w + 0.01 && x.d <= s.d + 0.01 && (!row || x.w > s.w - 0.01));
         let first: Building | null = null;
