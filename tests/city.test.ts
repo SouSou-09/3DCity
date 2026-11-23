@@ -1931,6 +1931,13 @@ describe('parks, waterfront and boundaries', () => {
       expect(bbox(b.model).max[1], `${b.model} at ${b.x.toFixed(0)}, ${b.y.toFixed(0)}`).toBeLessThan(9.5);
     }
     expect(among).toBeGreaterThan(100);
+    // A terrace is houses wall to wall: where a plot holds more than one, each touches the next.
+    const terraces = new Map<number, typeof o.buildings.list>();
+    for (const b of o.buildings.list) if (b.use === 'R2' && b.model.startsWith('apartment/rowhouse')) (terraces.get(b.lot) ?? terraces.set(b.lot, []).get(b.lot)!).push(b);
+    const rows = [...terraces.values()].filter((t) => t.length > 1);
+    expect(rows.length).toBeGreaterThan(40);
+    for (const t of rows)
+      for (const b of t) expect(Math.min(...t.filter((x) => x !== b).map((x) => Math.abs((x.x - b.x) * Math.cos(b.yaw) + (x.y - b.y) * Math.sin(b.yaw)) - x.hx - b.hx)), `${b.model} at ${b.x.toFixed(0)}, ${b.y.toFixed(0)}`).toBeLessThan(0.3);
     // Behind the houses: sheds, and washing on the line.
     expect(o.buildings.sheds).toBeGreaterThan(900);
     expect(o.buildings.lines).toBeGreaterThan(250);

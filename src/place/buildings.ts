@@ -1089,7 +1089,7 @@ const BACK_TABLES = ['park/picnic-table-wood', 'park/picnic-table-red', 'park/pi
           ...family('house/duplex').map((s) => [s, (urban ? 0.2 : low ? 2.5 : 1) * tall(s, target)] as [Shape, number]),
         ].filter(([s]) => !low || s.h < 9.5) as [Shape, number][];
     const front = Math.max(0, f.v0) + (high ? 4 + 4 * rnd(lot.edge, lot.side, 81) : 3 + 2 * rnd(lot.edge, lot.side, 81));
-    const between = high ? 10 : 3.5;
+    const apart = high ? 10 : 3.5;
     let group: Rect | null = null;
     const gaps: [number, number][] = [];
     let tries = 0;
@@ -1099,20 +1099,24 @@ const BACK_TABLES = ['park/picnic-table-wood', 'park/picnic-table-red', 'park/pi
         if (vf + s.d > f.d - 1.2) continue;
         const [lo, hi] = span(f, vf, vf + s.d, side);
         if (hi - lo < s.w) continue;
-        const n = clamp(Math.floor((hi - lo + between) / (s.w + between)), 1, 3);
+        // A terrace stands wall to wall, and not as one thin house alone on a lawn.
+        const row = !high && s.id.startsWith('apartment/rowhouse');
+        const between = row ? 0 : apart;
+        const n = clamp(Math.floor((hi - lo + between) / (s.w + between)), 1, row ? 6 : 3);
+        if (row && n < 2 && hi - lo > s.w + 5) continue;
         const width = n * s.w + (n - 1) * between;
         const slack = hi - lo - width;
         // Room for a drive down one side, or the block stands in the middle.
         const pass = slack + side >= 3.4 && f.d - (vf + s.d) > 9;
         const start = pass ? (rnd(lot.id, 83) < 0.5 ? lo : hi - width) : lo + slack / 2;
-        const same = shapes.get(s.id.replace(/-\d+$/, ''))!.filter((x) => x.w <= s.w + 0.01 && x.d <= s.d + 0.01);
+        const same = shapes.get(s.id.replace(/-\d+$/, ''))!.filter((x) => x.w <= s.w + 0.01 && x.d <= s.d + 0.01 && (!row || x.w > s.w - 0.01));
         let first: Building | null = null;
         for (let i = 0; i < n; i++) {
           const m = i === 0 ? s : same[Math.floor(rnd(lot.id, 84, i) * same.length)];
           const uc = start + i * (s.w + between) + s.w / 2;
           const b = place(f, m.id, uc, vf, { main: i === 0 });
           if (!b) {
-            if (i === 0) break;
+            if (i === 0 || row) break;
             continue;
           }
           first ??= b;
