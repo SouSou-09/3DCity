@@ -49,6 +49,8 @@ export interface Buildings {
   yards: number[];
   /** Metres of fence and wall built round house and shop lots. */
   fence: number;
+  /** Each piece of that fence, end to end on the map: [ax, ay, bx, by]. */
+  runs: [number, number, number, number][];
   /** Garden sheds and washing lines behind the houses. */
   sheds: number;
   lines: number;
@@ -235,7 +237,7 @@ export function placeBuildings(site: Site, shore: Waterfront): Buildings {
   const land = city.land;
   const seed = site.seed;
   const rnd = (...v: number[]): number => hash(seed, 7717, ...v);
-  const out: Buildings = { list: [], tiles: [], plots: [], owner: new Int32Array(0), vacant: [], yards: [], fence: 0, sheds: 0, lines: 0, stalls: 0, count: {}, civic: {} };
+  const out: Buildings = { list: [], tiles: [], plots: [], owner: new Int32Array(0), vacant: [], yards: [], fence: 0, runs: [], sheds: 0, lines: 0, stalls: 0, count: {}, civic: {} };
   const sand = new Set(shore.sandLots);
   const builders = new Map<string, MeshBuilder>();
   const tile = (x: number, y: number): MeshBuilder => {
@@ -593,6 +595,7 @@ export function placeBuildings(site: Site, shore: Waterfront): Buildings {
       const [h0, h1] = [site.heightAt(a.x, a.y), site.heightAt(a.x + dx * l, a.y + dy * l)];
       FENCES[style](tile(a.x, a.y), { o: [a.x, h0 - 0.03, a.y], x: [dx, (h1 - h0) / l, dy], y: [0, 1, 0], z: [-dy, 0, dx] }, l);
       out.fence += l;
+      out.runs.push([a.x, a.y, a.x + dx * l, a.y + dy * l]);
       for (let s = 0; s <= l; s += 1.2) {
         const m = { x: a.x + dx * s, y: a.y + dy * s };
         const key = Math.floor(m.y / FC) * 4096 + Math.floor(m.x / FC);

@@ -1939,4 +1939,43 @@ describe('parks, waterfront and boundaries', () => {
     expect(masts.length).toBe(2 * courts.filter((c) => c.tier !== 'pocket').length);
     for (const { f } of courts) expect(o.items.some((i) => i.model === 'boundary/chainlink-sports-3600' && Math.hypot(i.x - f.x, i.y - f.y) < Math.hypot(f.hx, f.hz) + 3), `${f.type} at ${f.x.toFixed(0)}, ${f.y.toFixed(0)}`).toBe(true);
   });
+
+  it.each(OPEN_SEEDS)('seed %i: fences close: a run ends on another fence or beside a building, but for the gateways', (seed) => {
+    const o = open(seed);
+    const runs = o.buildings.runs;
+    expect(runs.reduce((a, r) => a + Math.hypot(r[2] - r[0], r[3] - r[1]), 0)).toBeCloseTo(o.buildings.fence, 0);
+    const G = 4;
+    const key = (x: number, y: number): number => Math.floor(y / G) * 4096 + Math.floor(x / G);
+    const byCell = new Map<number, number[]>();
+    runs.forEach((r, i) => {
+      const n = Math.ceil(Math.hypot(r[2] - r[0], r[3] - r[1]) / 1.5);
+      for (let s = 0; s <= n; s++) {
+        const k = key(r[0] + ((r[2] - r[0]) * s) / n, r[1] + ((r[3] - r[1]) * s) / n);
+        const list = byCell.get(k) ?? byCell.set(k, []).get(k)!;
+        if (list[list.length - 1] !== i) list.push(i);
+      }
+    });
+    const walls = new Map<number, typeof o.buildings.list>();
+    for (const b of o.buildings.list) {
+      const r = Math.hypot(b.hx, b.hz) + 2.6;
+      for (let y = b.y - r; y <= b.y + r + G; y += G) for (let x = b.x - r; x <= b.x + r + G; x += G) (walls.get(key(x, y)) ?? walls.set(key(x, y), []).get(key(x, y))!).push(b);
+    }
+    const off = (r: number[], x: number, y: number): number => {
+      const [vx, vy] = [r[2] - r[0], r[3] - r[1]];
+      const t = clamp(((x - r[0]) * vx + (y - r[1]) * vy) / (vx * vx + vy * vy), 0, 1);
+      return Math.hypot(r[0] + vx * t - x, r[1] + vy * t - y);
+    };
+    let loose = 0;
+    runs.forEach((r, i) => {
+      for (const [x, y] of [[r[0], r[1]], [r[2], r[3]]]) {
+        let met = (walls.get(key(x, y)) ?? []).some((b) => {
+          const [c, sn] = [Math.cos(b.yaw), Math.sin(b.yaw)];
+          return Math.abs((x - b.x) * c + (y - b.y) * sn) < b.hx + 2.6 && Math.abs(-(x - b.x) * sn + (y - b.y) * c) < b.hz + 2.6;
+        });
+        for (let dy = -G; dy <= G && !met; dy += G) for (let dx = -G; dx <= G && !met; dx += G) met = (byCell.get(key(x + dx, y + dy)) ?? []).some((j) => j !== i && off(runs[j], x, y) < 1.9);
+        if (!met) loose++;
+      }
+    });
+    expect(loose).toBeLessThan(0.09 * 2 * runs.length);
+  });
 });

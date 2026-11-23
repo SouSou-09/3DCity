@@ -1,4 +1,4 @@
-import { MeshBuilder, ModelData } from '../assets/mesh/builder';
+import { MeshBuilder, ModelData, V3 } from '../assets/mesh/builder';
 import { layout, roadWidth } from '../assets/mesh/section';
 import { catmullRom, polyLength, pointAt, resample, simplify } from '../core/geom';
 import { Heap } from '../core/heap';
@@ -470,6 +470,25 @@ export function placeParks(site: Site): { parks: ParkPlan[]; tiles: ModelData[] 
       const away = (x: number, y: number, clr: number): number => Math.min(clr, 30) + Math.min(60, Math.hypot(x - centre.x, y - centre.y)) * 0.3 + rnd(51, x, y) * 4;
       let hub: Vec2 | null = null;
       let hubR = 3;
+      /** A disc or a ring of paving laid on the ground, with a true round edge. */
+      const round = (tex: string, x: number, y: number, r0: number, r1: number, lift: number): void => {
+        const at = (d: number, a: number): V3 => {
+          const [px, py] = [x + Math.cos(a) * d, y + Math.sin(a) * d];
+          return [px, site.heightAt(px, py) + lift, py];
+        };
+        const n = Math.max(12, Math.ceil((Math.PI * r1) / 1.8) * 2);
+        const rings = Math.max(1, Math.round((r1 - r0) / 2.2));
+        for (let q = 0; q < rings; q++) {
+          const [d0, d1] = [r0 + ((r1 - r0) * q) / rings, r0 + ((r1 - r0) * (q + 1)) / rings];
+          for (let i = 0; i < n; i++) {
+            const [a0, a1] = [(i / n) * Math.PI * 2, ((i + 1) / n) * Math.PI * 2];
+            const uv = ([d, a]: [number, number]): [number, number] => [Math.cos(a) * d, Math.sin(a) * d];
+            // At the middle the wedge is a triangle: its fourth corner goes halfway along the arc.
+            const ring: [number, number][] = d0 > 0 ? [[d0, a0], [d1, a0], [d1, a1], [d0, a1]] : [[0, 0], [d1, a0], [d1, (a0 + a1) / 2], [d1, a1]];
+            b.quadUp(tex, at(...ring[0]), at(...ring[1]), at(...ring[2]), at(...ring[3]), 0, ring.map(uv));
+          }
+        }
+      };
       const plaza = (model: string, r: number, core: number, tex: string): boolean => {
         const found = find(r, r, 1.5, roomy, { flat: 0.8 });
         if (!found) return false;
@@ -480,7 +499,7 @@ export function placeParks(site: Site): { parks: ParkPlan[]; tiles: ModelData[] 
             const k = cellOf(found.x + mx, found.y + mz);
             if (k >= 0 && occ[k] === SOLID && Math.hypot(mx, mz) > core) occ[k] = APRON;
           }
-        site.drape(b, tex, found.x, found.y, found.yaw, r, r, 0.07, (mx, mz) => Math.hypot(mx, mz) < r);
+        round(tex, found.x, found.y, 0, r, 0.07);
         const { max } = bbox(model);
         if (max[1] > 3.5 && max[0] > 3) site.lay(model, 'pavilion', found.x, found.y, found.yaw, { park: pi });
         else put(model, 'feature', found.x, found.y, found.yaw, { lift: 0.07 });
@@ -534,15 +553,36 @@ export function placeParks(site: Site): { parks: ParkPlan[]; tiles: ModelData[] 
         const r = book('baseball', towards(found, centre.x, centre.y), 3);
         const fit = site.plane(r.x, r.y, r.yaw, r.hx, r.hz);
         const home: [number, number] = [-17, -17];
-        site.drape(b, 'ground/dirt', r.x, r.y, r.yaw, r.hx, r.hz, 0.05, (mx, mz) => {
-          const d = Math.hypot(mx - home[0], mz - home[1]);
-          return (d < 29 && d > 19) || d < 4 || Math.abs(mx - home[0]) < 1.6 || Math.abs(mz - home[1]) < 1.6;
-        });
+        // The skinned part of the infield, cut to its true outline: an arc behind the bases, the two base paths, the plate and the mound.
+        const dirt = (pts: [number, number][]): void => {
+          const at = ([mx, mz]: [number, number]): V3 => {
+            const p = local(r, mx, mz);
+            return [p.x, site.heightAt(p.x, p.y) + 0.05, p.y];
+          };
+          b.quadUp('ground/dirt', at(pts[0]), at(pts[1]), at(pts[2]), at(pts[3]), 0, pts);
+        };
+        const polar = (d: number, a: number, o = home): [number, number] => [o[0] + Math.cos(a) * d, o[1] + Math.sin(a) * d];
+        const disc = (o: [number, number], rad: number): void => {
+          for (let q = 0; q < 8; q++) dirt([o, polar(rad, (q * Math.PI) / 4, o), polar(rad, ((q + 0.5) * Math.PI) / 4, o), polar(rad, ((q + 1) * Math.PI) / 4, o)]);
+        };
+        const ARC = 24;
+        for (let q = 0; q < ARC; q++)
+          for (let d = 19; d < 29; d += 2.5) {
+            const [a0, a1] = [(q / ARC) * (Math.PI / 2), ((q + 1) / ARC) * (Math.PI / 2)];
+            dirt([polar(d, a0), polar(d + 2.5, a0), polar(d + 2.5, a1), polar(d, a1)]);
+          }
+        for (let d = 0; d < 19; d += 2.375) {
+          dirt([[home[0] + d, home[1] - 1.6], [home[0] + d + 2.375, home[1] - 1.6], [home[0] + d + 2.375, home[1] + 1.6], [home[0] + d, home[1] + 1.6]]);
+          dirt([[home[0] - 1.6, home[1] + d], [home[0] + 1.6, home[1] + d], [home[0] + 1.6, home[1] + d + 2.375], [home[0] - 1.6, home[1] + d + 2.375]]);
+        }
+        disc(home, 4);
+        disc([home[0] + 13, home[1] + 13], 2.7);
         onPlane(r, fit, 'park/baseball-backstop', 'sport', home[0] - 3.4, home[1] - 3.4, -Math.PI * 0.75, 0.05);
         onPlane(r, fit, 'park/dugout', 'sport', home[0] + 12, -r.hz + 1.4, 0, 0.05);
         onPlane(r, fit, 'park/dugout', 'sport', -r.hx + 1.4, home[1] + 12, Math.PI / 2, 0.05);
         onPlane(r, fit, 'park/bleachers-3', 'sport', home[0] + 22, -r.hz + 1.6, 0, 0.05);
-        front(r, 3);
+        // People arrive behind the first-base line, between the dugout and the stand, not across the outfield.
+        access.push(local(r, 0, -r.hz - 2.5));
         return true;
       };
       const tennis = (n: number): boolean => {
@@ -589,7 +629,9 @@ export function placeParks(site: Site): { parks: ParkPlan[]; tiles: ModelData[] 
         const found = find(9, 9, 1.5, away, { flat: 0.6 });
         if (!found) return false;
         const r = book('garden', towards(found, centre.x, centre.y), 1.5);
-        site.drape(b, 'ground/gravel-fine', r.x, r.y, r.yaw, 9, 9, 0.06, (mx, mz) => Math.abs(mx) < 1.3 || Math.abs(mz) < 1.3 || Math.abs(Math.hypot(mx, mz) - 6.3) < 1.1);
+        site.drape(b, 'ground/gravel-fine', r.x, r.y, r.yaw, 9, 1.3, 0.056);
+        site.drape(b, 'ground/gravel-fine', r.x, r.y, r.yaw, 1.3, 9, 0.06);
+        round('ground/gravel-fine', r.x, r.y, 5.2, 7.4, 0.064);
         site.lay('park/pergola-white', 'pavilion', r.x, r.y, r.yaw, { park: pi });
         const arch = local(r, 0, 8.6);
         put('park/trellis-arch', 'feature', arch.x, arch.y, r.yaw, { lift: 0.05 });
