@@ -1918,7 +1918,11 @@ describe('parks, waterfront and boundaries', () => {
       const under = (near.get(Math.floor(it.y / G) * 1000 + Math.floor(it.x / G)) ?? []).filter((b) => {
         const [dx, dy] = [it.x - b.x, it.y - b.y];
         const [c, sn] = [Math.cos(b.yaw), Math.sin(b.yaw)];
-        return Math.abs(dx * c + dy * sn) < b.hx - 1 && Math.abs(-dx * sn + dy * c) < b.hz - 1 && it.h > b.floor + 2.9 && it.h <= b.floor + bbox(b.model).max[1];
+        // The whole of the unit, whichever way it is turned, and not only its middle.
+        const { min, max } = bbox(it.model);
+        const [px, pz] = [Math.max(-min[0], max[0]), Math.max(-min[2], max[2])];
+        const [rx, rz] = Math.round((it.yaw - b.yaw) / (Math.PI / 2)) % 2 ? [pz, px] : [px, pz];
+        return Math.abs(dx * c + dy * sn) < b.hx - Math.max(1, rx + 0.2) && Math.abs(-dx * sn + dy * c) < b.hz - Math.max(1, rz + 0.2) && it.h > b.floor + 2.9 && it.h <= b.floor + bbox(b.model).max[1];
       });
       expect(under.length, at).toBeGreaterThan(0);
     }

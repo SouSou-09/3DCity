@@ -478,16 +478,27 @@ export function placeBuildings(site: Site, shore: Waterfront): Buildings {
       const [mx, mz] = [(min[0] + max[0]) / 2, (min[2] + max[2]) / 2];
       const share = /^(C|I)/.test(f.lot.use) ? 0.16 : 0.09;
       const want = Math.max(1, Math.min(14, Math.round(top.spots.length * share)));
-      const used = new Set<number>();
+      const put: Rect[] = [];
       for (let i = 0; i < want; i++) {
-        const q = Math.floor(rnd(f.lot.id, 700, i, uc) * top.spots.length);
-        // Not in the next spot to one already taken: the bigger units are wider than a spot.
-        if ([...used].some((u) => Math.hypot(top.spots[u][0] - top.spots[q][0], top.spots[u][1] - top.spots[q][1]) < 4)) continue;
-        used.add(q);
+        const [sx, sz] = top.spots[Math.floor(rnd(f.lot.id, 700, i, uc) * top.spots.length)];
+        // The bigger units are wider than a spot: each needs roof under the whole of it, clear of the units already standing.
+        const room = (id: string, turn: number): Rect | null => {
+          const { min: lo, max: hi } = bbox(id);
+          const [px, pz] = [Math.max(-lo[0], hi[0]), Math.max(-lo[2], hi[2])];
+          const [rx, rz] = turn % 2 ? [pz, px] : [px, pz];
+          const r: Rect = [sx * k - rx, sx * k + rx, sz - rz, sz + rz];
+          return top.fits(sx, sz, rx / k, rz) && !put.some((o) => o[0] < r[1] + 0.4 && o[1] > r[0] - 0.4 && o[2] < r[3] + 0.4 && o[3] > r[2] - 0.4) ? r : null;
+        };
         const tank = i === 0 && max[1] > 11 && /^R|^O/.test(f.lot.use) && (f.type === 'oldtown' || f.type === 'midtown' || f.type === 'downtown') && rnd(f.lot.id, 701, uc) < 0.5;
-        const part = tank ? `buildpart/water-tank-${1 + Math.floor(rnd(f.lot.id, 702) * 3)}` : rnd(f.lot.id, 703, i) < 0.62 ? ROOF_AC[Math.floor(rnd(f.lot.id, 704, i) * ROOF_AC.length)] : ROOF_SMALL[Math.floor(rnd(f.lot.id, 705, i) * ROOF_SMALL.length)];
-        const p = Site.local(c.x, c.y, f.yaw, (top.spots[q][0] - mx) * k, top.spots[q][1] - mz);
-        site.set(part, 'roof', p.x, p.y, floor + top.y, f.yaw + Math.floor(rnd(f.lot.id, 706, i) * 4) * (Math.PI / 2));
+        let part = tank ? `buildpart/water-tank-${1 + Math.floor(rnd(f.lot.id, 702) * 3)}` : rnd(f.lot.id, 703, i) < 0.62 ? ROOF_AC[Math.floor(rnd(f.lot.id, 704, i) * ROOF_AC.length)] : ROOF_SMALL[Math.floor(rnd(f.lot.id, 705, i) * ROOF_SMALL.length)];
+        let turn = Math.floor(rnd(f.lot.id, 706, i) * 4);
+        // Turned the other way if that is how it fits, and a small unit where a big one has no room.
+        let r = room(part, turn) ?? room(part, ++turn);
+        if (!r && !tank) r = room((part = ROOF_AC[0]), turn);
+        if (!r) continue;
+        put.push(r);
+        const p = Site.local(c.x, c.y, f.yaw, (sx - mx) * k, sz - mz);
+        site.set(part, 'roof', p.x, p.y, floor + top.y, f.yaw + turn * (Math.PI / 2));
       }
     }
     const [a, b] = [at(f, uc - Math.max(0.3, hx - 0.5), vc), at(f, uc + Math.max(0.3, hx - 0.5), vc)];
@@ -779,8 +790,14 @@ export function placeBuildings(site: Site, shore: Waterfront): Buildings {
   };
 
   /** The flat roof of a model, if it has one: how high it lies, and where on it (model x, z) there is room to stand something. */
-const decks = new Map<string, { y: number; spots: [number, number][] } | null>();
-function deck(model: string): { y: number; spots: [number, number][] } | null {
+interface Deck {
+  y: number;
+  spots: [number, number][];
+  /** Is there roof under the whole of a unit of these half sizes standing at (x, z), clear of what stands higher? */
+  fits: (x: number, z: number, hx: number, hz: number) => boolean;
+}
+const decks = new Map<string, Deck | null>();
+function deck(model: string): Deck | null {
   const known = decks.get(model);
   if (known !== undefined) return known;
   const { parts, min, max } = MODELS.find((m) => m.id === model)!.build();
@@ -802,7 +819,7 @@ function deck(model: string): { y: number; spots: [number, number][] } | null {
     }
   }
   const best = [...levels.values()].sort((a, b) => b.area - a.area)[0];
-  let out: { y: number; spots: [number, number][] } | null = null;
+  let out: Deck | null = null;
   if (best && best.area > Math.max(90, 0.45 * (max[0] - min[0]) * (max[2] - min[2]))) {
     const y = best.tris[0][6];
     const inTri = (t: number[], x: number, z: number): boolean => {
@@ -817,7 +834,12 @@ function deck(model: string): { y: number; spots: [number, number][] } | null {
     const spots: [number, number][] = [];
     for (let x = min[0] + 2.4; x <= max[0] - 2.4; x += 3.2)
       for (let z = min[2] + 2.4; z <= max[2] - 2.4; z += 3.2) if ([[0, 0], [-1.4, -1.4], [1.4, -1.4], [-1.4, 1.4], [1.4, 1.4]].every(([dx, dz]) => on(x + dx, z + dz)) && clear(x, z)) spots.push([x, z]);
-    if (spots.length) out = { y, spots };
+    const fits = (x: number, z: number, hx: number, hz: number): boolean => {
+      const [nx, nz] = [Math.max(1, Math.ceil(hx)), Math.max(1, Math.ceil(hz))];
+      for (let i = -nx; i <= nx; i++) for (let j = -nz; j <= nz; j++) if (!on(x + (i / nx) * hx, z + (j / nz) * hz)) return false;
+      return !high.some((t) => Math.min(t[0], t[2], t[4]) < x + hx + 0.2 && Math.max(t[0], t[2], t[4]) > x - hx - 0.2 && Math.min(t[1], t[3], t[5]) < z + hz + 0.2 && Math.max(t[1], t[3], t[5]) > z - hz - 0.2);
+    };
+    if (spots.length) out = { y, spots, fits };
   }
   decks.set(model, out);
   return out;
