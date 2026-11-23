@@ -245,7 +245,7 @@ const SHUTTERS: [string, string, number | null, number, number][] = [['steel', '
 for (const [id, label, c, rust, tags] of SHUTTERS) add('door', `shutter-${id}`, `巻き上げシャッター ${label}`, [2.4, 2.4], (t, s) => shutter(t, s, c === null ? null : hex(c), rust, tags), { tile: 'xy', density: 200 });
 
 // --- Paint for trim, gutters, railings and frames. ---
-export function paint(tex: Tex, seed: number, c: RGB, o: { metal?: number; rough?: number; wear?: number } = {}): TextureData {
+export function paint(tex: Tex, seed: number, c: RGB, o: { metal?: number; rough?: number; wear?: number; chips?: number } = {}): TextureData {
   const L = new Layers(tex, c, o.rough ?? 0.5);
   const tone = tex.noise(0.4, 0.4, seed, 3);
   const fine = tex.noise(0.01, 0.01, seed + 1, 2);
@@ -253,7 +253,7 @@ export function paint(tex: Tex, seed: number, c: RGB, o: { metal?: number; rough
   const chip = tex.noise(0.08, 0.08, seed + 3, 4, 0.6);
   tex.map((x, y, k) => {
     const st = sstep(0.15, 0.8, streak(x, y)) * (o.wear ?? 0.3) * 0.35;
-    const ch = sstep(0.46 - (o.wear ?? 0.3) * 0.16, 0.5 - (o.wear ?? 0.3) * 0.16, chip(x, y));
+    const ch = sstep(0.46 - (o.wear ?? 0.3) * 0.16, 0.5 - (o.wear ?? 0.3) * 0.16, chip(x, y)) * (o.chips ?? 1);
     const m = (1 + tone(x, y) * 0.07 + fine(x, y) * 0.04) * (1 - st);
     L.r[k] = lerp(c[0] * m, 0.32, ch * 0.7);
     L.g[k] = lerp(c[1] * m, 0.28, ch * 0.7);

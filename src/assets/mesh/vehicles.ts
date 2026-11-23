@@ -148,6 +148,8 @@ export function car(b: MeshBuilder, s: CarSpec): void {
     const r = ring(end * L);
     for (let k = 0; k + 1 < r.length; k++) skin(b, paint, [[end * L, r[k][0], r[k][1]], [end * L, r[k][0], -r[k][1]], [end * L, r[k + 1][0], -r[k + 1][1]], [end * L, r[k + 1][0], r[k + 1][1]]], end > 0 ? 'front' : 'back');
   }
+  // Its shadow on the road.
+  b.quad('vehicle/shadow', [-L - 0.22, 0.012, hw + 0.22], [L + 0.22, 0.012, hw + 0.22], [L + 0.22, 0.012, -hw - 0.22], [-L - 0.22, 0.012, -hw - 0.22], [[0, 0], [1, 0], [1, 1], [0, 1]], 1, [0, 1, 0]);
   // The dark underneath.
   part(b, 'dark', [[-L + 0.1, clear + 0.02, -hw + 0.08], [L - 0.1, clear + 0.02, -hw + 0.08], [L - 0.1, clear + 0.02, hw - 0.08], [-L + 0.1, clear + 0.02, hw - 0.08]], 'down');
 
@@ -222,8 +224,8 @@ export function car(b: MeshBuilder, s: CarSpec): void {
     const name = end > 0 ? s.head : s.rear;
     const [rx0, ry0, rx1, ry1] = VEHICLE_PARTS[name];
     const aspect = (rx1 - rx0) / (ry1 - ry0);
-    const lh = Math.min(yt - yb - 0.34, name.includes('slim') || name.includes('bar') ? 0.11 : name === 'tail-tall' ? 0.34 : 0.17);
-    const lw = Math.min(w * 0.62, lh * aspect * (name === 'tail-tall' ? 1.6 : 1.25));
+    const lh = Math.min(yt - yb - 0.31, name.includes('slim') || name.includes('bar') ? 0.11 : name === 'tail-tall' ? 0.34 : 0.17);
+    const lw = Math.min(w * 0.62, Math.max(lh * aspect * (name === 'tail-tall' ? 1.6 : 1.25), name === 'head-round' ? 0 : name === 'tail-tall' ? 0 : 0.44));
     const ly = yt - 0.07 - lh / 2;
     for (const sd of [1, -1]) endPart(b, name, end, x + end * 0.004, ly, sd * (w - 0.03 - lw / 2), lw, lh, sd * end < 0);
     const plate = s.plate ?? 'plate-white';
@@ -365,7 +367,12 @@ CARS.push(
 );
 
 /** Length and width of each car on the ground. */
-export const CAR_SIZE = new Map(CARS.map(([id, , s]) => [`vehicle/${id}`, { len: s.len + 0.16, wid: s.wid + 0.3 }]));
+export const CAR_SIZE = new Map(
+  CARS.map(([id, , s]) => {
+    const box = id.startsWith('truck');
+    return [`vehicle/${id}`, { len: s.len + 0.16, wid: s.wid + 0.3 + (box ? 0.2 : 0), hgt: box ? s.hgt + 0.7 : s.hgt }];
+  }),
+);
 
 export function addVehicles(add: (id: string, label: string, fn: (b: MeshBuilder) => void) => void): void {
   for (const [id, label, spec] of CARS) add(id, label, (b) => car(b, spec));

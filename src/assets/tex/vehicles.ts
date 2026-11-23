@@ -1,4 +1,4 @@
-import { RGB, TextureData, TextureSpec, Tex, hex } from './core';
+import { Layers, RGB, TextureData, TextureSpec, Tex, clamp01, hex, sstep } from './core';
 import { Art, paint } from './trims';
 
 const list: TextureSpec[] = [];
@@ -11,8 +11,18 @@ function add(id: string, label: string, meters: readonly [number, number], gener
 const shade = (c: RGB, m: number): RGB => [c[0] * m, c[1] * m, c[2] * m];
 
 // Body paint is near white: each car is tinted with its own colour where it stands.
-add('paint', '車体塗装', [1, 1], (t, s) => paint(t, s, [0.93, 0.93, 0.93], { rough: 0.22, metal: 0.25, wear: 0.02 }), { tile: 'xy', density: 96, reflect: 0.35 });
-add('paint-worn', '車体塗装 古い', [1, 1], (t, s) => paint(t, s, [0.88, 0.87, 0.85], { rough: 0.5, wear: 0.45 }), { tile: 'xy', density: 128 });
+add('paint', '車体塗装', [1, 1], (t, s) => paint(t, s, [0.93, 0.93, 0.93], { rough: 0.22, metal: 0.25, wear: 0.02, chips: 0 }), { tile: 'xy', density: 96, reflect: 0.35 });
+add('paint-worn', '車体塗装 古い', [1, 1], (t, s) => paint(t, s, [0.88, 0.87, 0.85], { rough: 0.5, wear: 0.4, chips: 0.3 }), { tile: 'xy', density: 128 });
+// There are no cast shadows in the street: each car brings the dark under itself.
+add('shadow', '車の下の影', [1, 1], (t) => {
+  const L = new Layers(t, [0.02, 0.02, 0.025], 0.95);
+  t.map((x, y, k) => {
+    const e = sstep(0, 0.2, Math.min(x, 1 - x)) * sstep(0, 0.2, Math.min(y, 1 - y));
+    L.alpha[k] = clamp01(e) * 0.62;
+    return 0;
+  });
+  return L.finish();
+}, { decal: true, density: 32 });
 add('glass', '車の窓ガラス', [1, 1], (t, s) => {
   const a = new Art(t, [0.05, 0.065, 0.08], 0.05);
   a.rect([0.32, 0.4, 0.5], 0, 0.55, 1, 1, { rough: 0.05, opacity: 0.22, soft: 0.3 });

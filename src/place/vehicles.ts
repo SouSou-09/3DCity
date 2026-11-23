@@ -39,7 +39,7 @@ const TRUCKS = ['truck-box-white', 'truck-box-aluminium', 'truck-box-express', '
 type Mix = [string, number][];
 /** What is driven where: weights of the models by the kind of place. */
 const MIXES: Record<'centre' | 'homes' | 'suburb' | 'hills' | 'old' | 'beach' | 'work' | 'shops', Mix> = {
-  centre: [['sedan', 18], ['sedan-large', 10], ['hatch', 12], ['compact', 12], ['suv', 12], ['suv-large', 4], ['coupe', 5], ['wagon', 5], ['minivan', 5], ['kei', 6], ['taxi', 6], ['van', 3], ['sedan-old', 1]],
+  centre: [['sedan', 18], ['sedan-large', 10], ['hatch', 12], ['compact', 12], ['suv', 12], ['suv-large', 4], ['coupe', 5], ['wagon', 5], ['minivan', 5], ['kei', 6], ['taxi', 6], ['van', 3], ['sedan-old', 1], ['police', 0.12]],
   shops: [['sedan', 14], ['hatch', 12], ['compact', 13], ['suv', 14], ['suv-large', 5], ['minivan', 10], ['kei', 9], ['kei-box', 4], ['wagon', 6], ['pickup', 4], ['van', 3], ['van-windows', 2], ['sedan-old', 3], ['coupe', 2]],
   homes: [['sedan', 14], ['hatch', 13], ['compact', 14], ['suv', 12], ['minivan', 10], ['kei', 12], ['kei-box', 5], ['wagon', 6], ['sedan-old', 4], ['pickup', 3], ['coupe', 2], ['van-windows', 2], ['suv-large', 3]],
   suburb: [['suv', 17], ['suv-large', 9], ['minivan', 13], ['sedan', 14], ['pickup', 10], ['hatch', 8], ['compact', 6], ['wagon', 7], ['sedan-large', 5], ['kei', 4], ['coupe', 3], ['sedan-old', 3], ['pickup-single', 2]],
@@ -80,24 +80,37 @@ export function placeVehicles(city: City, buildings: Buildings, furniture: Stree
   const lots = city.land.lots;
   const items: Vehicle[] = [];
   const stats: Vehicles['stats'] = { stall: 0, drive: 0, kerb: 0, stalls: 0, drives: 0, kerbs: 0, models: {} };
+  // No two cars in one place: where spaces of two streets or two rows meet, the second car stays away.
+  const CELL = 16;
+  const placed = new Map<number, Vehicle[]>();
+  const cellOf = (x: number, y: number): number => Math.floor(x / CELL) * 4096 + Math.floor(y / CELL);
+  const free = (v: Vehicle): boolean => {
+    for (let i = -1; i <= 1; i++)
+      for (let j = -1; j <= 1; j++) for (const o of placed.get(cellOf(v.x + i * CELL, v.y + j * CELL)) ?? []) if (carsOverlap(v, o, 0.25)) return false;
+    return true;
+  };
   const park = (where: Vehicle['where'], mix: Mix, x: number, y: number, h: number, yaw: number, slope: number, room: number, ...key: number[]): void => {
     let id = weighted(mix, hash(seed, 9001, ...key));
     // What is too long for the place gives way to something shorter.
     for (let k = 0; CAR_SIZE.get(`vehicle/${id}`)!.len > room && k < 6; k++) id = weighted(mix, hash(seed, 9002, k, ...key));
     if (CAR_SIZE.get(`vehicle/${id}`)!.len > room) id = 'compact';
     const work = id === 'van' || id === 'kei-truck' || id === 'pickup-single' || id === 'kei-box';
-    const tint = id === 'taxi' ? 0xe0b010 : id.startsWith('truck') ? 0xf0f0ee : work ? WORK_COLOURS[Math.floor(hash(seed, 9003, ...key) * WORK_COLOURS.length)] : weighted(COLOURS, hash(seed, 9003, ...key));
+    const tint = id === 'taxi' ? 0xe0b010 : id === 'police' ? 0xf4f4f2 : id.startsWith('truck') ? 0xf0f0ee : work ? WORK_COLOURS[Math.floor(hash(seed, 9003, ...key) * WORK_COLOURS.length)] : weighted(COLOURS, hash(seed, 9003, ...key));
     // Nobody parks to the centimetre.
     const [c, s] = [Math.cos(yaw), Math.sin(yaw)];
     const along = (hash(seed, 9004, ...key) - 0.5) * (where === 'kerb' ? 0.7 : 0.5);
     const across = (hash(seed, 9005, ...key) - 0.5) * (where === 'kerb' ? 0.16 : 0.3);
     const model = `vehicle/${id}`;
-    items.push({ model, kind: 'car', x: x + c * along - s * across, y: y + s * along + c * across, h, yaw: yaw + (hash(seed, 9006, ...key) - 0.5) * 0.05, ...(Math.abs(slope) > 0.004 ? { slopeX: slope } : {}), tint, where });
+    const v: Vehicle = { model, kind: 'car', x: x + c * along - s * across, y: y + s * along + c * across, h, yaw: yaw + (hash(seed, 9006, ...key) - 0.5) * 0.05, ...(Math.abs(slope) > 0.004 ? { slopeX: slope } : {}), tint, where };
+    if (!free(v)) return;
+    items.push(v);
+    placed.set(cellOf(v.x, v.y), [...(placed.get(cellOf(v.x, v.y)) ?? []), v]);
     stats[where]++;
     stats.models[model] = (stats.models[model] ?? 0) + 1;
   };
 
   // --- Marked spaces and drives. ---
+  const police = new Set(buildings.list.filter((b) => b.model.startsWith('civic/police')).map((b) => b.lot));
   // How full a car park is differs from lot to lot, and cars gather near the building rather than spread evenly.
   buildings.spots.forEach((sp, i) => {
     const lot = lots[sp.lot];
@@ -109,6 +122,10 @@ export function placeVehicles(city: City, buildings: Buildings, furniture: Stree
     }
     stats.stalls++;
     const full = (FULL[lot.use] ?? 0.5) * (0.6 + 0.8 * hash(seed, 9012, sp.lot));
+    if (police.has(sp.lot) && hash(seed, 9015, i) < 0.55) {
+      park('stall', [['police', 1]], sp.x, sp.y, sp.h, sp.yaw + Math.PI, 0, 5.25, i, 4);
+      return;
+    }
     if (hash(seed, 9013, i) >= full) return;
     // Most drive in forwards.
     park('stall', mixOf(type, lot.use), sp.x, sp.y, sp.h, sp.yaw + (hash(seed, 9014, i) < 0.22 ? Math.PI : 0), 0, 5.25, i, 2);
@@ -116,7 +133,6 @@ export function placeVehicles(city: City, buildings: Buildings, furniture: Stree
 
   // --- Along the kerb. ---
   const hydrants = furniture.items.filter((it) => it.kind === 'hydrant');
-  const CELL = 16;
   const grid = new Map<number, { x: number; y: number }[]>();
   for (const hy of hydrants) {
     const k = Math.floor(hy.x / CELL) * 4096 + Math.floor(hy.y / CELL);
@@ -140,8 +156,23 @@ export function placeVehicles(city: City, buildings: Buildings, furniture: Stree
     // Some streets are fuller than others.
     const full = KERB[k.type] * (0.55 + 0.9 * hash(seed, 9020, k.edge, k.side));
     if (hash(seed, 9021, i) >= full) return;
-    const mix: Mix = k.type === 'industrial' || (hash(seed, 9022, i) < (k.type === 'downtown' || k.type === 'midtown' ? 0.035 : 0.012) && k.cls !== 'local') ? [...mixOf(k.type), ...TRUCKS.map((t) => [t, k.type === 'industrial' ? 4 : 40] as [string, number])] : mixOf(k.type);
-    park('kerb', mix, k.x, k.y, k.h + 0.01, k.yaw, k.slope, 5.9, i, 3);
+    const mix: Mix = k.type === 'industrial' || (hash(seed, 9022, i) < (k.type === 'downtown' || k.type === 'midtown' ? 0.05 : k.cls === 'local' ? 0.008 : 0.03)) ? [...mixOf(k.type), ...TRUCKS.map((t) => [t, k.type === 'industrial' ? 4 : 40] as [string, number])] : mixOf(k.type);
+    park('kerb', mix, k.x, k.y, k.h + 0.01, k.yaw, k.slope, mix.length > 20 ? 7.2 : 5.9, i, 3);
   });
   return { items, stats };
+}
+
+/** Whether two cars stand in each other, with `margin` taken off the room each is given. */
+export function carsOverlap(a: Vehicle, b: Vehicle, margin = 0): boolean {
+  const [ra, rb] = [CAR_SIZE.get(a.model)!, CAR_SIZE.get(b.model)!];
+  if (Math.hypot(a.x - b.x, a.y - b.y) > (ra.len + rb.len) / 2 + 1) return false;
+  for (const [p, q, rp, rq] of [[a, b, ra, rb], [b, a, rb, ra]] as const) {
+    const [c, s] = [Math.cos(p.yaw), Math.sin(p.yaw)];
+    const [cq, sq] = [Math.cos(q.yaw), Math.sin(q.yaw)];
+    const [dx, dy] = [q.x - p.x, q.y - p.y];
+    const reach = (ux: number, uy: number): number => (Math.abs(ux * cq + uy * sq) * (rq.len - margin)) / 2 + (Math.abs(-ux * sq + uy * cq) * (rq.wid - margin)) / 2;
+    if (Math.abs(dx * c + dy * s) > (rp.len - margin) / 2 + reach(c, s)) return false;
+    if (Math.abs(-dx * s + dy * c) > (rp.wid - margin) / 2 + reach(-s, c)) return false;
+  }
+  return true;
 }
