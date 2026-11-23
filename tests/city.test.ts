@@ -2164,14 +2164,24 @@ describe('parks, waterfront and boundaries', () => {
     const rooms = props.filter((p) => p.model.startsWith('prop/interior-'));
     const eat = o.items.filter((i) => i.kind === 'building' && /^shop\/(fastfood|diner)-/.test(i.model));
     expect(eat.length).toBeGreaterThan(20);
-    expect(rooms.length).toBe(eat.length);
-    for (const b of eat) {
-      const room = rooms.find((r) => r.x === b.x && r.y === b.y);
-      expect(room?.model, b.model).toBe(`prop/interior-${b.model.slice(5)}`);
+    // Every shop whose model has a room gets it, standing exactly where the building does and stretched as it is.
+    const fitted = o.items.filter((i) => i.kind === 'building' && ids.has(`prop/interior-${i.model.slice(i.model.indexOf('/') + 1)}`));
+    expect(fitted.length).toBeGreaterThan(eat.length + 300);
+    expect(rooms.length).toBe(fitted.length);
+    const at = new Map(rooms.map((r) => [`${r.x},${r.y}`, r]));
+    for (const b of fitted) {
+      const room = at.get(`${b.x},${b.y}`);
+      expect(room?.model, b.model).toBe(`prop/interior-${b.model.slice(b.model.indexOf('/') + 1)}`);
       expect(room!.yaw).toBe(b.yaw);
       expect(room!.h).toBe(b.h);
+      expect(room!.stretch).toBe(b.stretch);
     }
-    expect(new Set(rooms.map((r) => r.model)).size).toBeGreaterThanOrEqual(6);
+    for (const kind of ['store', 'mixed', 'gas', 'bank', 'bigbox', 'garage', 'fastfood', 'diner'])
+      expect(rooms.some((r) => r.model.startsWith(`prop/interior-${kind}-`)), kind).toBe(true);
+    expect(new Set(rooms.map((r) => r.model)).size).toBeGreaterThanOrEqual(30);
+    // Most shops in the city can be seen into.
+    const shops = o.items.filter((i) => i.kind === 'building' && i.model.startsWith('shop/'));
+    expect(fitted.length).toBeGreaterThan(0.85 * shops.length);
     const loose = props.filter((p) => !p.model.startsWith('prop/interior-'));
     expect(loose.length).toBeGreaterThan(800);
     expect(new Set(loose.map((p) => p.model)).size).toBeGreaterThanOrEqual(30);

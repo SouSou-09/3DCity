@@ -206,7 +206,7 @@ export function dumbbells(b: MeshBuilder, f: Pose, w: number): void {
     box(b, STEEL, f, [0, y, z], [w / 2, 0.015, 0.14]);
     for (let x = -w / 2 + 0.18; x < w / 2 - 0.1; x += 0.3) for (const sz of [-1, 1]) box(b, BLACK, f, [x, y + 0.07, z + sz * 0.09], [0.06 + (x + w) * 0.008, 0.055 + (x + w) * 0.006, 0.035]);
   }
-  for (const sx of [-1, 1]) box(b, STEEL, f, [sx * (w / 2 - 0.02), 0.45, 0.22], [0.02, 0.45, 0.24], 'Y');
+  for (const sx of [-1, 1]) box(b, STEEL, f, [sx * (w / 2 - 0.02), 0.45, 0.25], [0.02, 0.45, 0.24], 'Y');
 }
 export function notice(b: MeshBuilder, f: Pose, tex: string): void {
   box(b, BLACK, f, [0, 0, 0.008], [0.33, 0.48, 0.008]);
@@ -242,13 +242,13 @@ export function fitBay(b: MeshBuilder, r: Bay): void {
       shelving(b, side(-cs, (-0.5 + zb) / 2), -0.5 - zb, o.walls[1 % o.walls.length], { n: n + 3 });
     } else {
       const cw = Math.max(1.4, r.w - 1.7);
-      counter(b, back(-cs * (W - 0.15 - cw / 2) , zb - 1.35), cw, PR(o.counter), PR(o.top), 1, n);
-      for (const s of [-1, 1]) if (-0.5 - (zb - 2.4) > 1) shelving(b, side(s, (-0.5 + zb - 2.4) / 2), -0.5 - (zb - 2.4), o.walls[(s + 1) / 2 % o.walls.length], { n: n + 2 + s });
+      counter(b, back(-cs * (W - 0.15 - cw / 2), zb + 1.35), cw, PR(o.counter), PR(o.top), 1, n);
+      for (const s of [-1, 1]) if (-0.5 - (zb + 2.4) > 1) shelving(b, side(s, (-0.5 + zb + 2.4) / 2), -0.5 - (zb + 2.4), o.walls[(s + 1) / 2 % o.walls.length], { n: n + 2 + s });
     }
     if (!o.mid) return;
     const span = r.w - 3.0;
     const m = span < 0 ? 0 : Math.floor(span / 1.5) + 1;
-    const ze = (wide ? zb : zb - 2.4) - 1.2;
+    const ze = (wide ? zb : zb + 2.4) + 1.2;
     for (let i = 0; i < m; i++) {
       const x = m === 1 ? 0 : -span / 2 + (i * span) / (m - 1);
       const zs = wide && x * cs > W - 3.1 ? -4.3 : way(x, -1.6, 1.2) ? -2.6 : -1.5;
@@ -265,7 +265,7 @@ export function fitBay(b: MeshBuilder, r: Bay): void {
       const kind = o.machines[i % o.machines.length];
       const wd = kind === 'fryer' || kind === 'oven' ? 0.8 : kind === 'coffee' ? 0.9 : 1.2;
       if (x + wd > cx + cw / 2 - 0.3) break;
-      machine(b, back(x + wd / 2, -D + 0.37), kind);
+      machine(b, back(x + wd / 2, -D + 0.42), kind);
       x += wd + 0.04;
     }
     menuBoard(b, move(back(cx), 0, 2.0, 0), PR(o.menu), Math.min(3.2, cw - 0.4));
@@ -314,7 +314,7 @@ export function fitBay(b: MeshBuilder, r: Bay): void {
       counter(b, side(cs, (z0 + z1) / 2, 1.15), len, PR('counter-wood'), PR('wood-walnut'), 1, n);
       shelving(b, side(cs, (z0 + z1) / 2), len, 'bottles', { d: 0.3, n });
       for (let z = z0 - 0.4, i = 0; z > z1 + 0.3; z -= 0.72, i++) if ((i + n) % 6 !== 4) stool(b, turn(move(F, cs * (W - 1.95), 0, z), i * 50), { mat: PR('vinyl-red'), kind: 'pedestal' });
-      for (let z = -1.5, i = 0; z > -D + 1.2; z -= 1.9, i++) if (!way(-cs * (W - 0.7), z, 1.0)) dineSet(b, move(F, -cs * (W - 0.75), 0, z), { table: { top: PR('wood-walnut'), kind: 'high', set: 'none' }, chair: CHAIR['wood-walnut'], seats: 2 + (i % 2), n: n + i, stoolMat: PR('vinyl-black') });
+      for (let z = -1.5, i = 0; z > -D + 1.2; z -= 1.9, i++) if (!way(-cs * (W - 0.7), z, 1.0)) dineSet(b, move(F, -cs * (W - 0.9), 0, z), { table: { top: PR('wood-walnut'), kind: 'high', set: 'none' }, chair: CHAIR['wood-walnut'], seats: 2 + (i % 2), n: n + i, stoolMat: PR('vinyl-black') });
       tv(b, move(back(-cs * 0.8), 0, 2.2, 0.01));
       return;
     }
@@ -328,7 +328,7 @@ export function fitBay(b: MeshBuilder, r: Bay): void {
         box(b, PR(['plastic-blue', 'plastic-white', 'plastic-orange'][(i + n) % 3]), f, [0.3 - i * 0.5, 0.86, 0], [0.26, 0.11, 0.18], 'Y');
       }
       bench(b, side(-cs, -1.4, 0.32), 1.8, PR('vinyl-teal'), PR('plastic-grey'), 0.9);
-      machine(b, back(cs * (W - 1.5), -D + 0.37), 'fridge');
+      machine(b, back(cs * (W - 1.5), -D + 0.42), 'fridge');
       notice(b, move(back(-cs * 0.4), 0, 1.7, 0.01), 'notice-sale');
       return;
     }
@@ -351,13 +351,14 @@ export function fitBay(b: MeshBuilder, r: Bay): void {
       if (t === 'checks') {
         wicket(b, back(-cs * 0.5, zc), r.w - 1.2, PR('counter-steel'), PR('laminate-grey'));
         atm(b, side(-cs, -1.6));
-        stanchions(b, F, [[-cs * 1.2 - 0.9, zc + 1.2], [-cs * 1.2 + 0.9, zc + 1.2], [-cs * 1.2 + 0.9, zc + 2.2]]);
-        for (let i = 0; i < 2; i++) desk(b, back((i - 0.5) * Math.min(2.4, r.w - 2), zc - 1.6), 1.3, PR('laminate-grey'), CHAIR['pad-black'], n + i);
+        const qx = -cs * Math.min(1.2, W - 1.3);
+        if (r.w >= 4.2) stanchions(b, F, [[qx - 0.9, zc + 1.2], [qx + 0.9, zc + 1.2], [qx + 0.9, zc + 2.2]]);
+        if (zc - 0.9 > -D + 1.1) for (let i = 0; i < 2; i++) desk(b, back((i - 0.5) * Math.min(2.4, r.w - 2), Math.max(zc - 1.6, -D + 1.1)), 1.3, PR('laminate-grey'), CHAIR['pad-black'], n + i);
       } else {
         desk(b, back(-cs * (W - 1.4), zc + 0.5), 1.8, PR(t === 'dental' ? 'laminate-white' : 'wood-walnut'), CHAIR['pad-black'], n);
         box(b, PR(ROOM[t][1]), F, [cs * 0.55, 1.2, zc - 0.4], [W - 0.55, 1.2, 0.05]);
-        if (t === 'bail') for (let i = 0; i < 2; i++) desk(b, turn(move(F, cs * (W - 1.0), 0, zc - 1.8 - i * 2), cs > 0 ? -90 : 90), 1.4, PR('wood-walnut'), CHAIR['pad-black'], n + 1 + i);
-        else salonChair(b, turn(move(F, cs * 0.6, 0, zc - 2.2), 180), PR('vinyl-teal'));
+        if (t === 'bail') for (let i = 0; i < 2 && zc - 1.8 - i * 2 > -D + 0.9; i++) desk(b, turn(move(F, cs * (W - 1.0), 0, zc - 1.8 - i * 2), cs > 0 ? -90 : 90), 1.4, PR('wood-walnut'), CHAIR['pad-black'], n + 1 + i);
+        else salonChair(b, turn(move(F, cs * 0.6, 0, (zc - 0.45 - D) / 2), 180), PR('vinyl-teal'));
       }
       waiting(cs, -1.9, Math.max(2, Math.min(4, Math.floor((-0.6 - zc - 0.8) / 0.56))), CHAIR[t === 'dental' ? 'pad-teal' : 'shell-yellow']);
       plant(b, move(F, -cs * (W - 0.45), 0, -0.6));
@@ -372,7 +373,7 @@ export function fitBay(b: MeshBuilder, r: Bay): void {
       dumbbells(b, side(-cs, Math.max(-D + 1.6, -5.2)), Math.min(2.4, D - 4));
       tv(b, move(back(0), 0, 2.2, 0.01));
       notice(b, move(side(-cs, -2.2), 0, 1.8, 0.01), 'notice-fit');
-      desk(b, turn(move(F, -cs * (W - 0.9), 0, -3.4), cs > 0 ? 90 : -90), 1.2, PR('laminate-black'), CHAIR['pad-black'], n);
+      desk(b, turn(move(F, -cs * (W - 1.0), 0, -3.4), cs > 0 ? 90 : -90), 1.2, PR('laminate-black'), CHAIR['pad-black'], n);
       return;
     }
     case 'books': return store({ walls: ['books', 'books'], mid: ['books', 'magazines'], back: 'books', behind: 'books', counter: 'counter-wood', top: 'wood-oak', h: 1.66 });
@@ -467,11 +468,11 @@ export function fitBay(b: MeshBuilder, r: Bay): void {
       const zb = -D + 0.6;
       shelving(b, back(0), r.w - 0.1, 'cooler', { n, d: 0.6, body: STEEL });
       for (const s of [-1, 1]) {
-        const [z0, z1] = [s === cs ? -3.4 : -0.6, zb - 0.4];
+        const [z0, z1] = [s === cs ? -3.4 : -0.6, zb + 0.4];
         if (z0 - z1 > 1.2) flowerStand(b, side(s, (z0 + z1) / 2), z0 - z1, n + s);
       }
       counter(b, side(cs, -2.0, 1.15), 1.8, PR('counter-wood'), PR('wood-oak'), 1, n);
-      if (r.w > 5) for (let z = -3.2; z > zb - 1.6; z -= 2.2) { flowerStand(b, turn(move(F, -cs * 0.3, 0, z), 90), 1.6, n + 5); }
+      if (r.w > 5) for (let z = -3.2; z > zb + 1.8; z -= 2.2) { flowerStand(b, turn(move(F, -cs * 0.3, 0, z), 90), 1.6, n + 5); }
       return;
     }
   }
