@@ -784,13 +784,13 @@ export function placeBuildings(site: Site, shore: Waterfront): Buildings {
     return count;
   };
   /** A paved yard behind the buildings with marked spaces, and a drive to it down one side of the lot where there is room. */
-  const rearParking = (f: Frame, group: Rect, gaps: [number, number][]): void => {
+  const rearParking = (f: Frame, group: Rect, gaps: [number, number][]): Rect | null => {
     const lot = f.lot;
     const [L, R] = span(f, 0, f.d - 1, 0.5);
     const from = group[3] + 1.5;
-    if (f.d - 1 - from < 6 || R - L < 8) return;
+    if (f.d - 1 - from < 6 || R - L < 8) return null;
     const [roomL, roomR] = [group[0] - L, R - group[1]];
-    if (Math.max(roomL, roomR) < 3.2) return;
+    if (Math.max(roomL, roomR) < 3.2) return null;
     const tex = asphalt(lot);
     const drive: Rect = roomL > roomR ? [L, L + Math.min(roomL - 0.2, 5.5), -f.gap, from] : [R - Math.min(roomR - 0.2, 5.5), R, -f.gap, from];
     pave(f, tex, drive, 0.05, 4);
@@ -799,6 +799,7 @@ export function placeBuildings(site: Site, shore: Waterfront): Buildings {
     f.taken.push(drive, pad);
     gaps.push([drive[0] - 0.2, drive[1] + 0.2]);
     stalls(f, [L + 0.3, R - 0.3, from + 0.2, f.d - 1.2]);
+    return drive;
   };
 
   // --- Flats ---
@@ -863,12 +864,14 @@ export function placeBuildings(site: Site, shore: Waterfront): Buildings {
       pave(f, 'concrete/walk-square', court, 0.055, 3);
       f.taken.push(court);
     }
-    rearParking(f, group, gaps);
+    const drive = rearParking(f, group, gaps);
     const [lo, hi] = span(f, 0, f.d, 0);
     for (let i = 0; i < (high ? 4 : 2); i++) if (rnd(lot.id, 85, i) < 0.6) tree(f, lo + 2 + rnd(lot.id, 86, i) * (hi - lo - 4), 1.7 + rnd(lot.id, 87, i) * Math.max(0, group[2] - 3), 88 + i, 2.2);
     for (let i = 0; i < 4; i++) if (rnd(lot.id, 92, i) < 0.4) small(f, BEDS[Math.floor(rnd(lot.id, 93, i) * BEDS.length)], 'plant', group[0] + 1 + rnd(lot.id, 94, i) * (group[1] - group[0] - 2), group[2] - 0.8, rnd(lot.id, 95, i) * 6, 0.6);
     const start = group[2] + (group[3] - group[2]) * 0.5;
-    yardFence(f, group, start, start, gaps);
+    // On the side of the drive to the parking behind, the fence starts past the end of the drive, not across it.
+    const startOn = (s: -1 | 1): number => (drive && (s < 0 ? drive[0] < group[0] : drive[1] > group[1]) ? drive[3] + 0.3 : start);
+    yardFence(f, group, startOn(-1), startOn(1), gaps);
     return true;
   };
 
