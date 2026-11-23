@@ -455,8 +455,12 @@ export function placeStreetFurniture(city: City, roads: RoadModel): StreetFurnit
       });
       // The island is planted: low towards its edge, where drivers look across it, and higher in the middle.
       const mound = Math.min(0.6, (island + 0.15) * 0.08);
+      const grown: Vec2[] = [];
       const grow = (model: string, kind: 'tree' | 'plant', r: number, ang: number, yaw = hash(seed, ji, Math.round(r * 10), Math.round(ang * 100), 122) * 6.283): void => {
         const p = { x: j.x + Math.cos(ang) * r, y: j.y + Math.sin(ang) * r };
+        // Scattered plants keep clear of what is planted already.
+        if (grown.some((q) => Math.hypot(q.x - p.x, q.y - p.y) < 0.7)) return;
+        grown.push(p);
         add({ model, kind, ...p, h: j.plane.h + j.plane.gx * (p.x - j.x) + j.plane.gy * (p.y - j.y) + 0.21 + mound * (1 - r / island), yaw, junction: ji });
       };
       const of = <T>(list: T[], ...v: number[]): T => list[Math.floor(hash(seed, ji, ...v) * list.length)];

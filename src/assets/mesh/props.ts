@@ -98,7 +98,11 @@ export function setting(b: MeshBuilder, f: Pose, y: number, w: number, d: number
     const m = n + i * 5;
     if (kind === 'tray') lay(b, f, TRAYS[m % 3], x, y + 0.012, z, 0.4, 0.3, yaw);
     else if (kind === 'pizza') lay(b, f, m % 2 ? 'tray-pizza' : 'pizza-box', x, y + 0.012, z, 0.4, 0.3, yaw);
-    else if (kind === 'noodle') lay(b, f, 'tray-noodle', x, y + 0.012, z, 0.4, 0.3, yaw);
+    else if (kind === 'noodle') {
+      lay(b, f, 'tray-noodle', x, y + 0.012, z, 0.4, 0.3, yaw);
+      // The pot of chopsticks goes round with the bowls.
+      if (i === 0) box(b, 'prop/plastic-black', f, [0.14, y + 0.07, -0.05], [0.05, 0.07, 0.05]);
+    }
     else {
       if (kind === 'plates') lay(b, f, 'placemat', x, y + 0.006, z, 0.4, 0.3, yaw);
       lay(b, f, kind === 'coffee' ? (m % 2 ? 'plate-donut' : 'plate-empty') : PLATES[m % 4], x, y + 0.012, z, kind === 'coffee' ? 0.2 : 0.27, kind === 'coffee' ? 0.2 : 0.27, yaw);

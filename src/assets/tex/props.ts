@@ -49,10 +49,11 @@ for (const [id, label, c] of VINYL)
     const a = new Art(t, hex(c), 0.38);
     // Channels sewn down the back.
     for (let x = 0; x < 0.5; x += 0.125) {
-      a.rect(shade(hex(c), 0.62), x - 0.004, 0, x + 0.004, 0.5, { height: -0.006 });
-      a.rect(shade(hex(c), 1.18), x + 0.035, 0, x + 0.075, 0.5, { opacity: 0.35, soft: 0.02, height: 0.004 });
+      a.rect(shade(hex(c), 0.62), x - 0.004, -0.1, x + 0.004, 0.6, { height: -0.006 });
+      a.rect(shade(hex(c), 1.18), x + 0.035, -0.1, x + 0.075, 0.6, { opacity: 0.35, soft: 0.02, height: 0.004 });
     }
-    return a.done(s, 0.05);
+    // No ageing: its dirt gathers at the foot of a sheet, and this one repeats.
+    return a.done(s, 0);
   }, { tile: 'xy', density: 128 });
 const LAMINATE: [string, string, number, number][] = [['white', '白', 0xe6e4dc, 0], ['grey', '灰の斑', 0xa8a8a4, 1], ['red', '赤の斑', 0xb03024, 1], ['cream', 'クリーム', 0xdcd0ac, 0], ['teal', '青緑の斑', 0x3c8c88, 1], ['black', '黒', 0x242426, 0]];
 for (const [id, label, c, fleck] of LAMINATE)
@@ -63,7 +64,7 @@ for (const [id, label, c, fleck] of LAMINATE)
       a.put(shade(hex(c), 1.35), (m) => t.map((x, y, k) => ((m[k] = sstep(0.25, 0.4, n(x, y))), 0)), { opacity: 0.6 });
       a.put(shade(hex(c), 0.6), (m) => t.map((x, y, k) => ((m[k] = sstep(0.3, 0.45, -n(x + 3, y))), 0)), { opacity: 0.5 });
     }
-    return a.done(s, 0.04);
+    return a.done(s, 0);
   }, { tile: 'xy', density: 128 });
 for (const [id, label, c] of [['oak', 'オーク', 0xa87c4c], ['walnut', 'ウォルナット', 0x5c3c26], ['pine', '松', 0xc8a470]] as const)
   add(`wood-${id}`, `家具の木 ${label}`, [0.6, 0.6], (t, s) => S.planks(t, { seed: s, width: 0.15, color: hex(c), weathered: 0 }), { tile: 'xy', density: 128 });
