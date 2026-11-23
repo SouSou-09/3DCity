@@ -31,9 +31,9 @@ export const REF_SIZE = 2400;
 /** Height of made ground at the shore, above which the plain rises only gently, metres. */
 export const FILL_HEIGHT = 2.6;
 /** The strip along the river that belongs to it: the bank wall, the path on its berm and the embankment, metres from the water. */
-export const RIVER_RESERVE = 22;
+export const RIVER_RESERVE = 24;
 /** How far from the water the level berm reaches, and its height. */
-export const BERM_WIDTH = 13;
+export const BERM_WIDTH = 16;
 export const BERM_HEIGHT = 1.3;
 /** Length scale for features that should grow with the map, but slower than the map itself. */
 export const featureScale = (size: number): number => REF_SIZE * Math.sqrt(Math.max(1, size / REF_SIZE));
@@ -291,7 +291,7 @@ export function generateTerrain(size: number, rng: Rng): Terrain {
         if (bank < RIVER_RESERVE) {
           const berm = Math.min(h, BERM_HEIGHT);
           h = mix(berm, h, smoothstep(BERM_WIDTH, RIVER_RESERVE - 2, bank));
-          if (bank < 5) h = mix(bank < -6 ? -2.4 : -1.6, h, smoothstep(-2, 5, bank));
+          if (bank < 5) h = mix(bank < -6 ? -2.6 : -2, h, smoothstep(1, 5, bank));
         }
       }
       height[k] = h;
