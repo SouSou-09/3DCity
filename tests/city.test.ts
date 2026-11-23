@@ -15,6 +15,7 @@ import { roadAt, trackAt } from '../src/place/railProfile';
 import { LOW_TREES, STREET_TREES, placeStreetFurniture } from '../src/place/streetFurniture';
 import { Building } from '../src/place/buildings';
 import { carsOverlap, placeVehicles } from '../src/place/vehicles';
+import { CAR_SIZE } from '../src/assets/mesh/vehicles';
 import { landCover } from '../src/place/landCover';
 import { BELT, COPSE, RIVERSIDE, WILD, YARD } from '../src/place/leftover';
 import { OpenSpace, placeOpenSpace } from '../src/place/openSpace';
@@ -2114,6 +2115,25 @@ describe('parks, waterfront and boundaries', () => {
       if (Math.abs((a.x - b.x) * cs + (a.y - b.y) * sn) < b.hx - 2.6 && Math.abs(-(a.x - b.x) * sn + (a.y - b.y) * cs) < b.hz - 2.6) inside++;
     }
     expect(inside).toBe(0);
+    // Nobody at the kerb stands across the mouth of a drive or of the way into a car park, whether a car is on the drive or not.
+    expect(o.buildings.mouths.length).toBeGreaterThan(2000);
+    const mouths = new Map<number, typeof o.buildings.mouths>();
+    for (const m of o.buildings.mouths) {
+      const k = Math.floor(m.y / 16) * 4096 + Math.floor(m.x / 16);
+      (mouths.get(k) ?? mouths.set(k, []).get(k)!).push(m);
+    }
+    let across = 0;
+    for (const a of v.items) {
+      if (a.where !== 'kerb') continue;
+      const [cs, sn, half] = [Math.cos(a.yaw), Math.sin(a.yaw), CAR_SIZE.get(a.model)!.len / 2];
+      for (let dj = -1; dj <= 1; dj++) for (let di = -1; di <= 1; di++) for (const m of mouths.get((Math.floor(a.y / 16) + dj) * 4096 + Math.floor(a.x / 16) + di) ?? []) {
+        const [dx, dy] = [m.x - a.x, m.y - a.y];
+        const [fore, side] = [dx * cs + dy * sn, -dx * sn + dy * cs];
+        // The mouth is over the pavement on the kerb side, and the car covers this much of its width.
+        if (side > 0 && side < 9 && Math.min(m.w / 2, fore + half) - Math.max(-m.w / 2, fore - half) > 0.5) across++;
+      }
+    }
+    expect(across).toBe(0);
   });
 
   it.each(OPEN_SEEDS)('seed %i: each chain restaurant has its room inside it, and the shop fronts their boards, banners, tables and crates', (seed) => {

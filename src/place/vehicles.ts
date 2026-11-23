@@ -3,7 +3,7 @@ import { hash } from './site';
 import { City } from '../gen/city';
 import { DistrictType } from '../gen/districts';
 import { LandUse } from '../gen/landuse';
-import { Buildings } from './buildings';
+import { Buildings, DriveMouth } from './buildings';
 import { StreetFurniture } from './streetFurniture';
 
 /** A parked car: a catalogue model in its own colour. */
@@ -89,6 +89,24 @@ export function placeVehicles(city: City, buildings: Buildings, furniture: Stree
       for (let j = -1; j <= 1; j++) for (const o of placed.get(cellOf(v.x + i * CELL, v.y + j * CELL)) ?? []) if (carsOverlap(v, o, 0.25)) return false;
     return true;
   };
+  // Nobody parks at the kerb across the mouth of a drive, whether or not a car stands on the drive.
+  const mouths = new Map<number, DriveMouth[]>();
+  for (const m of buildings.mouths) {
+    const k = Math.floor(m.x / CELL) * 4096 + Math.floor(m.y / CELL);
+    mouths.set(k, [...(mouths.get(k) ?? []), m]);
+  }
+  const overMouth = (x: number, y: number, yaw: number, len: number): boolean => {
+    const [c, s] = [Math.cos(yaw), Math.sin(yaw)];
+    for (let i = -1; i <= 1; i++)
+      for (let j = -1; j <= 1; j++)
+        for (const m of mouths.get((Math.floor(x / CELL) + i) * 4096 + Math.floor(y / CELL) + j) ?? []) {
+          const [dx, dy] = [m.x - x, m.y - y];
+          // The mouth lies over the pavement on the car's kerb side, and the car reaches into its width.
+          const lat = -dx * s + dy * c;
+          if (lat > -1 && lat < 9 && Math.abs(dx * c + dy * s) < m.w / 2 + len / 2 - 0.3) return true;
+        }
+    return false;
+  };
   const park = (where: Vehicle['where'], mix: Mix, x: number, y: number, h: number, yaw: number, slope: number, room: number, ...key: number[]): void => {
     let id = weighted(mix, hash(seed, 9001, ...key));
     // What is too long for the place gives way to something shorter.
@@ -102,6 +120,7 @@ export function placeVehicles(city: City, buildings: Buildings, furniture: Stree
     const across = (hash(seed, 9005, ...key) - 0.5) * (where === 'kerb' ? 0.16 : 0.3);
     const model = `vehicle/${id}`;
     const v: Vehicle = { model, kind: 'car', x: x + c * along - s * across, y: y + s * along + c * across, h, yaw: yaw + (hash(seed, 9006, ...key) - 0.5) * 0.05, ...(Math.abs(slope) > 0.004 ? { slopeX: slope } : {}), tint, where };
+    if (where === 'kerb' && overMouth(v.x, v.y, v.yaw, CAR_SIZE.get(model)!.len)) return;
     if (!free(v)) return;
     items.push(v);
     placed.set(cellOf(v.x, v.y), [...(placed.get(cellOf(v.x, v.y)) ?? []), v]);
@@ -137,12 +156,6 @@ export function placeVehicles(city: City, buildings: Buildings, furniture: Stree
   for (const hy of hydrants) {
     const k = Math.floor(hy.x / CELL) * 4096 + Math.floor(hy.y / CELL);
     grid.set(k, [...(grid.get(k) ?? []), hy]);
-  }
-  // Nor across a drive.
-  for (const sp of buildings.spots) {
-    if (sp.kind !== 'drive') continue;
-    const k = Math.floor(sp.x / CELL) * 4096 + Math.floor(sp.y / CELL);
-    grid.set(k, [...(grid.get(k) ?? []), { x: sp.x, y: sp.y }]);
   }
   const near = (x: number, y: number, r: number): boolean => {
     for (let i = -1; i <= 1; i++)

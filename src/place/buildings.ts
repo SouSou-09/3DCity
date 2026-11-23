@@ -44,6 +44,12 @@ export interface ParkSpot {
   lot: number;
   kind: 'stall' | 'drive';
 }
+/** Where a drive or the way into a car park meets the street: the middle of its mouth at the front of the lot, and its width. */
+export interface DriveMouth {
+  x: number;
+  y: number;
+  w: number;
+}
 
 export interface Buildings {
   list: Building[];
@@ -78,6 +84,8 @@ export interface Buildings {
   stalls: number;
   /** Where a car may stand off the street: each marked space and the drives of the houses. `yaw` is the way a car driven in forwards faces. */
   spots: ParkSpot[];
+  /** The mouths of the drives, which nobody parks across. */
+  mouths: DriveMouth[];
   /** Buildings per use, and public buildings per kind. */
   count: Partial<Record<LandUse, number>>;
   civic: Record<string, number>;
@@ -274,7 +282,7 @@ export function placeBuildings(site: Site, shore: Waterfront): Buildings {
   const land = city.land;
   const seed = site.seed;
   const rnd = (...v: number[]): number => hash(seed, 7717, ...v);
-  const out: Buildings = { list: [], tiles: [], plots: [], owner: new Int32Array(0), vacant: [], yards: [], fence: 0, runs: [], sheds: 0, garages: 0, hedges: 0, lines: 0, spots: [], hard: new Map(), patios: 0, stalls: 0, count: {}, civic: {} };
+  const out: Buildings = { list: [], tiles: [], plots: [], owner: new Int32Array(0), vacant: [], yards: [], fence: 0, runs: [], sheds: 0, garages: 0, hedges: 0, lines: 0, spots: [], mouths: [], hard: new Map(), patios: 0, stalls: 0, count: {}, civic: {} };
   const sand = new Set(shore.sandLots);
   const builders = new Map<string, MeshBuilder>();
   const tile = (x: number, y: number): MeshBuilder => {
@@ -415,6 +423,7 @@ export function placeBuildings(site: Site, shore: Waterfront): Buildings {
     f.d = Math.min(f.va, f.vb);
   };
   const at = (f: Frame, u: number, v: number): Vec2 => ({ x: f.ox + f.tx * u + f.nx * v, y: f.oy + f.ty * u + f.ny * v });
+  const mouth = (f: Frame, lo: number, hi: number): void => void out.mouths.push({ ...at(f, (lo + hi) / 2, -f.gap), w: hi - lo });
   const left = (f: Frame, v: number): number => -f.w / 2 + ((f.ua + f.w / 2) * Math.min(v, f.va0)) / f.va0;
   const right = (f: Frame, v: number): number => f.w / 2 + ((f.ub - f.w / 2) * Math.min(v, f.vb0)) / f.vb0;
   /** The u range that is on the lot all the way from v0 to v1, `m` in from its sides. */
@@ -1080,6 +1089,7 @@ const BACK_TABLES = ['park/picnic-table-wood', 'park/picnic-table-red', 'park/pi
     if (drive) {
       pave(f, f.type === 'industrial' && !plan?.garage ? 'ground/gravel-dirt' : dtex, drive, 0.05, 3);
       f.taken.push(drive);
+      mouth(f, drive[0], drive[1]);
       gaps.push([drive[0] - 0.2, drive[1] + 0.2]);
       // Room on it for a car, clear of the pavement.
       if (drive[3] >= 5.6 && drive[1] - drive[0] >= 2.5) {
@@ -1285,6 +1295,7 @@ const BACK_TABLES = ['park/picnic-table-wood', 'park/picnic-table-red', 'park/pi
     const bins = refuse(f, roomL > roomR ? 1 : -1, lot.area > 1100 || lot.floors >= 4, f.d - 1.1);
     if (stallSpots(f, park, undefined, [[drive[0], drive[1]]]).length < 2) return bins ? 'bins' : null;
     pave(f, tex, drive, 0.05, 4);
+    mouth(f, drive[0], drive[1]);
     const pad: Rect = [L, R, from, f.d - 1];
     // The bins stand on the car park: it is paved under them, as under nothing else that is built.
     const onPad = f.solid.splice(built);
@@ -1527,6 +1538,7 @@ const BACK_TABLES = ['park/picnic-table-wood', 'park/picnic-table-red', 'park/pi
     // Ways in from the street: one at each end of a long frontage, else one clear of the building.
     const ways = R - L >= 34 ? [L + 5.5, R - 5.5] : [deep || gas ? (L + R) / 2 : box[0] - L > R - box[1] ? L + 4 : R - 4];
     for (const e of ways) pave(f, tex, [e - 3.5, e + 3.5, -f.gap, edge + 2.05], 0.05, 2.4);
+    for (const e of ways) mouth(f, e - 3.5, e + 3.5);
     if (!gas) pave(f, 'concrete/walk-plain', [box[0], box[1], vf - 1.8, vf + 0.2], 0.07, 2);
     const lanes = ways.map((e): [number, number] => [e - 3.5, e + 3.5]);
     if (deep) stalls(f, [L + 1, R - 1, edge + 2.6, vf - 2], undefined, lanes);
@@ -1692,6 +1704,7 @@ const BACK_TABLES = ['park/picnic-table-wood', 'park/picnic-table-red', 'park/pi
     const tex = heavy ? ['ground/gravel-dirt', 'concrete/road-tined-stained', 'asphalt/plain-bleached-broken'][Math.floor(rnd(lot.id, 156) * 3)] : ['asphalt/plain-worn-patched', 'concrete/road-smooth-cracked', 'asphalt/plain-bleached-broken', 'asphalt/plain-used-patched', 'ground/gravel-dirt'][Math.floor(rnd(lot.id, 156) * 5)];
     pave(f, tex, [L, R, edge + 1.5, f.d - 1.5], 0.05, 5);
     pave(f, tex.startsWith('ground') ? 'concrete/road-smooth-cracked' : tex, [-6, 6, -f.gap, edge + 1.55], 0.05, 3);
+    mouth(f, -6, 6);
     refuse(f, rnd(lot.id, 157) < 0.5 ? -1 : 1, true, f.d - 2);
     stock(f, heavy, Math.min(10, Math.floor(lot.area / 450)), edge + 8);
     // Staff parking along the front fence, clear of the gate.
@@ -1708,6 +1721,7 @@ const BACK_TABLES = ['park/picnic-table-wood', 'park/picnic-table-red', 'park/pi
     const tex = ['ground/gravel-dirt', 'asphalt/plain-bleached-broken', 'concrete/road-smooth-cracked'][Math.floor(rnd(lot.id, 164) * 3)];
     pave(f, tex, [L, R, edge + 1.5, f.d - 1.5], 0.05, 5);
     pave(f, tex.startsWith('ground') ? 'concrete/road-smooth-cracked' : tex, [-4, 4, -f.gap, edge + 1.55], 0.05, 3);
+    mouth(f, -4, 4);
     if (R - L > 12 && f.d - edge > 12) stand(f, 'waterfront/container-office', 'yard', rnd(lot.id, 165) < 0.5 ? L + 5 : R - 5, edge + 5);
     stock(f, rnd(lot.id, 166) < 0.4, Math.max(2, Math.min(12, Math.floor(lot.area / 110))), edge + 4);
     out.yards.push(lot.id);
@@ -1755,6 +1769,7 @@ const BACK_TABLES = ['park/picnic-table-wood', 'park/picnic-table-red', 'park/pi
         const uc = (lo + hi) / 2;
         if (!place(f, s.id, uc, vf)) continue;
         pave(f, asphalt(lot), [uc - 4, uc + 4, -f.gap, vf + 0.3], 0.05, 2.5);
+        mouth(f, uc - 4, uc + 4);
         return true;
       }
     }
@@ -1765,6 +1780,7 @@ const BACK_TABLES = ['park/picnic-table-wood', 'park/picnic-table-red', 'park/pi
       if (r - l < 5.4 || back - edge < 5.5) return pocket(f);
       const tex = asphalt(lot);
       pave(f, tex, [l, r, -f.gap, back], 0.05, 2.6);
+      mouth(f, (l + r) / 2 - 3, (l + r) / 2 + 3);
       return stalls(f, [l + 0.1, r - 0.1, back - 5.5, back - 0.1]) > 0 || pocket(f);
     }
     const [L, R] = span(f, edge + 1, f.d - 1, 1);
@@ -1772,6 +1788,7 @@ const BACK_TABLES = ['park/picnic-table-wood', 'park/picnic-table-red', 'park/pi
     const tex = asphalt(lot);
     pave(f, tex, [L, R, edge + 1, f.d - 1], 0.05, 4);
     pave(f, tex, [-3.6, 3.6, -f.gap, edge + 1.05], 0.05, 2.4);
+    mouth(f, -3.6, 3.6);
     const n = stalls(f, [L + 0.4, R - 0.4, edge + 1.3, f.d - 1.2], [-3.4, 3.4, -1, edge + 7], [[-3.4, 3.4]]);
     if (n > 18 && rnd(lot.id, 161) < 0.5) {
       const p = at(f, 5, edge + 3.2);
@@ -1853,6 +1870,7 @@ const BACK_TABLES = ['park/picnic-table-wood', 'park/picnic-table-red', 'park/pi
         // Forecourt: paved across the front of a hall, an apron before the fire station's doors, else a path to the door.
         const way: Rect = c.kind === 'fire' ? [box[0] + 0.5, box[1] - 0.5, -f.gap, vf + 0.2] : c.plaza ? [box[0] - 1, box[1] + 1, -f.gap, vf + 0.2] : [uc - 1.6, uc + 1.6, -f.gap, vf + 0.2];
         pave(f, c.kind === 'fire' ? 'concrete/road-tined' : c.plaza ? 'paving/slabs-granite' : 'concrete/walk-square', way, 0.06, 2.4);
+        if (c.kind === 'fire') mouth(f, way[0], way[1]);
         f.taken.push(way);
         if (c.flag) small(f, 'civic/part-flagpole', 'yard', way[0] - 1.6 > L + 1 ? way[0] - 1.6 : way[1] + 1.6, edge + Math.min(2.5, (vf - edge) / 2), 0, 0.5);
         // Parking beside the building where the frontage is long, else behind it.
@@ -1866,6 +1884,7 @@ const BACK_TABLES = ['park/picnic-table-wood', 'park/picnic-table-red', 'park/pi
           pave(f, tex, pad, 0.05, 4);
           const e = (pad[0] + pad[1]) / 2;
           pave(f, tex, [e - 3.2, e + 3.2, -f.gap, pad[2] + 0.05], 0.05, 2.4);
+          mouth(f, e - 3.2, e + 3.2);
           stalls(f, [pad[0] + 0.3, pad[1] - 0.3, pad[2] + 0.3, pad[3] - 0.3], undefined, [[e - 3.2, e + 3.2]]);
           f.taken.push(pad, [e - 3.2, e + 3.2, 0, pad[2]]);
           refuse(f, roomL > roomR ? 1 : -1, lot.area > 1500);
