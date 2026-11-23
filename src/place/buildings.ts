@@ -756,8 +756,11 @@ export function placeBuildings(site: Site, shore: Waterfront): Buildings {
     };
     for (const c of [-1, 0]) b.quadUp(tex, pt(-1, c), pt(1, c), pt(1, c + 1), pt(-1, c + 1), 0, [[0, ((c + 1) / 2) * mh], [mw, ((c + 1) / 2) * mh], [mw, ((c + 2) / 2) * mh], [0, ((c + 2) / 2) * mh]]);
   };
-  /** Marks parking spaces in rows across a paved rectangle, from its far end towards the road; returns how many. */
-  const stalls = (f: Frame, r: Rect, keep?: Rect): number => {
+  /**
+   * Marks parking spaces in rows across a paved rectangle, from its far end towards the road; returns how many.
+   * `lanes` are the u ranges of the ways in: every row but the far one leaves them open, so that each aisle is reached.
+   */
+  const stalls = (f: Frame, r: Rect, keep?: Rect, lanes: [number, number][] = []): number => {
     const [u0, u1, v0, v1] = r;
     const n = Math.floor((u1 - u0) / 2.6);
     if (n < 2 || v1 - v0 < 5.4) return 0;
@@ -771,15 +774,19 @@ export function placeBuildings(site: Site, shore: Waterfront): Buildings {
     let count = 0;
     const worn = rnd(f.lot.id, 79) < 0.6;
     const start = (u0 + u1) / 2 - (n * 2.6) / 2;
-    for (const v of rows)
+    rows.forEach((v, k) => {
       for (let i = 0; i < n; i++) {
         const [u, vc] = [start + (i + 0.5) * 2.6, v + 2.7];
         if (!free(f, u, vc, 1.2, f.solid) || (keep && u > keep[0] && u < keep[1] && vc > keep[2] && vc < keep[3])) continue;
+        if (k > 0 && lanes.some(([a, b]) => u + 1.3 > a && u - 1.3 < b)) continue;
         const p = at(f, u, vc);
         if (site.at(p.x, p.y) !== LOT && site.at(p.x, p.y) !== FREE) continue;
-        mark(tile(p.x, p.y), worn ? 'symbol/parking-stall-white-worn' : 'symbol/parking-stall-white-new', p.x, p.y, f.yaw);
+        // The closed end of a space is away from its aisle: the far row and every second one after it open towards the road,
+        // and the texture's closed end is on the road side as it comes.
+        mark(tile(p.x, p.y), worn ? 'symbol/parking-stall-white-worn' : 'symbol/parking-stall-white-new', p.x, p.y, f.yaw + (k % 2 ? 0 : Math.PI));
         count++;
       }
+    });
     out.stalls += count;
     return count;
   };
@@ -798,7 +805,7 @@ export function placeBuildings(site: Site, shore: Waterfront): Buildings {
     pave(f, tex, pad, 0.05, 4);
     f.taken.push(drive, pad);
     gaps.push([drive[0] - 0.2, drive[1] + 0.2]);
-    stalls(f, [L + 0.3, R - 0.3, from + 0.2, f.d - 1.2]);
+    stalls(f, [L + 0.3, R - 0.3, from + 0.2, f.d - 1.2], undefined, [[drive[0], drive[1]]]);
     return drive;
   };
 
@@ -987,10 +994,11 @@ export function placeBuildings(site: Site, shore: Waterfront): Buildings {
     const ways = R - L >= 34 ? [L + 5.5, R - 5.5] : [deep || gas ? (L + R) / 2 : box[0] - L > R - box[1] ? L + 4 : R - 4];
     for (const e of ways) pave(f, tex, [e - 3.5, e + 3.5, -f.gap, edge + 2.05], 0.05, 2.4);
     if (!gas) pave(f, 'concrete/walk-plain', [box[0], box[1], vf - 1.8, vf + 0.2], 0.07, 2);
-    if (deep) stalls(f, [L + 1, R - 1, edge + 2.6, vf - 2]);
+    const lanes = ways.map((e): [number, number] => [e - 3.5, e + 3.5]);
+    if (deep) stalls(f, [L + 1, R - 1, edge + 2.6, vf - 2], undefined, lanes);
     else if (!gas) {
       const sideRect: Rect = box[0] - L > R - box[1] ? [L + 0.5, box[0] - 1.5, edge + 2.6, f.d - 1.6] : [box[1] + 1.5, R - 0.5, edge + 2.6, f.d - 1.6];
-      stalls(f, sideRect);
+      stalls(f, sideRect, undefined, lanes);
     }
     f.taken.push(lotRect);
     for (let u = L + 3, i = 0; u < R - 2; u += 9 + 5 * rnd(lot.id, 123, i), i++) if (ways.every((e) => Math.abs(u - e) > 5.5) && rnd(lot.id, 124, i) < 0.7) tree(f, u, edge + 1, 125 + i, 2, 0.6);
@@ -1129,7 +1137,7 @@ export function placeBuildings(site: Site, shore: Waterfront): Buildings {
     const tex = asphalt(lot);
     pave(f, tex, [L, R, edge + 1, f.d - 1], 0.05, 4);
     pave(f, tex, [-3.6, 3.6, -f.gap, edge + 1.05], 0.05, 2.4);
-    const n = stalls(f, [L + 0.4, R - 0.4, edge + 1.3, f.d - 1.2], [-3.4, 3.4, -1, edge + 7]);
+    const n = stalls(f, [L + 0.4, R - 0.4, edge + 1.3, f.d - 1.2], [-3.4, 3.4, -1, edge + 7], [[-3.4, 3.4]]);
     if (n > 18 && rnd(lot.id, 161) < 0.5) {
       const p = at(f, 5, edge + 3.2);
       if (site.at(p.x, p.y) === LOT) site.put(rnd(lot.id, 162) < 0.5 ? 'infra/parking-booth' : 'infra/parking-booth-flat', 'parking', p.x, p.y, f.yaw);
@@ -1219,7 +1227,7 @@ export function placeBuildings(site: Site, shore: Waterfront): Buildings {
           pave(f, tex, pad, 0.05, 4);
           const e = (pad[0] + pad[1]) / 2;
           pave(f, tex, [e - 3.2, e + 3.2, -f.gap, pad[2] + 0.05], 0.05, 2.4);
-          stalls(f, [pad[0] + 0.3, pad[1] - 0.3, pad[2] + 0.3, pad[3] - 0.3]);
+          stalls(f, [pad[0] + 0.3, pad[1] - 0.3, pad[2] + 0.3, pad[3] - 0.3], undefined, [[e - 3.2, e + 3.2]]);
           f.taken.push(pad, [e - 3.2, e + 3.2, 0, pad[2]]);
         } else rearParking(f, box, []);
         // A school has a court in its yard.
