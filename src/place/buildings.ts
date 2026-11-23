@@ -120,6 +120,15 @@ interface Frame {
 type Rect = [u0: number, u1: number, v0: number, v1: number];
 
 const TILE = 800;
+const PATIOS = ['concrete/walk-square', 'paving/running-red', 'paving/basket-tan', 'paving/slabs-sandstone', 'concrete/walk-exposed'];
+const HAS = (id: string): boolean => MODELS.some((m) => m.id === id);
+const BOARDS = ['coffee', 'lunch', 'open', 'sale', 'pizza', 'happy', 'donut', 'ramen', 'burger', 'barber', 'flowers', 'books'].filter((x) => HAS(`prop/board-${x}`));
+const FLAGS = ['red', 'yellow', 'blue', 'green', 'orange', 'white'].filter((x) => HAS(`prop/flag-${x}`));
+const CRATES = ['yellow', 'red', 'green', 'blue', 'grey', 'black'].filter((x) => HAS(`prop/crates-${x}`));
+const CARTONS = MODELS.filter((m) => m.id.startsWith('prop/cartons-')).map((m) => m.id.slice(13));
+const SETS = new Set(MODELS.filter((m) => m.id.startsWith('prop/set-')).map((m) => m.id.slice(9)));
+/** The rooms that are fitted out, as models to stand inside their buildings. */
+const FITTED = new Set(MODELS.filter((m) => m.id.startsWith('prop/interior-')).map((m) => m.id));
 const STEP = 0.17;
 
 /** Families of the catalogue with their models' footprints, looked up once. */
@@ -493,7 +502,10 @@ export function placeBuildings(site: Site, shore: Waterfront): Buildings {
     if ((o.maxRelief ?? 0) > 3.5 && g1 - floor > 1.5) return null;
     for (let gy = Math.floor((c.y - reach) / HASH); gy <= Math.floor((c.y + reach) / HASH); gy++)
       for (let gx = Math.floor((c.x - reach) / HASH); gx <= Math.floor((c.x + reach) / HASH); gx++) (placed.get(gy * 4096 + gx) ?? placed.set(gy * 4096 + gx, []).get(gy * 4096 + gx)!).push(mine);
-    site.put(model, 'building', c.x, c.y, f.yaw, { h: floor, ...(k !== 1 ? { stretch: k } : {}) });
+    const stood = site.put(model, 'building', c.x, c.y, f.yaw, { h: floor, ...(k !== 1 ? { stretch: k } : {}) });
+    // A restaurant that can be seen into has its room fitted out.
+    const room = `prop/interior-${model.slice(model.indexOf('/') + 1)}`;
+    if (FITTED.has(room)) site.set(room, 'prop', stood.x, stood.y, stood.h, f.yaw, k !== 1 ? { stretch: k } : {});
     // What a flat roof carries: air handlers and vents, more of them on a store or a works than on flats, and a water tank on the older blocks.
     const top = deck(model);
     if (top) {
@@ -746,6 +758,94 @@ export function placeBuildings(site: Site, shore: Waterfront): Buildings {
     f.solid.push(r);
     f.taken.push(r);
     return true;
+  };
+  /** A small thing at a shop, seen only from near by: on the lot or on the paved strip before it, clear of what stands there. */
+  const prop = (f: Frame, model: string, u: number, v: number, yaw = 0): boolean => {
+    const { min, max } = bbox(model);
+    const [c, sn] = [Math.abs(Math.cos(yaw)), Math.abs(Math.sin(yaw))];
+    const [hx, hz] = [(max[0] - min[0]) / 2, (max[2] - min[2]) / 2];
+    const [ru, rv] = [hx * c + hz * sn, hx * sn + hz * c];
+    const r: Rect = [u - ru, u + ru, v - rv, v + rv];
+    if (r[2] < Math.min(0, 0.25 - f.gap) || r[3] > f.d - 0.2) return false;
+    const [lo, hi] = span(f, Math.max(0, r[2]), Math.max(0.1, r[3]), 0.1);
+    if (r[0] < lo || r[1] > hi) return false;
+    if (f.solid.some(([u0, u1, v0, v1]) => u0 < r[1] + 0.12 && u1 > r[0] - 0.12 && v0 < r[3] + 0.12 && v1 > r[2] - 0.12)) return false;
+    const q = at(f, u, v);
+    if (v > 0 && !inPoly(f.poly, q.x, q.y)) return false;
+    const code = site.at(q.x, q.y);
+    if (code !== LOT && code !== FREE) return false;
+    site.put(model, 'prop', q.x, q.y, f.yaw + yaw);
+    f.solid.push(r);
+    return true;
+  };
+  /** What a shop puts out before its door and leaves behind its back wall. `box` is the building, `door` where its door is (if known). */
+  const dress = (f: Frame, b: Building, box: Rect, o: { door?: number; walk: number; back: boolean; patio?: Rect }): void => {
+    const id = f.lot.id;
+    const r = (a: number, i = 0): number => rnd(id, 900 + a, i, Math.round(box[0] * 7));
+    const pick = <T,>(list: T[], a: number, i = 0): T => list[Math.floor(r(a, i) * list.length) % list.length];
+    const food = /fastfood|diner/.test(b.model);
+    const chain = Number(b.model.match(/(\d+)$/)?.[1] ?? 0) + (b.model.includes('diner') ? 3 : 0);
+    const w = box[1] - box[0];
+    const door = o.door ?? Number.NaN;
+    const clear = (u: number): boolean => !(Math.abs(u - door) < 1.5);
+    const vw = box[2] - 0.42;
+    if (o.walk >= 0.8) {
+      // The board on the pavement: beside the door where there is one, else a third of the way along.
+      const boards = food ? (b.model.includes('diner') ? ['coffee', 'lunch', 'open', 'happy'] : [['burger', 'lunch'], ['lunch', 'open'], ['donut', 'coffee'], ['pizza', 'happy'], ['ramen', 'lunch'], ['burger', 'open']][chain % 6]) : BOARDS;
+      if (r(1) < (food ? 0.8 : 0.45)) {
+        const u = Number.isNaN(door) ? box[0] + w * (0.25 + 0.5 * r(2)) : door + (r(2) < 0.5 ? -1 : 1) * (1.7 + 0.6 * r(3));
+        prop(f, `prop/board-${pick(boards, 4)}`, u, box[2] - Math.min(o.walk - 0.35, 0.7 + 0.5 * r(5)), (r(6) - 0.5) * 0.5 + (r(7) < 0.3 ? Math.PI / 2 : 0));
+      }
+      // Banners in a row at one end of the front.
+      if (r(8) < (food ? 0.55 : 0.22)) {
+        const col = food ? FLAGS[chain % FLAGS.length] : pick(FLAGS, 9);
+        const n = 1 + Math.floor(r(10) * (food ? 3.4 : 2));
+        const side = r(11) < 0.5 ? -1 : 1;
+        for (let i = 0; i < n; i++) {
+          const u = (side < 0 ? box[0] + 0.5 : box[1] - 0.5) - side * i * 1.15;
+          if (clear(u)) prop(f, `prop/flag-${r(12, i) < 0.8 ? col : pick(FLAGS, 13, i)}`, u, box[2] - Math.min(o.walk - 0.3, 1.25), (r(14, i) - 0.5) * 0.3);
+        }
+      }
+      // Somewhere to put a cigarette out, against the wall.
+      if (r(15) < (food ? 0.6 : 0.2)) {
+        const u = Number.isNaN(door) ? box[0] + 0.5 + r(16) * (w - 1) : door + (r(16) < 0.5 ? -1 : 1) * (1.55 + 0.9 * r(17));
+        prop(f, `prop/ashtray-${pick(['post', 'bin', 'sand'], 18)}`, u, vw);
+      }
+      // Goods waiting to go in, stood against the front wall.
+      if (!food && r(19) < 0.3) {
+        const u = box[0] + 0.7 + r(20) * (w - 1.4);
+        if (clear(u)) prop(f, r(21) < 0.5 ? `prop/crates-${pick(CRATES, 22)}` : `prop/cartons-${pick(CARTONS, 22)}`, u, box[2] - 0.5, (r(23) - 0.5) * 0.2);
+      }
+      // A table or two on the pavement where it is wide enough.
+      if (food && o.walk >= 2.3 && r(24) < 0.6) {
+        const set = pick(['bistro-2', 'cafe-2', 'wood-2', 'high-2'].filter((x) => SETS.has(x)), 25);
+        for (let i = 0, u = box[0] + 1.4; u < box[1] - 1.2 && i < 3; u += 2.6 + r(26, i), i++) if (clear(u) && Math.abs(u - door) > 2.6) prop(f, `prop/set-${set}`, u, box[2] - 1.05, (r(27, i) - 0.5) * 0.4);
+      }
+    }
+    // Tables under parasols beside the building.
+    if (o.patio) {
+      const [a0, a1, c0, c1] = o.patio;
+      const shade = pick(['parasol-red', 'parasol-green', 'parasol-cream', 'parasol-blue'], 30);
+      const plain = pick(['plastic-4', 'wood-4', 'cafe-4', 'bistro-2'].filter((x) => SETS.has(x)), 31);
+      let i = 0;
+      for (let v = c0 + 1.7; v < c1 - 1.5; v += 3.3)
+        for (let u = a0 + 1.7; u < a1 - 1.5; u += 3.3, i++) {
+          if (r(32, i) < 0.12) continue;
+          prop(f, `prop/set-${r(33, i) < 0.7 ? shade : plain}`, u + (r(34, i) - 0.5) * 0.5, v + (r(35, i) - 0.5) * 0.5, r(36, i) * Math.PI);
+        }
+    }
+    // Behind the back wall: empties, deliveries, gas, the mop.
+    if (o.back) {
+      const back = food
+        ? ['crates-mixed', `crates-${pick(CRATES, 40)}`, `cartons-${pick(CARTONS, 41)}`, 'keg-pair', 'gas-pair', 'gas-grey', 'mop-bucket', 'keg']
+        : [`cartons-${pick(CARTONS, 41)}`, `cartons-${pick(CARTONS, 42)}`, `crates-${pick(CRATES, 40)}`, 'crates-mixed', 'mop-bucket'];
+      const n = (food ? 2 : 0) + Math.floor(r(43) * 3);
+      for (let i = 0; i < n; i++) {
+        const m = `prop/${pick(back, 44, i)}`;
+        const { min, max } = bbox(m);
+        prop(f, m, box[0] + 0.8 + r(45, i) * (w - 1.6), box[3] + (max[2] - min[2]) / 2 + 0.08 + 0.25 * r(46, i), (r(47, i) - 0.5) * 0.24);
+      }
+    }
   };
   /** Where the refuse of a building waits for the lorry: a walled store on a big lot, a dumpster on a small one, in a back corner. */
   const refuse = (f: Frame, side: -1 | 1, big: boolean, back = f.d - 0.8): boolean => {
@@ -1336,6 +1436,7 @@ const BACK_TABLES = ['park/picnic-table-wood', 'park/picnic-table-red', 'park/pi
     let u = lo + (rnd(lot.id, 110) < 0.5 ? 0 : W - total);
     let back = 0;
     let any = false;
+    const rows: [Building, Rect][] = [];
     for (const s of best.seq) {
       // Where the street bends, the row next door leans in: a narrower front may still fit.
       const b = place(f, s.id, u + (s.w * k) / 2, vf, { stretch: k, party: true, main: !any }) ?? place(f, s.id, u + (s.w * k) / 2, vf, { stretch: k * 0.86, party: true, main: !any });
@@ -1344,6 +1445,7 @@ const BACK_TABLES = ['park/picnic-table-wood', 'park/picnic-table-red', 'park/pi
       any = true;
       back = Math.max(back, vf + 2 * b.hz);
       remember(lot, s.id);
+      rows.push([b, [u - s.w * k, u, vf, vf + 2 * b.hz]]);
     }
     if (!any) return false;
     if (f.gap > 0.2) pave(f, 'concrete/walk-square', [lo, hi, -f.gap - 0.3, vf + 0.3], 0.06, 2);
@@ -1354,6 +1456,7 @@ const BACK_TABLES = ['park/picnic-table-wood', 'park/picnic-table-red', 'park/pi
       if (rnd(lot.id, 112) < 0.9) stand(f, DUMPSTERS[Math.floor(rnd(lot.id, 113) * 4)], 'bin', lo + 2.2 + rnd(lot.id, 114) * Math.max(0, W - 4.4), back + 1.4, 2);
       f.taken.push(yard);
     }
+    for (const [b, box] of rows) dress(f, b, box, { walk: f.gap + vf - 0.1, back: f.d - box[3] > 2.2 });
     return true;
   };
 
@@ -1411,6 +1514,20 @@ const BACK_TABLES = ['park/picnic-table-wood', 'park/picnic-table-red', 'park/pi
     f.taken.push(lotRect);
     for (let u = L + 3, i = 0; u < R - 2; u += 9 + 5 * rnd(lot.id, 123, i), i++) if (ways.every((e) => Math.abs(u - e) > 5.5) && rnd(lot.id, 124, i) < 0.7) tree(f, u, edge + 1, 125 + i, 2, 0.6);
     refuse(f, rnd(lot.id, 126) < 0.5 ? -1 : 1, lot.area > 1400, f.d - 1.7);
+    if (!gas) {
+      // A restaurant set back in its car park may keep a terrace on the wider side of it.
+      let patio: Rect | undefined;
+      if (deep && /fastfood|diner/.test(made.model) && rnd(lot.id, 127) < 0.6) {
+        const right = R - box[1] > box[0] - L;
+        const wide = Math.min(8.5, (right ? R - box[1] : box[0] - L) - 1.2);
+        const pr: Rect = right ? [box[1] + 0.3, box[1] + 0.3 + wide, vf + 0.6, Math.min(box[3] - 0.6, vf + 12)] : [box[0] - 0.3 - wide, box[0] - 0.3, vf + 0.6, Math.min(box[3] - 0.6, vf + 12)];
+        if (wide >= 4.4 && pr[3] - pr[2] >= 4 && !f.solid.some(([u0, u1, v0, v1]) => u0 < pr[1] && u1 > pr[0] && v0 < pr[3] && v1 > pr[2])) {
+          pave(f, PATIOS[Math.floor(rnd(lot.id, 128) * PATIOS.length)], pr, 0.08, 2);
+          patio = pr;
+        }
+      }
+      dress(f, made, box, { door: /fastfood|diner/.test(made.model) ? uc : undefined, walk: 1.8, back: f.d - box[3] > 2.2, patio });
+    }
     return true;
   };
 

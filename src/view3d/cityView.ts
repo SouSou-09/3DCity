@@ -126,6 +126,31 @@ export class CityView {
     return out;
   }
 
+  /** Small things in tiles of their own, drawn only for the tiles near the camera. */
+  private buildNear(items: Instance[], TILE = 160, reach = 420): THREE.Group {
+    const tiles = new Map<string, Instance[]>();
+    for (const it of items) {
+      const k = `${Math.floor(it.x / TILE)}|${Math.floor(it.y / TILE)}`;
+      const g = tiles.get(k);
+      if (g) g.push(it);
+      else tiles.set(k, [it]);
+    }
+    const out = new THREE.Group();
+    const geos = new Map<string, { geo: THREE.BufferGeometry; mat: THREE.Material; layer: number; tinted: boolean }[]>();
+    for (const list of tiles.values()) {
+      const lod = new THREE.LOD();
+      const c = list.reduce((a, it) => [a[0] + it.x / list.length, a[1] + it.h / list.length, a[2] + it.y / list.length], [0, 0, 0]);
+      lod.position.set(c[0], c[1], c[2]);
+      const near = this.buildFurniture(list, TILE, geos);
+      near.position.set(-c[0], -c[1], -c[2]);
+      near.traverse((o) => (o.userData.sharedGeometry = true));
+      lod.addLevel(near, 0);
+      lod.addLevel(new THREE.Object3D(), reach);
+      out.add(lod);
+    }
+    return out;
+  }
+
   /** Cars in small tiles: the models up close, a tinted block for each further off, nothing beyond that. */
   private buildVehicles(items: Vehicle[]): THREE.Group {
     const TILE = 200;
@@ -220,7 +245,8 @@ export class CityView {
     for (const tile of rail.tiles) this.content.add(this.materials.group(tile));
     this.content.add(this.buildFurniture(rail.items));
     for (const tile of open.tiles) this.content.add(this.materials.group(tile));
-    this.content.add(this.buildFurniture(open.items));
+    this.content.add(this.buildFurniture(open.items.filter((it) => it.kind !== 'prop')));
+    this.content.add(this.buildNear(open.items.filter((it) => it.kind === 'prop')));
     this.vehicles = placeVehicles(city, open.buildings, this.furniture);
     this.content.add(this.buildVehicles(this.vehicles.items));
     const s = city.config.size;

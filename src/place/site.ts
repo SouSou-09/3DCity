@@ -22,10 +22,12 @@ export type SiteKind =
   | 'play' | 'sport' | 'pavilion' | 'feature' | 'bench' | 'light' | 'bin' | 'sign' | 'tree' | 'plant' | 'table'
   | 'fence' | 'gate' | 'guardrail' | 'wall'
   | 'beach' | 'pier' | 'seawall' | 'port' | 'rock' | 'buoy' | 'lighthouse' | 'boat' | 'dock'
-  | 'building' | 'parking' | 'yard' | 'roof';
+  | 'building' | 'parking' | 'yard' | 'roof'
+  /** Small things in and in front of the shops, shown only from near by. */
+  | 'prop';
 export const SITE_KINDS: SiteKind[] = [
   'play', 'sport', 'pavilion', 'feature', 'bench', 'light', 'bin', 'sign', 'tree', 'plant', 'table',
-  'fence', 'gate', 'guardrail', 'wall', 'beach', 'pier', 'seawall', 'port', 'rock', 'buoy', 'lighthouse', 'boat', 'dock', 'building', 'parking', 'yard', 'roof',
+  'fence', 'gate', 'guardrail', 'wall', 'beach', 'pier', 'seawall', 'port', 'rock', 'buoy', 'lighthouse', 'boat', 'dock', 'building', 'parking', 'yard', 'roof', 'prop',
 ];
 
 /** One model standing somewhere off the roads. */

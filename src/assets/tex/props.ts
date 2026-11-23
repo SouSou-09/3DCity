@@ -251,7 +251,7 @@ for (const [id, label, bg, fg, frame, lines, pic] of BOARDS)
   }, { density: 200 });
 const FLAGS: [string, string, number, number, string[]][] = [
   ['red', '赤 SALE', 0xc02018, 0xf8f4ec, ['S', 'A', 'L', 'E']], ['blue', '青 OPEN', 0x2450a8, 0xf8f4ec, ['O', 'P', 'E', 'N']], ['yellow', '黄 LUNCH', 0xf0c820, 0xb81c18, ['L', 'U', 'N', 'C', 'H']],
-  ['green', '緑 FRESH', 0x2c7c3c, 0xf8f4ec, ['F', 'R', 'E', 'S', 'H']], ['orange', '橙 RAMEN', 0xe0641c, 0x1c1c1e, ['R', 'A', 'M', 'E', 'N']], ['white', '白 NEW', 0xf0ece0, 0xc02018, ['N', 'E', 'W']],
+  ['green', '緑 FRESH', 0x2c7c3c, 0xf8f4ec, ['F', 'R', 'E', 'S', 'H']], ['orange', '橙 DEALS', 0xe0641c, 0x1c1c1e, ['D', 'E', 'A', 'L', 'S']], ['white', '白 NEW', 0xf0ece0, 0xc02018, ['N', 'E', 'W']],
 ];
 for (const [id, label, bg, fg, letters] of FLAGS)
   add(`flag-${id}`, `のぼり旗 ${label}`, [0.6, 1.8], (t, s) => {
