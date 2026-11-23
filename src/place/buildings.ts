@@ -435,6 +435,20 @@ export function placeBuildings(site: Site, shore: Waterfront): Buildings {
   };
 
   // --- Surfaces ---
+  /** The least height of a quad over the ground under it, whichever way it is cut into two triangles. */
+  const cover = (A: V3, B: V3, C: V3, D: V3): number => {
+    let least = Infinity;
+    for (let q = 1; q < 4; q++)
+      for (let r = 1; r < 4; r++) {
+        const [s, t] = [q / 4, r / 4];
+        const ac = s >= t ? A[1] + s * (B[1] - A[1]) + t * (C[1] - B[1]) : A[1] + t * (D[1] - A[1]) + s * (C[1] - D[1]);
+        const bd = s + t <= 1 ? A[1] + s * (B[1] - A[1]) + t * (D[1] - A[1]) : C[1] + (1 - s) * (D[1] - C[1]) + (1 - t) * (B[1] - C[1]);
+        const x = A[0] + s * (B[0] - A[0]) + t * (D[0] - A[0]) + s * t * (A[0] - B[0] + C[0] - D[0]);
+        const z = A[2] + s * (B[2] - A[2]) + t * (D[2] - A[2]) + s * t * (A[2] - B[2] + C[2] - D[2]);
+        least = Math.min(least, Math.min(ac, bd) - site.heightAt(x, z));
+      }
+    return least;
+  };
   /** Lays paving over a rectangle of the lot, following the ground; not under the lot's buildings. */
   const pave = (f: Frame, tex: string, r: Rect, lift = 0.05, step = 2): void => {
     const [u0, u1, v0, v1] = r;
@@ -442,18 +456,29 @@ export function placeBuildings(site: Site, shore: Waterfront): Buildings {
     const c = at(f, (u0 + u1) / 2, (v0 + v1) / 2);
     const b = tile(c.x, c.y);
     const [nu, nv] = [Math.max(1, Math.round((u1 - u0) / step)), Math.max(1, Math.round((v1 - v0) / step))];
-    const pts: V3[] = [];
-    for (let j = 0; j <= nv; j++)
-      for (let i = 0; i <= nu; i++) {
-        const p = at(f, u0 + ((u1 - u0) * i) / nu, v0 + ((v1 - v0) * j) / nv);
-        pts.push([p.x, site.heightAt(p.x, p.y) + lift, p.y]);
+    const pt = (u: number, v: number): V3 => {
+      const p = at(f, u, v);
+      return [p.x, site.heightAt(p.x, p.y) + lift, p.y];
+    };
+    // A piece lies flat between its corners, and the ground between them may not: one that the ground would come
+    // through, where it crosses a fold of the terrain, is laid as four smaller ones.
+    const lay = (a0: number, a1: number, c0: number, c1: number, depth: number): void => {
+      const [A, B, C, D] = [pt(a0, c0), pt(a1, c0), pt(a1, c1), pt(a0, c1)];
+      if (depth < 3 && Math.max(a1 - a0, c1 - c0) > 0.8 && cover(A, B, C, D) < 0.02) {
+        const [am, cm] = [(a0 + a1) / 2, (c0 + c1) / 2];
+        lay(a0, am, c0, cm, depth + 1);
+        lay(am, a1, c0, cm, depth + 1);
+        lay(a0, am, cm, c1, depth + 1);
+        lay(am, a1, cm, c1, depth + 1);
+        return;
       }
+      b.quadUp(tex, A, B, C, D, 0, [[a0, c0], [a1, c0], [a1, c1], [a0, c1]]);
+    };
     for (let j = 0; j < nv; j++)
       for (let i = 0; i < nu; i++) {
         const [a0, a1, c0, c1] = [u0 + ((u1 - u0) * i) / nu, u0 + ((u1 - u0) * (i + 1)) / nu, v0 + ((v1 - v0) * j) / nv, v0 + ((v1 - v0) * (j + 1)) / nv];
         if (!free(f, (a0 + a1) / 2, (c0 + c1) / 2, -0.4, f.solid)) continue;
-        const k = j * (nu + 1) + i;
-        b.quadUp(tex, pts[k], pts[k + 1], pts[k + nu + 2], pts[k + nu + 1], 0, [[a0, c0], [a1, c0], [a1, c1], [a0, c1]]);
+        lay(a0, a1, c0, c1, 0);
       }
   };
 
