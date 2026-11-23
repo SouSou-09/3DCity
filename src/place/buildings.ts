@@ -1242,24 +1242,28 @@ const BACK_TABLES = ['park/picnic-table-wood', 'park/picnic-table-red', 'park/pi
         const width = n * sw + (n - 1) * between;
         const slack = hi - lo - width;
         const pass = lane > 0 || (slack + side >= LANE && f.d - (vf + s.d) >= 8.5);
-        const start = pass ? (rnd(lot.id, 83) < 0.5 ? lo : hi - width) : lo + slack / 2;
+        // To one side of the lot for the drive; in the middle where there is none, or where the block does not stand at the side.
+        const starts = pass ? [rnd(lot.id, 83) < 0.5 ? lo : hi - width, lo + slack / 2] : [lo + slack / 2];
         const same = shapes.get(s.id.replace(/-\d+$/, ''))!.filter((x) => x.w <= s.w + 0.01 && x.d <= s.d + 0.01 && (!row || x.w > s.w - 0.01));
         let first: Building | null = null;
-        for (let i = 0; i < n; i++) {
-          const m = i === 0 ? s : same[Math.floor(rnd(lot.id, 84, i) * same.length)];
-          const uc = start + i * (sw + between) + sw / 2;
-          const b = place(f, m.id, uc, vf, { main: i === 0, stretch: k, ...(row ? { lap: ROW_TRIM + 0.005 } : {}) });
-          if (!b) {
-            if (i === 0 || row) break;
-            continue;
+        for (const start of starts) {
+          for (let i = 0; i < n; i++) {
+            const m = i === 0 ? s : same[Math.floor(rnd(lot.id, 84, i) * same.length)];
+            const uc = start + i * (sw + between) + sw / 2;
+            const b = place(f, m.id, uc, vf, { main: i === 0, stretch: k, ...(row ? { lap: ROW_TRIM + 0.005 } : {}) });
+            if (!b) {
+              if (i === 0 || row) break;
+              continue;
+            }
+            first ??= b;
+            remember(lot, m.id);
+            group = group ? [Math.min(group[0], uc - b.hx), Math.max(group[1], uc + b.hx), vf, Math.max(group[3], vf + 2 * b.hz)] : [uc - b.hx, uc + b.hx, vf, vf + 2 * b.hz];
+            const walk: Rect = [uc - 0.8, uc + 0.8, -f.gap, vf];
+            pave(f, 'concrete/walk-plain', walk, 0.06, 3);
+            f.taken.push(walk);
+            gaps.push([uc - 1, uc + 1]);
           }
-          first ??= b;
-          remember(lot, m.id);
-          group = group ? [Math.min(group[0], uc - b.hx), Math.max(group[1], uc + b.hx), vf, Math.max(group[3], vf + 2 * b.hz)] : [uc - b.hx, uc + b.hx, vf, vf + 2 * b.hz];
-          const walk: Rect = [uc - 0.8, uc + 0.8, -f.gap, vf];
-          pave(f, 'concrete/walk-plain', walk, 0.06, 3);
-          f.taken.push(walk);
-          gaps.push([uc - 1, uc + 1]);
+          if (first) break;
         }
         if (first || ++tries >= 5) break search;
       }
