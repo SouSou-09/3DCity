@@ -413,15 +413,15 @@ export function placeBuildings(site: Site, shore: Waterfront): Buildings {
     site.stampBand(a.x, a.y, b.x, b.y, -Math.max(0.3, hz - 0.5), Math.max(0.3, hz - 0.5), USED);
     const rect: Rect = [uc - hx, uc + hx, vf, vf + 2 * hz];
     f.taken.push(rect);
-    f.solid.push(rect);
+    // A house stands on less than its bounding box: the drive runs up to a garage door set back from the front.
+    const [cx, cz] = [(min[0] + max[0]) / 2, (min[2] + max[2]) / 2];
+    const parts = HOUSE_PLANS.get(model)?.body.map(([x0, x1, z0, z1]): Rect => {
+      const [a0, a1] = [uc + f.sx * (x0 - cx), uc + f.sx * (x1 - cx)];
+      return [Math.min(a0, a1), Math.max(a0, a1), vc - (z1 - cz), vc - (z0 - cz)];
+    });
+    f.solid.push(...(parts ?? [rect]));
     if (floor - g0 > 0.12) {
-      const plan = HOUSE_PLANS.get(model);
-      const [cx, cz] = [(min[0] + max[0]) / 2, (min[2] + max[2]) / 2];
-      if (plan)
-        for (const [x0, x1, z0, z1] of plan.body) {
-          const [a0, a1] = [uc + f.sx * (x0 - cx), uc + f.sx * (x1 - cx)];
-          skirt(f, [Math.min(a0, a1), Math.max(a0, a1), vc - (z1 - cz), vc - (z0 - cz)], floor, g0);
-        }
+      if (parts) for (const r of parts) skirt(f, r, floor, g0);
       else skirt(f, [uc - hx + 0.12, uc + hx - 0.12, vf + 0.12, vf + 2 * hz - 0.12], floor, g0);
     }
     const made: Building = { lot: lot.id, use: lot.use, model, x: c.x, y: c.y, hx, hz, yaw: f.yaw, floor, ground: [g0, g1], setback: vf, main: o.main ?? true, party: o.party ?? false, ...(o.civic ? { civic: o.civic } : {}) };
