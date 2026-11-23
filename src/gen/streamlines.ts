@@ -280,7 +280,10 @@ export class RoadBuilder {
       const cs = (s + step) * sign;
       const d2test = dtest * dtest;
       for (const o of own) {
-        if (Math.abs(o.s - cs) > 3 * dtest && (o.x - nx) ** 2 + (o.y - ny) ** 2 < d2test) return { pts, reason: 'near' };
+        const d2 = (o.x - nx) ** 2 + (o.y - ny) ** 2;
+        if (Math.abs(o.s - cs) > 3 * dtest && d2 < d2test) return { pts, reason: 'near' };
+        // Round a knoll the field leads back onto the street's own start: it stops short of running over itself.
+        if (Math.abs(o.s - cs) > 70 && d2 < 18 * 18) return { pts, reason: 'near' };
       }
       pts.push({ x: nx, y: ny });
       own.push({ x: nx, y: ny, s: cs });

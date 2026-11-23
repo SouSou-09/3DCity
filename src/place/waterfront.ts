@@ -369,13 +369,15 @@ export function placeWaterfront(site: Site): Waterfront {
     const line = site.roads.lines[e.id];
     if (!line) return null;
     const lay = layout(site.roads.sections[e.id]);
-    return { pts: line.map((q) => ({ x: q[0], y: q[2] })), half: Math.max(-lay.outer[0], lay.outer[1]) };
+    const pts = line.map((q) => ({ x: q[0], y: q[2] }));
+    const half = Math.max(-lay.outer[0], lay.outer[1]);
+    const [xs, ys] = [pts.map((q) => q.x), pts.map((q) => q.y)];
+    return { pts, half, box: [Math.min(...xs) - half - 1, Math.max(...xs) + half + 1, Math.min(...ys) - half - 1, Math.max(...ys) + half + 1] };
   });
-  /** Whether the pavement of one of the given streets covers a point. The ground taken for a junction is rounder than what is paved. */
-  const paved = (x: number, y: number, edges: number[]): boolean =>
-    edges.some((id) => {
-      const pv = paving[id];
-      if (!pv) return false;
+  /** Whether the pavement of a street other than `own` covers a point. The ground taken for a junction is rounder than what is paved. */
+  const paved = (x: number, y: number, own = -1): boolean =>
+    paving.some((pv, id) => {
+      if (!pv || id === own || x < pv.box[0] || x > pv.box[1] || y < pv.box[2] || y > pv.box[3]) return false;
       for (let i = 0; i + 1 < pv.pts.length; i++) if (pointSeg(x, y, pv.pts[i], pv.pts[i + 1]).d < pv.half + 0.8) return true;
       return false;
     });
@@ -387,8 +389,7 @@ export function placeWaterfront(site: Site): Waterfront {
     const mid = pointAt(pts, total / 2).p;
     if (Math.abs(sea(mid.x, mid.y)) > 120 + total / 2) return;
     const lay = layout(site.roads.sections[e.id]);
-    const others = [e.a, e.b].flatMap((n) => city.graph.nodes[n].edges.filter((id) => id !== e.id));
-    const open = (q: Vec2): boolean => site.at(q.x, q.y) === FREE || (site.at(q.x, q.y) === ROAD && Math.min(Math.hypot(q.x - pts[0].x, q.y - pts[0].y), Math.hypot(q.x - pts[pts.length - 1].x, q.y - pts[pts.length - 1].y)) < 40 && !paved(q.x, q.y, others));
+    const open = (q: Vec2): boolean => site.at(q.x, q.y) === FREE || (site.at(q.x, q.y) === ROAD && Math.min(Math.hypot(q.x - pts[0].x, q.y - pts[0].y), Math.hypot(q.x - pts[pts.length - 1].x, q.y - pts[pts.length - 1].y)) < 40 && !paved(q.x, q.y, e.id));
     for (const side of [1, -1]) {
       const off = Math.abs(side > 0 ? lay.outer[1] : lay.outer[0]);
       const kerb = side > 0 ? lay.outerY[1] : lay.outerY[0];
@@ -408,7 +409,7 @@ export function placeWaterfront(site: Site): Waterfront {
         const u = Math.hypot(p.x - pts[seg].x, p.y - pts[seg].y) / segLen;
         const top = line[seg][1] + (line[seg + 1][1] - line[seg][1]) * u + kerb;
         // The far side of the road is open sand that faces the sea, with room for the strip and beach beyond it.
-        const ok = near?.reach.kind === 'beach' && n.x * near.st.nx + n.y * near.st.ny > 0.35 && top > WATER_Y + 1 &&
+        const ok = near?.reach.kind === 'beach' && inMap(at(0), 10) && n.x * near.st.nx + n.y * near.st.ny > 0.35 && top > WATER_Y + 1 &&
           [0.6, 2, 4, 6, 8].every((o) => open(at(o))) && site.heightAt(at(9).x, at(9).y) > WATER_Y + 0.6;
         if (ok) run.push({ p: at(0), n, top, s: d });
         else flush();
@@ -428,7 +429,6 @@ export function placeWaterfront(site: Site): Waterfront {
         if (g.nodes[0] !== node) [g.posts, g.nodes] = [g.posts.reverse(), [g.nodes[1], g.nodes[0]]];
         const [q, r] = [f.posts[f.posts.length - 1], g.posts[0]];
         const span = Math.hypot(r.p.x - q.p.x, r.p.y - q.p.y);
-        const arms = city.graph.nodes[node].edges;
         const across: FrontPost[] = [];
         let clear = span < 90 && q.n.x * r.n.x + q.n.y * r.n.y > 0.5;
         for (let k = 1, m = Math.max(1, Math.round(span / 2)); k < m && clear; k++) {
@@ -437,7 +437,7 @@ export function placeWaterfront(site: Site): Waterfront {
           const post = { p: { x: q.p.x + (r.p.x - q.p.x) * u, y: q.p.y + (r.p.y - q.p.y) * u }, n: { x: (q.n.x + (r.n.x - q.n.x) * u) / nl, y: (q.n.y + (r.n.y - q.n.y) * u) / nl }, top: q.top + (r.top - q.top) * u, s: 0 };
           clear = [0.8, 2, 4, 6, 8].every((o) => {
             const [x, y] = [post.p.x + post.n.x * o, post.p.y + post.n.y * o];
-            return (site.at(x, y) === FREE || site.at(x, y) === ROAD) && !paved(x, y, arms);
+            return (site.at(x, y) === FREE || site.at(x, y) === ROAD) && !paved(x, y);
           });
           across.push(post);
         }
@@ -456,7 +456,6 @@ export function placeWaterfront(site: Site): Waterfront {
     for (const end of [0, 1]) {
       const node = f.nodes[end];
       if (node < 0) continue;
-      const arms = city.graph.nodes[node].edges;
       const [q, prev] = end ? [f.posts[f.posts.length - 1], f.posts[f.posts.length - 2]] : [f.posts[0], f.posts[1]];
       const l = Math.hypot(q.p.x - prev.p.x, q.p.y - prev.p.y) || 1;
       const [dx, dy] = [(q.p.x - prev.p.x) / l, (q.p.y - prev.p.y) / l];
@@ -464,9 +463,9 @@ export function placeWaterfront(site: Site): Waterfront {
         const post = { p: { x: q.p.x + dx * d, y: q.p.y + dy * d }, n: q.n, top: q.top, s: 0 };
         const clear = [0.8, 2, 4, 6, 8].every((o) => {
           const [x, y] = [post.p.x + q.n.x * o, post.p.y + q.n.y * o];
-          return (site.at(x, y) === FREE || site.at(x, y) === ROAD) && !paved(x, y, arms);
+          return (site.at(x, y) === FREE || site.at(x, y) === ROAD) && !paved(x, y);
         });
-        if (!clear || Math.abs(site.heightAt(post.p.x, post.p.y) - q.top) > 0.6) break;
+        if (!clear || !inMap(post.p, 10) || Math.abs(site.heightAt(post.p.x, post.p.y) - q.top) > 0.6) break;
         if (end) f.posts.push(post);
         else f.posts.unshift(post);
       }
@@ -535,7 +534,7 @@ export function placeWaterfront(site: Site): Waterfront {
         const slot = Math.round(q.s / 2);
         const bed = at(q, WALK + BED / 2);
         // Round a junction the bed is left bare: sight lines, and the ground there is the junction's.
-        if (site.at(bed[0], bed[2]) === ROAD) {
+        if ([[0, 0], [1.5, 0], [-1.5, 0], [0, 1.5], [0, -1.5]].some(([dx, dy]) => site.at(bed[0] + dx, bed[2] + dy) === ROAD)) {
           // No more than the bare bed.
         } else if (slot % 5 === 0) {
           if (rnd(122, f.edge, slot) < 0.22) site.put(pick(['furniture/bench-flat', 'furniture/bench-park', 'furniture/bench-flat-dark-long'], rnd(123, f.edge)), 'bench', bed[0], bed[2], yaw, { h: q.top });
@@ -1160,7 +1159,9 @@ export function placeWaterfront(site: Site): Waterfront {
     }
     // Lamps and benches at the back of the walk; trees and low planting on the verge behind it.
     const [lamp, bench, tree] = [pick(W.lamp, rnd(112, wi)), pick(W.bench, rnd(113, wi)), pick(W.tree, rnd(114, wi))];
-    const clear = (i: number): boolean => !taken.some((k) => Math.abs(k - i) < 1) && site.at(q(i, 1).x, q(i, 1).y) !== ROAD && site.at(q(i, 1).x, q(i, 1).y) !== RAIL;
+    // Nothing stands under a bridge, nor within a step of one.
+    const under = (p: Vec2): boolean => [[0, 0], [1.6, 0], [-1.6, 0], [0, 1.6], [0, -1.6]].some(([dx, dy]) => site.at(p.x + dx, p.y + dy) === ROAD || site.at(p.x + dx, p.y + dy) === RAIL);
+    const clear = (i: number): boolean => !taken.some((k) => Math.abs(k - i) < 1) && !under(q(i, 1)) && !under(q(i, W.width - 0.6));
     const yaw = (i: number): number => facing({ x: -st[i].nx, y: -st[i].ny });
     for (let i = 3; i < n - 2; i++) {
       if (!clear(i)) continue;

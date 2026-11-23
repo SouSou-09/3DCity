@@ -19,7 +19,7 @@ import { RAIL as ON_RAIL, ROAD as ON_ROAD, bbox } from '../src/place/site';
 import { RAIL_MAX_GRADE, RAIL_MIN_RADIUS, RAIL_STEP, RailIndex, sharpestRailTurn } from '../src/gen/rail';
 import { STATION_HALF } from '../src/gen/stations';
 import { isStreet } from '../src/gen/streamlines';
-import { REF_SIZE, heightAt, inBounds, isWater, seaDistAt, waterDistAt } from '../src/gen/terrain';
+import { BERM_WIDTH, REF_SIZE, heightAt, inBounds, isWater, riverBankAt, seaDistAt, waterDistAt } from '../src/gen/terrain';
 
 const SEEDS = [1, 2, 3, 4, 5, 6, 7, 8, 16, 21];
 // Generating a full-size city takes several seconds.
@@ -1361,7 +1361,8 @@ describe('parks, waterfront and boundaries', () => {
       // A quay stands a little out from the old shore line; a model's origin may lie a cell off the middle of what it shows.
       // A guard rail stands on the edge of a road, which may be on fill out over the water's edge.
       if (it.kind !== 'guardrail') expect(waterDistAt(t, it.x, it.y), at).toBeGreaterThan(-3);
-      expect(o.site.all(it.x, it.y, 2, ON_RAIL), at).toBe(false);
+      // The walk along a river goes on under the railway's bridge over it.
+      if (riverBankAt(t, it.x, it.y) > BERM_WIDTH) expect(o.site.all(it.x, it.y, 2, ON_RAIL), at).toBe(false);
       if (!EDGE.has(it.kind)) expect(o.site.all(it.x, it.y, 2, ON_ROAD), at).toBe(false);
     }
   });
@@ -1614,7 +1615,8 @@ describe('parks, waterfront and boundaries', () => {
     const b = o.buildings;
     expect(b.list.length).toBeGreaterThan(5000);
     const sand = new Set(o.shore.sandLots);
-    const built = new Set(b.list.map((x) => x.lot));
+    // A works lot too small for a shed is an open storage yard.
+    const built = new Set([...b.list.map((x) => x.lot), ...b.yards]);
     for (const use of BUILT) {
       const all = lots.filter((l) => l.use === use && !sand.has(l.id));
       if (all.length < 8) continue;

@@ -45,6 +45,8 @@ export interface Buildings {
   owner: Int32Array;
   /** Lots that should have a building and have none: nothing in the catalogue fits them. */
   vacant: number[];
+  /** Industrial lots too small for a shed, laid out as open storage yards. */
+  yards: number[];
   /** Metres of fence and wall built round house and shop lots. */
   fence: number;
   /** Marked parking spaces. */
@@ -227,7 +229,7 @@ export function placeBuildings(site: Site, shore: Waterfront): Buildings {
   const land = city.land;
   const seed = site.seed;
   const rnd = (...v: number[]): number => hash(seed, 7717, ...v);
-  const out: Buildings = { list: [], tiles: [], plots: [], owner: new Int32Array(0), vacant: [], fence: 0, stalls: 0, count: {}, civic: {} };
+  const out: Buildings = { list: [], tiles: [], plots: [], owner: new Int32Array(0), vacant: [], yards: [], fence: 0, stalls: 0, count: {}, civic: {} };
   const sand = new Set(shore.sandLots);
   const builders = new Map<string, MeshBuilder>();
   const tile = (x: number, y: number): MeshBuilder => {
@@ -573,6 +575,8 @@ export function placeBuildings(site: Site, shore: Waterfront): Buildings {
   const tree = (f: Frame, u: number, v: number, salt: number, clear = 2.6, margin = 1.6): boolean => {
     if (!open(f, u, v, margin, 0.9) || !free(f, u, v, clear, f.solid)) return false;
     const p = at(f, u, v);
+    // A trunk stands a little off the middle of its crown: not at the very edge of what a junction takes.
+    if ([[1.3, 0], [-1.3, 0], [0, 1.3], [0, -1.3]].some(([dx, dy]) => site.at(p.x + dx, p.y + dy) === ROAD)) return false;
     const list = TREES[f.type];
     site.put(list[Math.floor(rnd(f.lot.id, salt, 1) * list.length)], 'tree', p.x, p.y, rnd(f.lot.id, salt, 2) * 6.28, { scale: 0.7 + rnd(f.lot.id, salt, 3) * 0.45 });
     f.taken.push([u - 0.5, u + 0.5, v - 0.5, v + 0.5]);
@@ -1220,6 +1224,7 @@ export function placeBuildings(site: Site, shore: Waterfront): Buildings {
     pave(f, tex.startsWith('ground') ? 'concrete/road-smooth-cracked' : tex, [-4, 4, -f.gap, edge + 1.55], 0.05, 3);
     if (R - L > 12 && f.d - edge > 12) stand(f, 'waterfront/container-office', 'yard', rnd(lot.id, 165) < 0.5 ? L + 5 : R - 5, edge + 5);
     stock(f, rnd(lot.id, 166) < 0.4, Math.max(2, Math.min(12, Math.floor(lot.area / 110))), edge + 4);
+    out.yards.push(lot.id);
     return true;
   };
 
