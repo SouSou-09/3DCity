@@ -4,6 +4,7 @@ import { acUnit, antenna, awning, balcony, billboard, blade, bulkhead, dish, duc
 import { sillFor, spread } from './houses';
 import { box, stand } from './kit';
 import { addModel } from './registry';
+import { Bay, T_BAY, TRADES, bayShell, fitBay } from './shopfit';
 
 /** Scatters plant over a flat roof: `amount` 0..3, on a coarse grid so that units never overlap. */
 export function roofPlant(b: MeshBuilder, rnd: Rand, cx: number, cz: number, w: number, d: number, y: number, amount: number, o: { wall?: string; tank?: boolean; big?: boolean } = {}): void {
@@ -89,23 +90,19 @@ export function block(b: MeshBuilder, o: BlockOpts): void {
   const ground: Opening[] = [];
   const door = o.door ?? 'door/glass-aluminium';
   const [dw, dh] = textureSpec(door).meters;
+  const units = o.shop ? shopUnits(o, rnd) : [];
   if (o.shop) {
-    const { bay, h } = SHOP_BAYS[o.shop];
-    let x = 0.5;
-    const end = floors > 1 ? w - 0.5 - dw - 0.6 : w - 0.5;
-    let i = 0;
-    while (end - x >= bay * 2) {
-      const k = Math.min(rnd.int(2, 4), Math.floor((end - x) / bay));
-      const sw = k * bay;
-      ground.push({ x, y: 0.05, w: sw, h, tex: o.shop, v: rnd.int(0, 3), depth: 0.1, reveal: o.trim });
-      const c = stand([x + sw / 2 - w / 2, 0, d / 2]);
-      if (o.signs?.length) {
-        const s = Math.min(1, (sw - 0.3) / 4.8, (gh - h - 0.3) / 0.9);
-        sign(b, { ...c, o: [c.o[0], h + 0.15 + 0.45 * s + (o.awning ? 0.05 : 0), c.o[2]] }, 4.8 * s, 0.9 * s, o.signs[(i + rnd.int(0, 30)) % o.signs.length]);
+    const { h } = SHOP_BAYS[o.shop];
+    for (const u of units) {
+      // A shop that trades has real glass in its front and a room behind it; an empty one keeps its papered windows.
+      if (u.bay) ground.push(...frontOf(o, u));
+      else ground.push({ x: u.x, y: 0.05, w: u.w, h, tex: o.shop, v: u.v, depth: 0.1, reveal: o.trim });
+      const c = stand([u.x + u.w / 2 - w / 2, 0, d / 2]);
+      if (u.sign) {
+        const s = Math.min(1, (u.w - 0.3) / 4.8, (gh - h - 0.3) / 0.9);
+        sign(b, { ...c, o: [c.o[0], h + 0.15 + 0.45 * s + (o.awning ? 0.05 : 0), c.o[2]] }, 4.8 * s, 0.9 * s, u.sign);
       }
-      if (o.awning && rnd.chance(0.75)) awning(b, { ...c, o: [c.o[0], h + 0.1, c.o[2]] }, sw + 0.1, 1.3, 0.75, o.awning, rnd.chance(0.6));
-      x += sw + 0.5;
-      i++;
+      if (u.awning !== null) awning(b, { ...c, o: [c.o[0], h + 0.1, c.o[2]] }, u.w + 0.1, 1.3, 0.75, o.awning!, u.awning);
     }
     if (floors > 1) ground.push({ x: w - 0.5 - dw, y: 0.05, w: dw, h: dh, tex: door, depth: 0.15 });
   } else {
@@ -149,7 +146,48 @@ export function block(b: MeshBuilder, o: BlockOpts): void {
   flatRoof(b, 0, 0, w, d, top, { mat: o.roof ?? 'roof/flat-bitumen', parapet: par, inner: side, coping: o.trim });
   roofPlant(b, rnd, 0, 0, w - 1, d - 1, top, o.plant ?? 1, { wall: side, ...(o.tank ? { tank: true } : {}) });
   if (o.billboard) billboard(b, stand([0, top + par, d / 2 - 1.2]), o.billboard, 1.2, Math.min(1, (w - 1) / 6));
+  for (const u of units) if (u.bay) bayShell(b, u.bay, frontOf(o, u).map((q) => ({ ...q, x: q.x - w / 2 - (u.bay!.x - u.bay!.w / 2) })));
 }
+
+/** One shop of a row along the ground floor: its place along the front, its sign and awning, and its room if it trades. */
+export interface ShopUnit { x: number; w: number; v: number; sign: string | null; awning: boolean | null; door: number; bay: Bay | null }
+/** Frames the glazing comes in, by the painted shop front it stands in for. */
+export const FRAMES: Record<string, string> = {
+  'shop-aluminium': 'aluminium', 'shop-aluminium-tile': 'aluminium', 'shop-black': 'black', 'shop-bronze': 'bronze', 'shop-white': 'white', 'shop-green': 'green', 'shop-red': 'red', 'shop-blue': 'blue', 'shop-brick-kick': 'bronze', 'shop-old': 'white',
+  'shop-low-aluminium': 'aluminium', 'shop-low-black': 'black',
+};
+/** Divides the ground floor into shops, drawing on `rnd` as the building always has. */
+export function shopUnits(o: BlockOpts, rnd: Rand): ShopUnit[] {
+  const { bay, h } = SHOP_BAYS[o.shop!];
+  const [dw] = textureSpec(o.door ?? 'door/glass-aluminium').meters;
+  const end = o.floors > 1 ? o.w - 0.5 - dw - 0.6 : o.w - 0.5;
+  const frame = FRAMES[o.shop!.slice(o.shop!.indexOf('/') + 1)];
+  const out: ShopUnit[] = [];
+  for (let x = 0.5, i = 0; end - x >= bay * 2; i++) {
+    const k = Math.min(rnd.int(2, 4), Math.floor((end - x) / bay));
+    const sw = k * bay;
+    const v = rnd.int(0, 3);
+    const sign = o.signs?.length ? o.signs[(i + rnd.int(0, 30)) % o.signs.length] : null;
+    const aw = o.awning && rnd.chance(0.75) ? rnd.chance(0.6) : null;
+    const trade = sign && frame ? TRADES[sign.slice('trim/sign-'.length)] : undefined;
+    const door = (i + o.seed) % k;
+    out.push({
+      x, w: sw, v, sign, awning: aw, door,
+      bay: trade ? { x: x + sw / 2 - o.w / 2, y: 0, z: o.d / 2 - T_BAY, w: sw + 0.4, d: Math.min(o.d - 1.2, 10.5), h: h + 0.15, door: (door + 0.5) * bay - sw / 2, trade, n: o.seed + i * 7 } : null,
+    });
+    x += sw + 0.5;
+  }
+  return out;
+}
+/** The glazing of a shop that trades: bays of glass, one of them with the door in it. */
+function frontOf(o: BlockOpts, u: ShopUnit): Opening[] {
+  const { bay, h } = SHOP_BAYS[o.shop!];
+  const tex = `prop/front-${FRAMES[o.shop!.slice(o.shop!.indexOf('/') + 1)]}${h < 2.7 ? '-low' : ''}`;
+  const part = (x0: number, n: number, t: string): Opening[] => (n > 0 ? [{ x: u.x + x0 * bay, y: 0.05, w: n * bay, h, tex: t, v: 0, depth: 0.1, reveal: o.trim }] : []);
+  return [...part(0, u.door, tex), ...part(u.door, 1, `${tex}-door`), ...part(u.door + 1, Math.round(u.w / bay) - u.door - 1, tex)];
+}
+/** The rooms of the shops of a building, for what stands in them. */
+export const shopBays = (o: BlockOpts): Bay[] => (o.shop ? shopUnits(o, new Rand(o.seed)).flatMap((u) => (u.bay ? [u.bay] : [])) : []);
 
 const T = (c: string): string => `trim/paint-${c}`;
 const W = (c: string): string => `wall/${c}`;
@@ -166,6 +204,9 @@ export function addBlocks(): void {
   const shop = (id: string, label: string, o: Omit<BlockOpts, 'seed'>): void => {
     const s = next();
     addModel('shop', id, label, (b) => block(b, { ...o, seed: s }));
+    // What stands in its shops is a model of its own, shown only from near by.
+    const bays = shopBays({ ...o, seed: s });
+    if (bays.length) addModel('prop', `interior-${id}`, `店内 ${label}`, (b) => bays.forEach((r) => fitBay(b, r)));
   };
 
   // Brick walk-ups with fire escapes.

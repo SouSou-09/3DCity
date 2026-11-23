@@ -1,11 +1,12 @@
 import { Rand, textureSpec } from '../tex';
 import { MeshBuilder } from './builder';
 import { acUnit, antenna, awning, balcony, barrel, billboard, blade, chimney, duct, flatRoof, Opening, pq, sawtooth, sides, sign, skylight, slab, stoop, vent, wall, waterTank, weatherBySeed } from './buildkit';
-import { block, roofPlant } from './blocks';
+import { FRAMES, block, roofPlant } from './blocks';
 import { RoofOpts, roofOn, spread } from './houses';
 import { Inside, Room, furnish, roomPlan, roomShell } from './interiors';
 import { box, face, lathe, pipe, stand } from './kit';
 import { addModel } from './registry';
+import { Bay, T_BAY, bayShell, fitBay } from './shopfit';
 
 const W = (c: string): string => `wall/${c}`;
 const T = (c: string): string => `trim/paint-${c}`;
@@ -28,6 +29,8 @@ const band = (x0: number, x1: number, y: number, tex: string, v = 0): Opening =>
 
 interface WarehouseOpts {
   seed: number;
+  /** How many of the roll-up doors stand open on the workshop. */
+  open?: number;
   w: number;
   d: number;
   h: number;
@@ -58,7 +61,9 @@ function warehouse(b: MeshBuilder, o: WarehouseOpts): void {
     if (h > 7) front.push(band(1, off - 0.6, 4.3, WIN('band-aluminium'), 3));
     awning(b, stand([-w / 2 + 1.9, 2.4, d / 2]), 2.6, 1.2, 0.12, o.trim, true, 0.12);
   }
-  front.push(...(o.shutters ? doors(rnd, off + 1, w - 1, o.shutters, dockY, o.docks, 3.6) : doors(rnd, off + 1, w - 1, o.dock, dockY, o.docks)));
+  const shop = workshop(o);
+  const bays = o.shutters ? doors(rnd, off + 1, w - 1, o.shutters, dockY, o.docks, 3.6) : doors(rnd, off + 1, w - 1, o.dock, dockY, o.docks);
+  front.push(...bays.map((q, i) => (shop?.open.has(i) ? { ...q, tex: 'prop/open' } : q)));
   const sideHoles = (len: number): Opening[] => (o.windows ? [band(1.5, len - 1.5, h - textureSpec(o.windows).meters[1] - 1, o.windows, rnd.int(0, 3))] : []);
   const back: Opening[] = [{ x: 2, y: 0.05, w: 0.9, h: 2.1, tex: D('steel-grey'), depth: 0.08 }, ...(o.windows ? sideHoles(w) : [])];
   shell(b, 0, 0, w, d, h, o.wall, [front, [{ x: d - 3, y: 0.05, w: 0.9, h: 2.1, tex: D(rnd.pick(['steel-blue', 'steel-grey-tagged', 'steel-beige'])), depth: 0.08 }, ...sideHoles(d - 4)], back, sideHoles(d)]);
@@ -90,6 +95,7 @@ function warehouse(b: MeshBuilder, o: WarehouseOpts): void {
     lathe(b, W('brick-red-common'), stand([x, 0, z]), [[r * 1.25, 0], [r * 1.25, 1.2], [r, 1.5], [r * 0.62, o.stack - 0.6], [r * 0.7, o.stack - 0.4], [r * 0.7, o.stack], [r * 0.45, o.stack]], 12);
     box(b, W('brick-red-common'), stand([w / 2 + 1, 0, z]), [0, 1.2, 0], [1.2, 1.2, 1]);
   }
+  if (shop) bayShell(b, shop.bay, bays.filter((_, i) => shop.open.has(i)).map((q) => ({ ...q, tex: 'prop/open', x: q.x - w / 2 - (shop.bay.x - shop.bay.w / 2) })));
 }
 
 /** Half-cylinder hut of corrugated iron standing straight on the ground. */
@@ -168,11 +174,9 @@ function gasStation(b: MeshBuilder, o: { seed: number; canopy: string; islands: 
     box(b, T('black'), stand(), [x, 0.6, cz - 2.7], [0.25, 0.4, 0.2]);
   }
   // Kiosk.
-  const [kw, kd, kh] = [Math.max(10, cw * 0.7), 7, 3.9];
-  const kz = -1;
-  const sb = 2;
-  const n = Math.floor((kw - 3) / sb);
-  shell(b, 0, kz, kw, kd, kh, o.kiosk, [[{ x: 0.6, y: 0.05, w: n * sb, h: 3, tex: o.shop, v: rnd.int(0, 3), depth: 0.1 }, { x: kw - 1.6, y: 0.05, w: 0.95, h: 2.15, tex: D('glass-aluminium'), depth: 0.1 }], [], [{ x: 1, y: 0.05, w: 0.9, h: 2.1, tex: D('steel-grey'), depth: 0.08 }], []]);
+  const { kw, kd, kh, kz, front, bay } = gasKiosk(o);
+  void rnd.int(0, 3);
+  shell(b, 0, kz, kw, kd, kh, o.kiosk, [front, [], [{ x: 1, y: 0.05, w: 0.9, h: 2.1, tex: D('steel-grey'), depth: 0.08 }], []]);
   for (const s of sides(0, kz, kw, kd, kh)) wall(b, o.kiosk, s.f, s.w, 0.6, [], 0, kh);
   flatRoof(b, 0, kz, kw, kd, kh, { mat: 'roof/flat-membrane-dirty', parapet: 0.6, inner: o.kiosk, coping: o.trim });
   sign(b, stand([0, kh - 0.25, kz + kd / 2]), 4.8, 0.9, o.sign);
@@ -182,6 +186,17 @@ function gasStation(b: MeshBuilder, o: { seed: number; canopy: string; islands: 
   box(b, T('white'), stand(), [px, 3.2, cz + 5], [0.15, 3.2, 0.15]);
   box(b, o.pump, stand(), [px, 7.2, cz + 5], [1.3, 0.9, 0.18]);
   box(b, T('black'), stand(), [px, 5.6, cz + 5], [1.1, 0.6, 0.14]);
+  bayShell(b, bay, front.map((q) => ({ ...q, x: q.x - 0.15 })));
+}
+
+type GasOpts = Parameters<typeof gasStation>[1];
+/** The shop of a filling station: its size, the glass of its front with the door in the last bay, and the room behind it. */
+function gasKiosk(o: GasOpts): { kw: number; kd: number; kh: number; kz: number; front: Opening[]; bay: Bay } {
+  const [kw, kd, kh, kz] = [Math.max(10, (o.islands * 7 + 3) * 0.7), 7, 3.9, -1];
+  const n = Math.floor((kw - 3) / 2);
+  const tex = `prop/front-${FRAMES[o.shop.slice(o.shop.indexOf('/') + 1)] ?? 'aluminium'}`;
+  const front: Opening[] = [{ x: 0.6, y: 0.05, w: (n - 1) * 2, h: 3, tex, v: 0, depth: 0.1 }, { x: 0.6 + (n - 1) * 2, y: 0.05, w: 2, h: 3, tex: `${tex}-door`, v: 0, depth: 0.1 }];
+  return { kw, kd, kh, kz, front, bay: { x: 0, y: 0, z: kz + kd / 2 - T_BAY, w: kw - 0.3, d: kd - 0.3, h: 3.15, door: 0.6 + (n - 1) * 2 + 1 - kw / 2, trade: 'convenience', n: o.seed } };
 }
 
 /** Free-standing shop with glazing all round: fast food, diners and banks. */
@@ -243,6 +258,9 @@ export const INSIDE: Record<string, Inside> = {
   'diner-1': { plan: 'diner', frame: 'red', floor: PR('floor-check-bw'), wall: PR('wall-white-tile'), counter: PR('counter-red'), counterTop: PR('laminate-white'), menu: PR('menu-diner'), vinyl: PR('vinyl-red'), top: PR('laminate-red'), chair: 'pad-red', stool: PR('vinyl-red'), lamp: ['dome', 'black'], set: 'plates', posters: [PR('poster-breakfast'), PR('poster-shake')], machines: ['coffee', 'shelf', 'fryer', 'dispenser', 'fridge', 'oven'], bin: PR('steel'), seating: 0 },
   'diner-2': { plan: 'diner', frame: 'white', floor: PR('floor-check-teal'), wall: PR('wall-teal-cream'), counter: PR('counter-teal'), counterTop: PR('steel'), menu: PR('menu-coffee'), vinyl: PR('vinyl-teal'), top: PR('laminate-teal'), chair: 'pad-teal', stool: PR('vinyl-teal'), lamp: ['globe', 'white'], set: 'plates', posters: [PR('poster-coffee'), PR('poster-breakfast')], machines: ['fridge', 'coffee', 'shelf', 'dispenser', 'oven', 'fryer'], bin: PR('steel'), seating: 0 },
   'diner-3': { plan: 'diner', frame: 'green', floor: PR('floor-check-green'), wall: PR('wall-green-white'), counter: PR('counter-green'), counterTop: PR('laminate-cream'), menu: PR('menu-chicken'), vinyl: PR('vinyl-green'), top: PR('laminate-cream'), chair: 'pad-black', stool: PR('vinyl-black'), lamp: ['cone', 'green'], set: 'plates', posters: [PR('poster-burger'), PR('poster-shake')], machines: ['shelf', 'coffee', 'fryer', 'fridge', 'dispenser'], bin: PR('steel'), seating: 2 },
+  'bank-1': { plan: 'deep', fit: 'bank', frame: 'bronze', floor: PR('floor-carpet-green'), wall: PR('wall-plain-cream'), counter: PR('counter-wood'), counterTop: PR('laminate-cream'), menu: PR('menu-coffee'), vinyl: PR('vinyl-green'), top: PR('wood-walnut'), chair: 'pad-black', stool: PR('vinyl-black'), lamp: ['globe', 'white'], set: 'none', posters: [PR('notice-rates'), PR('notice-rates')], machines: [], bin: PR('steel'), seating: 0 },
+  'bank-2': { plan: 'deep', fit: 'bank', frame: 'black', floor: PR('floor-tile-cream'), wall: PR('wall-plain-white'), counter: PR('counter-black'), counterTop: PR('laminate-grey'), menu: PR('menu-coffee'), vinyl: PR('vinyl-black'), top: PR('laminate-grey'), chair: 'pad-teal', stool: PR('vinyl-black'), lamp: ['globe', 'white'], set: 'none', posters: [PR('notice-rates')], machines: [], bin: PR('steel'), seating: 0 },
+  'bank-3': { plan: 'deep', fit: 'bank', frame: 'aluminium', floor: PR('floor-carpet-blue'), wall: PR('wall-plain-sage'), counter: PR('counter-wood'), counterTop: PR('laminate-white'), menu: PR('menu-coffee'), vinyl: PR('vinyl-brown'), top: PR('wood-oak'), chair: 'pad-black', stool: PR('vinyl-black'), lamp: ['globe', 'white'], set: 'none', posters: [PR('notice-rates'), PR('notice-rates')], machines: [], bin: PR('steel'), seating: 0 },
 };
 
 /** A restaurant you can see into: its windows are real glass, and behind them is the room. */
@@ -271,9 +289,32 @@ function dining(b: MeshBuilder, o: PavilionOpts & { inside: Inside }, rnd: Rand)
     [{ x: 1, y: lift + 0.03, w: 0.9, h: 2.1, tex: D('steel-brown'), depth: 0.08 }],
     [...panes(d - far, d - 0.7), ...(o.drive ? [{ x: d - far - 2.6, y: lift + 1, w: 1.2, h: 1.2, tex: WIN('slider-white'), depth: 0.1, sill: o.trim }] : [])],
   ];
-  shell(b, 0, 0, w, d, h, o.wall, holes);
+  // A hall taller than its room keeps a row of its own windows above the glass.
+  const up = lift + 3.3;
+  const upper = up + textureSpec(o.win).meters[1] <= h - 0.05 ? [[band(0.7, w - 0.7, up, o.win, 0)], [band(0.8, d - 0.8, up, o.win, 1)], [], [band(0.8, d - 0.8, up, o.win, 3)]] : [[], [], [], []];
+  shell(b, 0, 0, w, d, h, o.wall, holes.map((q, i) => [...q, ...upper[i]]));
   pavilionTop(b, o, rnd, dw);
   roomShell(b, room, holes);
+}
+
+type BigBoxOpts = Parameters<typeof bigBox>[1];
+/** The hall of a big store behind its doors: twelve metres of glass with the doors in the middle, and the room. */
+function bigHall(o: BigBoxOpts): { doors: (x: number, depth: number) => Opening[]; bay: Bay } {
+  const sign = o.sign.slice('trim/sign-'.length);
+  const trade = sign === 'furniture' ? 'hall-furniture' : sign === 'hardware' ? 'hall-hardware' : sign === 'market' ? 'hall-market' : 'hall-discount';
+  const doors = (x: number, depth: number): Opening[] => [[0, 4, ''], [4, 4, '-door'], [8, 4, '']].map(([x0, wd, k]) => ({ x: x + (x0 as number), y: 0.05, w: wd as number, h: 3, tex: `prop/front-aluminium${k}`, v: 0, depth }));
+  return { doors, bay: { x: 0, y: 0, z: o.d / 2 - T_BAY, w: Math.min(o.w - 2, 40), d: Math.min(o.d - 2, 18), h: 4.2, door: 0, trade, n: o.seed } };
+}
+/** The workshop of a garage: which of its doors stand open, and the room behind them. */
+function workshop(o: WarehouseOpts): { open: Set<number>; bay: Bay } | null {
+  if (!o.open || !o.shutters) return null;
+  const off = o.office ?? 0;
+  const ds = doors(new Rand(o.seed), off + 1, o.w - 1, o.shutters, 0.05, o.docks, 3.6);
+  if (!ds.length) return null;
+  const open = new Set(Array.from({ length: Math.min(o.open, ds.length) }, (_, k) => (o.seed + k * 2) % ds.length));
+  const [x0, x1] = [off + 0.3, o.w - 0.15];
+  const first = ds[[...open][0]];
+  return { open, bay: { x: (x0 + x1) / 2 - o.w / 2, y: 0, z: o.d / 2 - T_BAY, w: x1 - x0, d: o.d - 0.3, h: o.h - 0.3, door: first.x + first.w / 2 - (x0 + x1) / 2, trade: 'garage', n: o.seed } };
 }
 
 /** Retail shed with a tall entrance feature and a long blank front. */
@@ -283,17 +324,22 @@ function bigBox(b: MeshBuilder, o: { seed: number; w: number; d: number; wall: s
   const { w, d } = o;
   const h = 8.5;
   const [ew, eh, ed] = [16, 11, 3];
-  shell(b, 0, 0, w, d, h, o.wall, [[], [{ x: d - 6, y: 1.2, w: 2.7, h: 3, tex: D('dock-grey'), depth: 0.12 }, { x: d - 10, y: 1.2, w: 2.7, h: 3, tex: D('dock-white'), depth: 0.12 }], [{ x: 3, y: 0.05, w: 1.8, h: 2.1, tex: D('steel-double-grey'), depth: 0.1 }], []]);
+  const hall = bigHall(o);
+  shell(b, 0, 0, w, d, h, o.wall, [hall.doors(w / 2 - 6, 0.1), [{ x: d - 6, y: 1.2, w: 2.7, h: 3, tex: D('dock-grey'), depth: 0.12 }, { x: d - 10, y: 1.2, w: 2.7, h: 3, tex: D('dock-white'), depth: 0.12 }], [{ x: 3, y: 0.05, w: 1.8, h: 2.1, tex: D('steel-double-grey'), depth: 0.1 }], []]);
   for (const s of sides(0, 0, w, d, 5.6)) box(b, o.stripe, s.f, [s.w / 2, 0, 0.012], [s.w / 2 + 0.012, 0.45, 0.014]);
   for (const s of sides(0, 0, w, d, h)) wall(b, o.wall, s.f, s.w, 0.9, [], 0, h);
   flatRoof(b, 0, 0, w, d, h, { mat: 'roof/flat-membrane-white', parapet: 0.9, inner: o.wall, coping: o.trim });
   roofPlant(b, rnd, 0, 0, w - 6, d - 6, h, 1.4, { wall: o.wall, big: true });
   const ez = d / 2 + ed / 2;
-  shell(b, 0, ez, ew, ed, eh, o.feature, [[{ x: 2, y: 0.05, w: 12, h: 4.8, tex: 'window/curtain-lobby', depth: 0.25, reveal: o.trim }]]);
+  shell(b, 0, ez, ew, ed, eh, o.feature, [hall.doors(2, 0.25).map((q) => ({ ...q, reveal: o.trim }))]);
+  // Between the two lines of doors: a floor, and a ceiling under the tall front.
+  slab(b, 'prop/floor-tile-grey', 0.012, -ew / 2, d / 2, ew / 2, d / 2 + ed);
+  b.quad('prop/ceiling', [-ew / 2, 3.4, d / 2], [ew / 2, 3.4, d / 2], [ew / 2, 3.4, d / 2 + ed], [-ew / 2, 3.4, d / 2 + ed], [[0, 0], [ew, 0], [ew, ed], [0, ed]]);
   flatRoof(b, 0, ez, ew, ed, eh - 0.6, { mat: 'roof/flat-membrane-white', parapet: 0.6, inner: o.feature, coping: o.trim });
   sign(b, stand([0, 7.6, ez + ed / 2]), 12, 2.25, o.sign, 0.25);
   box(b, o.trim, stand(), [0, 5.05, ez + ed / 2 + 1.2], [7, 0.1, 1.2]);
   for (const s of [-1, 1]) for (let i = 0; i < 3; i++) box(b, T('yellow'), stand(), [s * (2 + i * 2), 0.5, ez + ed / 2 + 2.8], [0.09, 0.5, 0.09]);
+  bayShell(b, hall.bay, hall.doors(hall.bay.w / 2 - 6, 0.1));
 }
 
 /** Two-storey apartment house with the flats raised over open parking. */
@@ -397,7 +443,12 @@ export function addWorks(): void {
 
   // Filling stations.
   ([['red', 2, 'block-white', 'red', 'market', 'shop-aluminium'], ['green', 3, 'stucco-white', 'green', 'smoke-shop', 'shop-white'], ['blue', 4, 'metal-panel-white', 'blue', 'market', 'shop-blue'], ['red', 1, 'brick-painted-white', 'red', 'auto-parts', 'shop-old'], ['blue', 2, 'tile-white', 'blue', 'liquor', 'shop-low-aluminium'], ['green', 2, 'block-beige', 'green', 'donuts', 'shop-bronze']] as [string, number, string, string, string, string][])
-    .forEach(([c, n, wl, tr, sg, sh], i) => add('shop', `gas-${i + 1}`, `ガソリンスタンド ${i + 1}`, gasStation, { canopy: `trim/canopy-${c}`, islands: n, kiosk: W(wl), trim: T(tr), sign: `trim/sign-${sg}`, shop: WIN(sh), pump: T(tr) }));
+    .forEach(([c, n, wl, tr, sg, sh], i) => {
+      const o = { canopy: `trim/canopy-${c}`, islands: n, kiosk: W(wl), trim: T(tr), sign: `trim/sign-${sg}`, shop: WIN(sh), pump: T(tr) };
+      add('shop', `gas-${i + 1}`, `ガソリンスタンド ${i + 1}`, gasStation, o);
+      const s = seed;
+      addModel('prop', `interior-gas-${i + 1}`, `店内 ガソリンスタンド ${i + 1}`, (b) => fitBay(b, gasKiosk({ ...o, seed: s }).bay));
+    });
   // Fast food, diners and banks.
   const PAV: [string, string, Omit<Parameters<typeof pavilion>[1], 'seed'>][] = [
     ['fastfood-1', 'ファストフード店 1', { w: 11, d: 17, h: 3.4, wall: W('brick-red'), trim: T('white'), win: WIN('shop-low-aluminium'), door: D('glass-double-aluminium'), roof: 'mansard', roofMat: 'roof/seam-red', rise: 1.5, sign: 'trim/sign-burgers', pole: 'trim/billboard-burger', drive: true }],
@@ -421,12 +472,20 @@ export function addWorks(): void {
   });
   // Big-box stores.
   ([['concrete-tiltup', 'blue', 'discount-99', 'metal-panel-white', 70, 50], ['concrete-white', 'red', 'furniture', 'metal-panel-red', 60, 45], ['block-beige', 'green', 'hardware', 'metal-panel-green', 80, 54], ['concrete-panel', 'orange', 'market', 'metal-panel-orange', 54, 40]] as [string, string, string, string, number, number][])
-    .forEach(([wl, st, sg, ft, w, d], i) => add('shop', `bigbox-${i + 1}`, `大型量販店 ${i + 1}`, bigBox, { w, d, wall: W(wl), trim: T('grey'), stripe: T(st), sign: `trim/sign-${sg}`, feature: W(ft) }));
+    .forEach(([wl, st, sg, ft, w, d], i) => {
+      const o = { w, d, wall: W(wl), trim: T('grey'), stripe: T(st), sign: `trim/sign-${sg}`, feature: W(ft) };
+      add('shop', `bigbox-${i + 1}`, `大型量販店 ${i + 1}`, bigBox, o);
+      const s = seed;
+      addModel('prop', `interior-bigbox-${i + 1}`, `店内 大型量販店 ${i + 1}`, (b) => fitBay(b, bigHall({ ...o, seed: s }).bay));
+    });
   // Car repair shops: roll-up bays beside a small office.
   ([['block-white', 'blue', 16, 3], ['block-grey', 'red', 20, 4], ['metal-ribbed-white', 'charcoal', 14, 2], ['brick-painted-white', 'yellow', 24, 5], ['block-yellow', 'black', 12, 2]] as [string, string, number, number][])
-    .forEach(([wl, tr, w, n], i) => add('shop', `garage-${i + 1}`, `自動車修理工場 ${i + 1}`, warehouse, {
-      w, d: 12, h: 5, wall: W(wl), trim: T(tr), dock: DOCKS, docks: n, shutters: SHUT.slice(i * 2, i * 2 + 2), office: 5, roof: 'flat', roofMat: 'roof/flat-bitumen', stripe: T(tr),
-    }));
+    .forEach(([wl, tr, w, n], i) => {
+      const o: Omit<WarehouseOpts, 'seed'> = { w, d: 12, h: 5, wall: W(wl), trim: T(tr), dock: DOCKS, docks: n, shutters: SHUT.slice(i * 2, i * 2 + 2), office: 5, roof: 'flat', roofMat: 'roof/flat-bitumen', stripe: T(tr), open: 1 + (i % 2) };
+      add('shop', `garage-${i + 1}`, `自動車修理工場 ${i + 1}`, warehouse, o);
+      const s = seed;
+      addModel('prop', `interior-garage-${i + 1}`, `作業場 自動車修理工場 ${i + 1}`, (b) => fitBay(b, workshop({ ...o, seed: s })!.bay));
+    });
 
   // Dingbats and motel-style walk-ups.
   ([['stucco-white', 'teal', 'slider-aluminium', 'teal', 'rail-black'], ['stucco-pink', 'white', 'slider-white', 'brown', 'rail-white'], ['stucco-sand', 'brown', 'slider-bronze', 'orange', 'rail-brown'], ['stucco-mint', 'white', 'louver-aluminium', 'yellow', 'rail-ornate']] as [string, string, string, string, string][])
