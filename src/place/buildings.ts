@@ -1161,11 +1161,15 @@ const BACK_TABLES = ['park/picnic-table-wood', 'park/picnic-table-red', 'park/pi
     const drive: Rect = roomL > roomR ? [L, L + Math.min(roomL - 0.2, 5.5), -f.gap, from] : [R - Math.min(roomR - 0.2, 5.5), R, -f.gap, from];
     const park: Rect = [L + 0.3, R - 0.3, from + 0.2, f.d - 1.2];
     // The bins go in first, for the spaces are marked around them. No car park where they leave no room to park: the land behind stays a yard.
+    const built = f.solid.length;
     const bins = refuse(f, roomL > roomR ? 1 : -1, lot.area > 1100 || lot.floors >= 4, f.d - 1.1);
     if (stallSpots(f, park, undefined, [[drive[0], drive[1]]]).length < 2) return bins ? 'bins' : null;
     pave(f, tex, drive, 0.05, 4);
     const pad: Rect = [L, R, from, f.d - 1];
+    // The bins stand on the car park: it is paved under them, as under nothing else that is built.
+    const onPad = f.solid.splice(built);
     pave(f, tex, pad, 0.05, 4);
+    f.solid.push(...onPad);
     f.taken.push(drive, pad);
     gaps.push([drive[0] - 0.2, drive[1] + 0.2]);
     stalls(f, park, undefined, [[drive[0], drive[1]]]);
