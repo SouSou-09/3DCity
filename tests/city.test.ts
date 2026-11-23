@@ -1937,7 +1937,9 @@ describe('parks, waterfront and boundaries', () => {
     const rows = [...terraces.values()].filter((t) => t.length > 1);
     expect(rows.length).toBeGreaterThan(40);
     for (const t of rows)
-      for (const b of t) expect(Math.min(...t.filter((x) => x !== b).map((x) => Math.abs((x.x - b.x) * Math.cos(b.yaw) + (x.y - b.y) * Math.sin(b.yaw)) - x.hx - b.hx)), `${b.model} at ${b.x.toFixed(0)}, ${b.y.toFixed(0)}`).toBeLessThan(0.3);
+      for (const b of t) expect(Math.min(...t.filter((x) => x !== b).map((x) => Math.abs((x.x - b.x) * Math.cos(b.yaw) + (x.y - b.y) * Math.sin(b.yaw)) - x.hx - b.hx)), `${b.model} at ${b.x.toFixed(0)}, ${b.y.toFixed(0)}`).toBeLessThan(0.01);
+    // And it is the side walls that touch: nothing of the model stands out past them but the coping.
+    for (let i = 1; i <= 6; i++) expect(bbox(`apartment/rowhouse-${i}`).max[0] - bbox(`apartment/rowhouse-${i}`).min[0]).toBeLessThan(6 + ((i - 1) % 2) + 0.07);
     // Behind the houses: sheds, and washing on the line.
     expect(o.buildings.sheds).toBeGreaterThan(900);
     expect(o.buildings.lines).toBeGreaterThan(250);

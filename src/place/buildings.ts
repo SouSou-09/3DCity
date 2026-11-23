@@ -219,10 +219,14 @@ const FENCED: Record<DistrictType, [back: number, front: number]> = {
 };
 
 const clamp = (x: number, a: number, b: number): number => Math.max(a, Math.min(b, x));
+/** How far the coping of a terraced house stands out past its side wall, m. */
+const ROW_TRIM = 0.03;
 
 interface Opt {
   stretch?: number;
   party?: boolean;
+  /** How far the trim at each side may run into the neighbour's, where the side walls themselves touch. */
+  lap?: number;
   main?: boolean;
   civic?: string;
   maxRelief?: number;
@@ -443,7 +447,7 @@ export function placeBuildings(site: Site, shore: Waterfront): Buildings {
       }
     // Clear of every building already standing: walls that share a line may touch.
     const c = at(f, uc, vc);
-    const mine = footprint(c.x, c.y, f.yaw, hx - (o.party ? 0.15 : 0), hz);
+    const mine = footprint(c.x, c.y, f.yaw, hx - (o.party ? 0.15 : (o.lap ?? 0)), hz);
     const reach = Math.hypot(hx, hz);
     for (let gy = Math.floor((c.y - reach) / HASH); gy <= Math.floor((c.y + reach) / HASH); gy++)
       for (let gx = Math.floor((c.x - reach) / HASH); gx <= Math.floor((c.x + reach) / HASH); gx++) for (const other of placed.get(gy * 4096 + gx) ?? []) if (overlaps(mine, other)) return null;
@@ -1101,7 +1105,8 @@ const BACK_TABLES = ['park/picnic-table-wood', 'park/picnic-table-red', 'park/pi
         if (hi - lo < s.w) continue;
         // A terrace stands wall to wall, and not as one thin house alone on a lawn.
         const row = !high && s.id.startsWith('apartment/rowhouse');
-        const between = row ? 0 : apart;
+        // The coping of its parapet stands out past the side wall, and it is the walls that touch.
+        const between = row ? -2 * ROW_TRIM : apart;
         const n = clamp(Math.floor((hi - lo + between) / (s.w + between)), 1, row ? 6 : 3);
         if (row && n < 2 && hi - lo > s.w + 5) continue;
         const width = n * s.w + (n - 1) * between;
@@ -1114,7 +1119,7 @@ const BACK_TABLES = ['park/picnic-table-wood', 'park/picnic-table-red', 'park/pi
         for (let i = 0; i < n; i++) {
           const m = i === 0 ? s : same[Math.floor(rnd(lot.id, 84, i) * same.length)];
           const uc = start + i * (s.w + between) + s.w / 2;
-          const b = place(f, m.id, uc, vf, { main: i === 0 });
+          const b = place(f, m.id, uc, vf, { main: i === 0, ...(row ? { lap: ROW_TRIM + 0.005 } : {}) });
           if (!b) {
             if (i === 0 || row) break;
             continue;
