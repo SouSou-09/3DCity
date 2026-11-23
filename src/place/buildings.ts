@@ -1780,7 +1780,8 @@ const BACK_TABLES = ['park/picnic-table-wood', 'park/picnic-table-red', 'park/pi
       if (r - l < 5.4 || back - edge < 5.5) return pocket(f);
       const tex = asphalt(lot);
       pave(f, tex, [l, r, -f.gap, back], 0.05, 2.6);
-      mouth(f, (l + r) / 2 - 3, (l + r) / 2 + 3);
+      // Every space opens straight onto the street, so the whole front is the way in.
+      mouth(f, l, r);
       return stalls(f, [l + 0.1, r - 0.1, back - 5.5, back - 0.1]) > 0 || pocket(f);
     }
     const [L, R] = span(f, edge + 1, f.d - 1, 1);
