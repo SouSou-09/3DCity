@@ -1,8 +1,9 @@
 import { City } from '../gen/city';
 import { DistrictType, districtAt } from '../gen/districts';
 import { LandUse } from '../gen/landuse';
+import { BELT, COPSE, RIVERSIDE } from './leftover';
 import { OpenSpace } from './openSpace';
-import { PARK, RAIL, SITE_CELL } from './site';
+import { PARK, RAIL, SITE_CELL, Site } from './site';
 
 /** What the open ground of each kind of district is, where nothing else says: lawn, rough grass, bare earth and gravel, hard standing. */
 const OPEN: Record<DistrictType, [number, number, number, number]> = {
@@ -13,7 +14,7 @@ const OPEN: Record<DistrictType, [number, number, number, number]> = {
   beach: [0, 0.9, 0.3, 0],
   suburb: [0.1, 1, 0.1, 0],
   industrial: [0, 0.45, 1, 0],
-  hills: [0, 0, 0, 0],
+  hills: [0, 0.6, 0.06, 0],
 };
 /** The ground of a lot around what is built and paved on it. */
 const LOTS: Record<LandUse, [number, number, number, number]> = {
@@ -39,7 +40,7 @@ const LOTS: Record<LandUse, [number, number, number, number]> = {
  * cell may be part one and part another. Sand and the hills' own cover are not in it.
  */
 export function landCover(city: City, open: OpenSpace): Uint8Array<ArrayBuffer> {
-  const { site, shore, buildings } = open;
+  const { site, shore, buildings, leftover } = open;
   const t = city.terrain;
   const land = city.land;
   const n = site.n;
@@ -59,6 +60,19 @@ export function landCover(city: City, open: OpenSpace): Uint8Array<ArrayBuffer> 
     h = Math.imul(h ^ (h >>> 13), 1274126177);
     return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
   };
+  const vacant = new Set(buildings.vacant);
+  // On the hills a plot is the hillside but for the garden kept round the house.
+  const garden = new Uint8Array(n * n);
+  for (const b of buildings.list) {
+    if (land.lots[b.lot].site.type !== 'hills') continue;
+    const [rx, rz] = [b.hx + 7, b.hz + 7];
+    for (let mz = -rz; mz <= rz; mz += 1)
+      for (let mx = -rx; mx <= rx; mx += 1) {
+        const p = Site.local(b.x, b.y, b.yaw, mx, mz);
+        const [i, j] = [Math.floor(p.x / SITE_CELL), Math.floor(p.y / SITE_CELL)];
+        if (i >= 0 && j >= 0 && i < n && j < n) garden[j * n + i] = 1;
+      }
+  }
   const out = new Uint8Array(n * n * 4);
   const w = [0, 0, 0, 0];
   for (let j = 0; j < n; j++) {
@@ -72,9 +86,16 @@ export function landCover(city: City, open: OpenSpace): Uint8Array<ArrayBuffer> 
       const li = Math.floor(x / land.cell);
       let id = li < land.n && lj < land.n ? land.grid[lj * land.n + li] - 1 : -1;
       if (id < 0) id = buildings.owner[c] - 1;
+      if (id < 0) id = leftover.claim[c] - 1;
+      const kind = id < 0 || vacant.has(id) ? leftover.kind[c] : 0;
       if (code === PARK) [w[0], w[1], w[2], w[3]] = [1, 0, 0, 0];
-      else if (code === RAIL) [w[0], w[1], w[2], w[3]] = [0, 0.15, 1, 0];
-      else if (id >= 0 && !sand.has(id)) {
+      else if (code === RAIL) {
+        // Under and beside the tracks: ballast and cinders, but in the middle of town the ground under a viaduct is paved and used.
+        const d = districtAt(t, city.districts, x, y).type;
+        [w[0], w[1], w[2], w[3]] = d === 'downtown' || d === 'midtown' ? [0, 0, 0.12, 1] : d === 'oldtown' ? [0, 0.05, 0.4, 0.7] : [0, 0.15, 1, 0];
+      }
+      else if (kind === RIVERSIDE || kind === BELT || kind === COPSE) [w[0], w[1], w[2], w[3]] = kind === RIVERSIDE ? [0.7, 1, 0, 0] : kind === BELT ? [0, 1, 0.12, 0] : [0.12, 1, 0.08, 0];
+      else if (id >= 0 && !sand.has(id) && !(land.lots[id].site.type === 'hills' ? vacant.has(id) || !garden[c] : false)) {
         const lot = land.lots[id];
         const k = LOTS[lot.use];
         [w[0], w[1], w[2], w[3]] = k;
@@ -84,6 +105,8 @@ export function landCover(city: City, open: OpenSpace): Uint8Array<ArrayBuffer> 
           w[0] = care < 0.12 ? 0.15 : 0.5 + 0.5 * hash(id, 2);
           w[2] = care < 0.12 ? 0.45 : 0;
         }
+        // A plot nothing was built on is waste ground until something is.
+        if (vacant.has(id) && lot.use !== 'OS' && lot.use !== 'PK') [w[0], w[1], w[2], w[3]] = [0, 0.85, 0.4, 0];
       } else {
         const fx = Math.min(x / t.cell, t.n - 1.001);
         const [ti, u] = [Math.floor(fx), fx - Math.floor(fx)];

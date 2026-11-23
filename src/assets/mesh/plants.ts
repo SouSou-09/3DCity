@@ -441,6 +441,13 @@ export function addPlants(): void {
     add(`street-${id}`, `${label}(街路用・軽量)`, (b) => tree(b, O, { ...o, seed: s, lean: true, levels: Math.min(2, o.levels ?? 3), cards: 2, card: size * 1.1 }));
   }
 
+  // And for woods, hillsides and waste ground, seen from further off and in greater numbers still: limbs with leaves on them and no branches between.
+  for (const id of ['oak', 'oak-old', 'eucalyptus', 'olive', 'maple', 'plane', 'elm', 'birch', 'poplar', 'sparse']) {
+    const [, label, o] = TREES.find((t) => t[0] === id)!;
+    const size = (o.card ?? Math.max(0.7, Math.min(1.3, o.h * 0.1))) * 2;
+    add(`wood-${id}`, `${label}(林用・最軽量)`, (b) => tree(b, O, { ...o, seed: 340 + TREES.findIndex((t) => t[0] === id), lean: true, levels: 1, limbs: Math.max(7, o.limbs ?? 5), cards: o.leader ? 2 : 4, card: size * 1.5 }));
+  }
+
   const PALMS: [string, string, Omit<PalmOpts, 'seed'>][] = [
     ['fan', 'ワシントンヤシ 12m', { h: 12, kind: 'fan', r: 0.19, skirt: 1.5 }],
     ['fan-tall', 'ワシントンヤシ 20m', { h: 20, kind: 'fan', r: 0.2, skirt: 1.2, lean: 1.2 }],

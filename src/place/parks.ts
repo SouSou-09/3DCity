@@ -94,7 +94,7 @@ const BENCHES: Record<ParkTier, string[]> = {
 };
 const LIGHTS: Record<ParkTier, string> = { central: 'furniture/light-acorn-green', district: 'furniture/light-globe-green', neighbourhood: 'furniture/light-globe', pocket: 'furniture/light-lantern' };
 const BINS: Record<ParkTier, string> = { central: 'furniture/bin-hood-green', district: 'furniture/bin-mesh-green', neighbourhood: 'furniture/bin-mesh', pocket: 'furniture/bin-drum' };
-const SURFACES = ['site/safety-rubber-red', 'site/safety-rubber-green', 'site/safety-rubber-blue', 'site/woodchips'];
+const SURFACES = ['site/woodchips', 'site/safety-rubber-green', 'site/woodchips', 'site/safety-rubber-red', 'site/woodchips', 'site/safety-rubber-blue'];
 const PLAY: Record<string, string[]> = {
   big: ['park/play-structure-big', 'park/swing-4', 'park/slide-yellow', 'park/climb-dome-big', 'park/roundabout', 'park/seesaw', 'park/monkey-bars-long', 'park/sandbox-round', 'park/spring-rider-red', 'park/spring-rider-blue', 'park/spring-rider-yellow'],
   medium: ['park/play-structure', 'park/swing-2', 'park/slide-steel', 'park/climb-dome', 'park/seesaw', 'park/sandbox', 'park/spring-rider-green', 'park/spring-rider-red'],
@@ -511,6 +511,13 @@ export function placeParks(site: Site): { parks: ParkPlan[]; tiles: ModelData[] 
         const fit = site.plane(r.x, r.y, r.yaw, r.hx, r.hz);
         for (const [model, mx, mz, turn] of models) onPlane(r, fit, model, 'sport', mx, mz, turn);
         if (fence) fenceRect(r, fence, 1, 3);
+        // Courts in the bigger parks are lit for the evening: a mast at two corners, outside the fence.
+        if (fence && tier !== 'pocket')
+          for (const s of [-1, 1]) {
+            const p = local(r, s * (r.hx + 1.8), s * (r.hz + 1.8));
+            put('furniture/light-flood-4', 'light', p.x, p.y, Math.atan2(r.y - p.y, r.x - p.x));
+            stamp({ x: p.x, y: p.y, yaw: 0, hx: 0.5, hz: 0.5 }, SOLID);
+          }
         front(r, margin);
         return r;
       };
@@ -540,7 +547,7 @@ export function placeParks(site: Site): { parks: ParkPlan[]; tiles: ModelData[] 
       };
       const tennis = (n: number): boolean => {
         const model = type === 'hills' || type === 'oldtown' ? 'park/tennis-clay' : 'park/tennis-court';
-        return !!court('tennis', n === 2 ? [[model, -9.6, 0, 0], [model, 9.6, 0, 0]] : [[model, 0, 0, 0]], n === 2 ? 19 : 9.4, 18.6, 2.5, edgy);
+        return !!court('tennis', n === 2 ? [[model, -9.6, 0, 0], [model, 9.6, 0, 0]] : [[model, 0, 0, 0]], n === 2 ? 19 : 9.4, 18.6, 2.5, edgy, 'boundary/chainlink-sports-3600');
       };
       const basketball = (full: boolean): boolean => {
         const worn = type === 'industrial' || rnd(52) < 0.3;
@@ -919,7 +926,7 @@ export function placeParks(site: Site): { parks: ParkPlan[]; tiles: ModelData[] 
       const palette = TREES[type] ?? TREES.default;
       const tclr = clearance(occ, w, w, LAWN);
       const G = 8;
-      const dense = tier === 'central' || tier === 'district' ? 1 : 0.6;
+      const dense = tier === 'central' || tier === 'district' ? 1 : 0.8;
       /** The tree of a grid square, if the square has one: where it stands, and whether in a grove or on the rim of the park. */
       const treeAt = (gx: number, gy: number): { x: number; y: number; grove: number; rim: boolean } | null => {
         const x = (gx + 0.2 + hash(seed, pi, gx, gy, 1) * 0.6) * G;
@@ -928,7 +935,7 @@ export function placeParks(site: Site): { parks: ParkPlan[]; tiles: ModelData[] 
         if (k < 0 || occ[k] !== LAWN || tclr[k] * C < 2.6) return null;
         const grove = noise(seed * 7 + pi, x, y, 46);
         const rim = clr0[k] * C < 10;
-        const p = rim ? 0.75 : (grove > 0.54 ? 0.95 : grove > 0.4 ? 0.5 : 0.18) * dense;
+        const p = rim ? 0.8 : (grove > 0.54 ? 0.95 : grove > 0.4 ? 0.65 : 0.32) * dense;
         return hash(seed, pi, gx, gy, 3) > p ? null : { x, y, grove, rim };
       };
       // Every tree of the grid is known before any is planted, so one added beside a tree can keep clear of the rest.
@@ -945,7 +952,7 @@ export function placeParks(site: Site): { parks: ParkPlan[]; tiles: ModelData[] 
           if (!tree) continue;
           const { x, y, grove, rim } = tree;
           const kind = pick(palette, hash(seed, pi, Math.floor(x / 46), Math.floor(y / 46), rim ? 5 : 4) * 0.75 + hash(seed, pi, gx, gy, 6) * 0.25);
-          put(kind, 'tree', x, y, hash(seed, pi, gx, gy, 7) * Math.PI * 2, { scale: 0.85 + hash(seed, pi, gx, gy, 8) * 0.4 });
+          put(kind, 'tree', x, y, hash(seed, pi, gx, gy, 7) * Math.PI * 2, { scale: 1 + hash(seed, pi, gx, gy, 8) * 0.5 });
           const h = (n: number): number => hash(seed, pi, gx, gy, n);
           // What has fallen from it lies under it.
           if (h(9) < 0.7) {

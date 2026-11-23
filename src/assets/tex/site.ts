@@ -612,7 +612,7 @@ add('court-tennis', 'テニスコート 半面 青/緑', [18.29, 18.29], (t, s) 
 add('court-tennis-clay', 'テニスコート 半面 クレー', [18.29, 18.29], (t, s) => court(t, s, hex(0xa8583c), (a, c) => { tennis(a, c); a.rect(hex(0xa8583c), 3.66 + 0.03, 6.4 + 0.06, 3.66 + 1.37 - 0.03, 18.29, {}); }), { density: 32 });
 add('safety-rubber-red', '遊び場のゴム舗装 赤', [1, 1], (t, s) => S.gravel(t, { seed: s, size: 0.014, colors: [hex(0x9c3c30), hex(0x8c3428), hex(0xa84438)], soil: [0.3, 0.12, 0.1] }), { ...tiled, density: 256 });
 add('safety-rubber-green', '遊び場のゴム舗装 緑', [1, 1], (t, s) => S.gravel(t, { seed: s, size: 0.014, colors: [hex(0x3c7c4c), hex(0x346c40), hex(0x448c54)], soil: [0.12, 0.26, 0.15] }), { ...tiled, density: 256 });
-add('safety-rubber-blue', '遊び場のゴム舗装 青', [1, 1], (t, s) => S.gravel(t, { seed: s, size: 0.014, colors: [hex(0x2c5c9c), hex(0x285088), hex(0x3468a8)], soil: [0.1, 0.2, 0.34] }), { ...tiled, density: 256 });
+add('safety-rubber-blue', '遊び場のゴム舗装 青', [1, 1], (t, s) => S.gravel(t, { seed: s, size: 0.014, colors: [hex(0x4e6884), hex(0x475f78), hex(0x58728c)], soil: [0.22, 0.28, 0.34] }), { ...tiled, density: 256 });
 add('woodchips', '遊び場のウッドチップ', [1, 1], (t, s) => S.gravel(t, { seed: s, size: 0.03, colors: [hex(0x9c7448), hex(0x7c5834), hex(0xb48c5c), hex(0x64442c)], soil: [0.22, 0.15, 0.09] }), tiled);
 add('track-red', '陸上トラック 赤', [2.44, 2], (t, s) => {
   const L = new Layers(t, hex(0xa8483c), 0.9);
