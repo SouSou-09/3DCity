@@ -1288,6 +1288,25 @@ export function addFurniture(): void {
   add('bin-bags-5', 'ゴミ袋の山 5個', (b) => {
     [[-0.5, 0, 0.3], [0, 0.05, 0.26], [0.5, 0, 0.3], [-0.2, 0.45, 0.24], [0.3, 0.42, 0.2]].forEach(([x, z, r]) => sack(b, stand([x, 0, z]), r));
   });
+  // Where a street's households leave their refuse for collection: open to the road (+z), walled or caged on the other sides.
+  const point = (b: MeshBuilder, wall: string, h: number, sacks: [number, number, number][]): void => {
+    box(b, 'concrete/walk-plain', O, [0, 0.02, 0], [1.3, 0.02, 0.7], 'y');
+    box(b, wall, O, [0, h / 2, -0.62], [1.3, h / 2, 0.08], 'y');
+    for (const sx of [-1, 1]) box(b, wall, O, [sx * 1.22, h / 2, 0.06], [0.08, h / 2, 0.6], 'y');
+    sacks.forEach(([x, z, r]) => sack(b, stand([x, 0.04, z]), r));
+  };
+  add('bin-point-block', 'ゴミ集積所 ブロック積み', (b) => point(b, 'wall/block-beige', 0.9, [[-0.7, -0.2, 0.26], [-0.2, -0.25, 0.3], [0.35, -0.2, 0.24], [0.1, 0.25, 0.22]]));
+  add('bin-point-block-empty', 'ゴミ集積所 ブロック積み 空', (b) => point(b, 'wall/block-beige', 0.9, [[0.8, -0.3, 0.2]]));
+  add('bin-point-cage', 'ゴミ集積所 金網かご 緑', (b) => {
+    point(b, F('mesh-green'), 1.1, [[-0.6, -0.15, 0.28], [0, -0.2, 0.26], [0.55, -0.15, 0.3], [-0.3, 0.2, 0.22], [0.3, 0.25, 0.24]]);
+    for (const sx of [-1, 1]) for (const z of [-0.62, 0.62]) box(b, 'structure/steel-green', O, [sx * 1.22, 0.56, z], [0.03, 0.56, 0.03], 'y');
+    box(b, F('mesh-green'), O, [0, 1.11, 0], [1.25, 0.012, 0.64]);
+  });
+  add('bin-point-cage-carts', 'ゴミ集積所 金網かご+カート', (b) => {
+    point(b, F('mesh-galvanized'), 1.2, [[0.75, -0.2, 0.26], [0.95, 0.2, 0.22]]);
+    cart(b, stand([-0.75, 0.04, -0.1], 5), BLACK);
+    cart(b, stand([-0.05, 0.04, -0.12], -4), 'structure/steel-blue');
+  });
 
   // Hydrants.
   const HYDRANTS: [string, string, HydrantOpts][] = [

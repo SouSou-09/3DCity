@@ -96,8 +96,9 @@ export function groundMaterial(materials: Materials, waterY: number, land: THREE
         // What covers the made ground of the town: rough grass with bare patches, earth and gravel, hard standing, and lawn over them.
         vec4 land = texture2D(uLand, gp / uLandSize);
         vec3 weeds = mix(texture2D(uWeeds, gp / 2.6).rgb, texture2D(uRough, gp / 6.1).rgb, 0.45) * (0.95 + 0.5 * wide.g) * mix(vec3(1.0), vec3(1.12, 1.02, 0.8), smoothstep(0.4, 0.75, mid.b));
-        vec3 earth = mix(texture2D(uDirt, gp / 3.0).rgb, texture2D(uEarth, gp / 4.7).rgb, smoothstep(0.35, 0.7, mid.g)) * (0.9 + 0.3 * wide.b);
-        vec3 hard = texture2D(uHard, gp / 4.0).rgb * (0.92 + 0.2 * mid.r) * mix(vec3(1.0), vec3(0.82, 0.8, 0.78), smoothstep(0.55, 0.8, wide.r * 0.6 + mid.b * 0.4));
+        vec3 earth = mix(texture2D(uDirt, gp / 3.0).rgb, texture2D(uEarth, gp / 4.7).rgb, smoothstep(0.35, 0.7, mid.g)) * (1.05 + 0.3 * wide.b);
+        // Old concrete and asphalt, patched: the texture only for its grain, so that its joints do not show as a grid.
+        vec3 hard = mix(vec3(0.46, 0.46, 0.45), texture2D(uHard, gp / 3.1).rgb, 0.25) * (0.86 + 0.16 * mid.r + 0.08 * fine) * mix(vec3(1.0), vec3(0.86, 0.85, 0.84), smoothstep(0.5, 0.8, wide.r));
         ground = mix(ground, weeds, land.g);
         // Rough grass wears through to the earth where it is walked on and where nothing will grow.
         float bare = smoothstep(0.6, 0.82, mid.r * 0.55 + wide.b * 0.3 + fine * 0.15);

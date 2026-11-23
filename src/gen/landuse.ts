@@ -751,7 +751,7 @@ export function planLandUse(graph: RoadGraph, t: Terrain, districts: Districts, 
         const level = site.slope < 0.08 && site.relief < 2.5;
         const town = site.type === 'downtown' || site.type === 'midtown' || site.type === 'oldtown';
         const use: LandUse =
-          level && depth >= 15 && width >= 10 && site.type !== 'industrial' && e.cls !== 'alley' ? (town || (site.type === 'beach' && e.cls !== 'local') ? 'C1' : 'R1')
+          level && depth >= 15 && width >= 10 && e.cls !== 'alley' ? (site.type === 'industrial' ? 'I1' : town || (site.type === 'beach' && e.cls !== 'local') ? 'C1' : 'R1')
           : level && depth >= 5.5 && width >= 7.5 && e.cls !== 'alley' && r.next() < FILL[site.type] ? 'PK'
           : 'OS';
         lots.push({ id, use, poly, front, edge: e.id, side, s0: s, s1: s + width, width, depth, area, corner: false, floors: use === 'R1' || use === 'C1' ? floorsFor(use, site, false, r) : 0, site });
