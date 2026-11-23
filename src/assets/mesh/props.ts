@@ -18,7 +18,7 @@ function part(b: MeshBuilder, f: Pose, k: PropPart, c: V3, w: number, h: number)
 function lay(b: MeshBuilder, f: Pose, k: PropPart, x: number, y: number, z: number, w: number, d: number, yaw = 0): void {
   part(b, flat(turn(move(f, x, y, z), yaw)), k, [0, 0, 0], w, d);
 }
-const leg = (b: MeshBuilder, mat: string, f: Pose, x: number, z: number, h: number, r = 0.014, x1 = x, z1 = z): void => pipe(b, mat, [at(f, x, 0, z), at(f, x1, h, z1)], r, 6);
+const leg = (b: MeshBuilder, mat: string, f: Pose, x: number, z: number, h: number, r = 0.014, x1 = x, z1 = z): void => pipe(b, mat, [at(f, x, 0, z), at(f, x1, h, z1)], r, 5, false);
 
 // --- Chairs and stools. ---
 export interface ChairOpts { kind: 'shell' | 'bistro' | 'wood' | 'pad' | 'stack'; mat: string; frame?: string }
@@ -169,7 +169,7 @@ export function register(b: MeshBuilder, f: Pose): void {
 }
 /** A counter `w` long with its tills, seen by the customer from +z. */
 export function counter(b: MeshBuilder, f: Pose, w: number, front: string, top: string, tills = 2, n = 0): void {
-  box(b, front, f, [0, 0.525, 0], [w / 2, 0.525, 0.33], 'u');
+  box(b, front, f, [0, 0.525, 0], [w / 2, 0.525, 0.33], 'yY');
   box(b, top, f, [0, 1.07, 0.02], [w / 2 + 0.02, 0.02, 0.38]);
   for (let i = 0; i < tills; i++) {
     const x = -w / 2 + ((i + 0.5) * w) / tills;
