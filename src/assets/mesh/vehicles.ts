@@ -262,7 +262,7 @@ export function boxBody(b: MeshBuilder, tex: string, x0: number, x1: number, y0:
     b.quad(tex, pts[0], pts[1], pts[2], pts[3], [[0, 0], [p.mw, 0], [p.mw, p.mh], [0, p.mh]]);
   }
   // Front, top and the doors at the back show the plain end of the sheet.
-  const plain: [number, number][] = [[0.04, 0.9], [0.44, 0.9], [0.44, 1.9], [0.04, 1.9]];
+  const plain: [number, number][] = [[0.04, 1.42], [0.46, 1.42], [0.46, 1.92], [0.04, 1.92]];
   b.quadFacing(tex, [x1, y0, hw], [x1, y0, -hw], [x1, y1, -hw], [x1, y1, hw], [1, 0, 0], plain);
   b.quadFacing(tex, [x0, y0, -hw], [x0, y0, hw], [x0, y1, hw], [x0, y1, -hw], [-1, 0, 0], plain);
   b.quadFacing(tex, [x0, y1, hw], [x1, y1, hw], [x1, y1, -hw], [x0, y1, -hw], [0, 1, 0], plain);
