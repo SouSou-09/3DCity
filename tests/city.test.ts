@@ -2040,6 +2040,17 @@ describe('parks, waterfront and boundaries', () => {
     expect(loose).toBeLessThan(0.09 * 2 * runs.length);
   });
 
+  it('seed 9: where no roundabout comes of a radial quarter, the streets at its middle are left as they were', () => {
+    const c = city(9);
+    expect(c.graph.nodes.filter((n) => n.roundabout).length).toBe(0);
+    const d = c.districts.list.find((q) => q.radial)!;
+    const about = (n: { x: number; y: number }): boolean => Math.hypot(n.x - d.center.x, n.y - d.center.y) < 200;
+    // Clearing the ground for a roundabout that is then not built would leave the streets around cut short.
+    expect(c.graph.nodes.filter((n) => about(n) && n.edges.length === 1).length).toBeLessThanOrEqual(3);
+    const streets = c.graph.edges.filter((e) => e.cls !== 'highway' && e.cls !== 'ramp' && e.points.some((p, k) => k > 0 && pointSeg(d.center.x, d.center.y, e.points[k - 1], p).d < 88));
+    expect(streets.reduce((sum, e) => sum + e.length, 0)).toBeGreaterThan(900);
+  });
+
   it.each(OPEN_SEEDS)('seed %i: a roundabout has a planted island with no building, lot or car on it or on its ring', (seed) => {
     const [c, m, o] = [city(seed), model(seed), open(seed)];
     const f = placeStreetFurniture(c, m);

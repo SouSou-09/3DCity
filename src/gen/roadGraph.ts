@@ -797,6 +797,9 @@ function addRoundabouts(g: Builder, ctx: Ctx): number {
     cands.sort((a, b) => b.rank - a.rank || b.aim - a.aim);
     const arms: Cand[] = [];
     for (const k of cands) if (arms.length < 6 && arms.every((a) => angleDiff(a.angle, k.angle) >= RB_GAP && a.node !== k.node)) arms.push(k);
+    // The streets as they stand, to go back to if no roundabout comes of it.
+    const [nodes0, edges0] = [g.nodes.length, g.edges.length];
+    const alive0 = g.edges.map((e) => e.alive);
     for (const id of touched) g.removeEdge(id);
     const hub = g.nodes.length;
     g.nodes.push({ x: c.x, y: c.y, edges: new Set(), alive: true });
@@ -849,7 +852,19 @@ function addRoundabouts(g: Builder, ctx: Ctx): number {
       }
       if (!done) break;
     }
-    if (angles.length < 3) continue;
+    if (angles.length < 3) {
+      // Too few streets to meet here: what was cleared for the roundabout is put back as it was.
+      for (let k = g.edges.length - 1; k >= edges0; k--) g.removeEdge(k);
+      g.edges.length = edges0;
+      g.nodes.length = nodes0;
+      g.edges.forEach((e, k) => {
+        if (!alive0[k] || e.alive) return;
+        e.alive = true;
+        g.nodes[e.a].edges.add(k);
+        g.nodes[e.b].edges.add(k);
+      });
+      continue;
+    }
     const need = [...g.nodes[hub].edges].reduce((s, k) => s + (RB_WIDTH[g.edges[k].cls] ?? 7) + 11, 0) / (2 * Math.PI);
     const radius = clamp(Math.max(need, top >= CLASS_RANK.arterial ? 22 : top >= CLASS_RANK.collector ? 17 : 13), 13, 30);
     g.nodes[hub].roundabout = { radius, ring: top >= CLASS_RANK.arterial ? 8.5 : top >= CLASS_RANK.collector ? 6.5 : 5.5 };
