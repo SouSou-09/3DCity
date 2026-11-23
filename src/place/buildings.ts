@@ -791,7 +791,8 @@ export function placeBuildings(site: Site, shore: Waterfront): Buildings {
     const vw = box[2] - 0.42;
     if (o.walk >= 0.8) {
       // The board on the pavement: beside the door where there is one, else a third of the way along.
-      const boards = food ? (b.model.includes('diner') ? ['coffee', 'lunch', 'open', 'happy'] : [['burger', 'lunch'], ['lunch', 'open'], ['donut', 'coffee'], ['pizza', 'happy'], ['ramen', 'lunch'], ['burger', 'open']][chain % 6]) : BOARDS;
+      // What is chalked on it is what the shop sells: burgers, tacos, doughnuts, pizza and noodles at fastfood-1 to 5.
+      const boards = food ? (b.model.includes('diner') ? ['coffee', 'lunch', 'open', 'happy'] : [['burger', 'lunch'], ['lunch', 'open'], ['donut', 'coffee'], ['pizza', 'happy'], ['ramen', 'lunch']][(chain + 4) % 5]) : BOARDS;
       if (r(1) < (food ? 0.8 : 0.45)) {
         const u = Number.isNaN(door) ? box[0] + w * (0.25 + 0.5 * r(2)) : door + (r(2) < 0.5 ? -1 : 1) * (1.7 + 0.6 * r(3));
         prop(f, `prop/board-${pick(boards, 4)}`, u, box[2] - Math.min(o.walk - 0.35, 0.7 + 0.5 * r(5)), (r(6) - 0.5) * 0.5 + (r(7) < 0.3 ? Math.PI / 2 : 0));
