@@ -5,7 +5,7 @@ import { layout, reversed } from '../assets/mesh/section';
 import { pointAt, polyLength } from '../core/geom';
 import { Vec2 } from '../core/vec2';
 import { City } from '../gen/city';
-import { sample, waterDistAt } from '../gen/terrain';
+import { waterDistAt } from '../gen/terrain';
 import { RoadModel } from './roadModel';
 
 /** Side of a cell of the raster of what occupies the ground, metres. */
@@ -21,10 +21,11 @@ export const USED = 6;
 export type SiteKind =
   | 'play' | 'sport' | 'pavilion' | 'feature' | 'bench' | 'light' | 'bin' | 'sign' | 'tree' | 'plant' | 'table'
   | 'fence' | 'gate' | 'guardrail' | 'wall'
-  | 'beach' | 'pier' | 'seawall' | 'port' | 'rock' | 'buoy' | 'lighthouse' | 'boat' | 'dock';
+  | 'beach' | 'pier' | 'seawall' | 'port' | 'rock' | 'buoy' | 'lighthouse' | 'boat' | 'dock'
+  | 'building' | 'parking' | 'yard';
 export const SITE_KINDS: SiteKind[] = [
   'play', 'sport', 'pavilion', 'feature', 'bench', 'light', 'bin', 'sign', 'tree', 'plant', 'table',
-  'fence', 'gate', 'guardrail', 'wall', 'beach', 'pier', 'seawall', 'port', 'rock', 'buoy', 'lighthouse', 'boat', 'dock',
+  'fence', 'gate', 'guardrail', 'wall', 'beach', 'pier', 'seawall', 'port', 'rock', 'buoy', 'lighthouse', 'boat', 'dock', 'building', 'parking', 'yard',
 ];
 
 /** One model standing somewhere off the roads. */
@@ -225,8 +226,17 @@ export class Site {
       }
   }
 
+  /** Height of the ground as it is drawn: the terrain mesh has two flat triangles to a cell, split from (i + 1, j) to (i, j + 1). */
   heightAt(x: number, y: number): number {
-    return sample(this.city.terrain, this.ground, x, y);
+    const t = this.city.terrain;
+    const n = t.n;
+    const fx = Math.max(0, Math.min(n - 1.001, x / t.cell));
+    const fy = Math.max(0, Math.min(n - 1.001, y / t.cell));
+    const [i, j] = [Math.floor(fx), Math.floor(fy)];
+    const [u, v] = [fx - i, fy - j];
+    const k = j * n + i;
+    const g = this.ground;
+    return u + v <= 1 ? g[k] + u * (g[k + 1] - g[k]) + v * (g[k + n] - g[k]) : g[k + n + 1] + (1 - u) * (g[k + n] - g[k + n + 1]) + (1 - v) * (g[k + 1] - g[k + n + 1]);
   }
 
   /** Map position of a point given in a model's own axes for a model whose origin is at (x, y). */

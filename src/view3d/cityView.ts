@@ -189,7 +189,12 @@ export class CityView {
           g = 0.55;
           b = 0.3;
         }
-        cover.set([lawn ? 0 : sand, lawn ? 1 : 0, lawn ? 0 : hl * (1 - yard), clamp((t.riverBank[k] - t.seaDist[k]) / 40 + 0.5, 0, 1)], k * 4);
+        // Gardens: grass, drier than a park's and not on the sand.
+        const garden = !lawn && sand < 0.3 && open.isYard(i * t.cell, j * t.cell) ? 0.7 : 0;
+        r = mix(r, 0.45, garden);
+        g = mix(g, 0.56, garden);
+        b = mix(b, 0.31, garden);
+        cover.set([lawn ? 0 : sand, lawn ? 1 : garden, lawn ? 0 : hl * (1 - yard) * (1 - garden), clamp((t.riverBank[k] - t.seaDist[k]) / 40 + 0.5, 0, 1)], k * 4);
         color.setRGB(clamp(r, 0, 1), clamp(g, 0, 1), clamp(b, 0, 1), THREE.SRGBColorSpace);
         col[k * 3] = color.r;
         col[k * 3 + 1] = color.g;

@@ -79,6 +79,51 @@ export interface HouseOpts {
   maxWin?: number;
 }
 
+/** Where the front door is across the front wall, from its left end. */
+function doorAt(o: Omit<HouseOpts, 'seed'>): number {
+  const { w } = o;
+  const dw = textureSpec(o.door).meters[0];
+  const g = o.garage;
+  let dx = w / 2 + (o.doorX ?? 0) * (w / 2 - dw / 2 - 0.9);
+  if (g?.integral) {
+    // Keep the entrance clear of a garage door cut into the same wall.
+    const clear = 0.5 + textureSpec(g.door).meters[0] + 0.4 + dw / 2;
+    dx = (g.side ?? 1) > 0 ? Math.min(dx, w - clear) : Math.max(dx, clear);
+  }
+  return dx;
+}
+
+/** Where a house is entered, in the model's axes (front is +z): what a path and a drive on its plot lead to. */
+export interface HousePlan {
+  /** Foot of the steps at the front door. */
+  door: [x: number, z: number];
+  /** Middle of the garage door and its width. */
+  garage?: { x: number; z: number; w: number };
+  /** What stands on the ground: the house, its garage and a full-width porch, as [x0, x1, z0, z1]. */
+  body: [number, number, number, number][];
+}
+export const HOUSE_PLANS = new Map<string, HousePlan>();
+function planOf(o: Omit<HouseOpts, 'seed'>): HousePlan {
+  const { w, d } = o;
+  const g = o.garage;
+  const integral = g?.integral ?? false;
+  const base = integral ? 0.12 : o.base ?? 0.45;
+  const reach = o.porch ? (o.porch === 'full' ? 2.1 : 1.5) + 0.3 + base * 1.6 : base > 0.15 ? 0.9 + base * 1.6 : 0;
+  const plan: HousePlan = { door: [doorAt(o) - w / 2, d / 2 + reach], body: [[-w / 2, w / 2, -d / 2, d / 2]] };
+  if (o.porch === 'full') plan.body.push([-w / 2 + 0.15, w / 2 - 0.15, d / 2, d / 2 + 2.1]);
+  if (g) {
+    const gw = textureSpec(g.door).meters[0];
+    const side = g.side ?? 1;
+    if (integral) plan.garage = { x: (side > 0 ? w - 0.5 - gw : 0.5) + gw / 2 - w / 2, z: d / 2, w: gw };
+    else {
+      const [gx, gz, gd] = [side * (w / 2 + g.w / 2), d / 2 - (g.back ?? 0.8), g.d ?? 6.2];
+      plan.garage = { x: gx, z: gz, w: gw };
+      plan.body.push([gx - g.w / 2, gx + g.w / 2, gz - gd, gz]);
+    }
+  }
+  return plan;
+}
+
 export function house(b: MeshBuilder, o: HouseOpts): void {
   const rnd = new Rand(o.seed);
   weatherBySeed(b, o.seed, o.wall, o.upper);
@@ -93,12 +138,7 @@ export function house(b: MeshBuilder, o: HouseOpts): void {
   const maxW = o.maxWin ?? 3;
   const g = o.garage;
   const gside = g?.side ?? 1;
-  let dx = w / 2 + (o.doorX ?? 0) * (w / 2 - dw / 2 - 0.9);
-  if (g && integral) {
-    // Keep the entrance clear of a garage door cut into the same wall.
-    const clear = 0.5 + textureSpec(g.door).meters[0] + 0.4 + dw / 2;
-    dx = gside > 0 ? Math.min(dx, w - clear) : Math.max(dx, clear);
-  }
+  const dx = doorAt(o);
   for (let i = 0; i < floors; i++) {
     const y0 = i === 0 ? 0 : base + i * fh;
     const h = i === 0 ? base + fh : fh;
@@ -202,6 +242,7 @@ export function addHouses(): void {
   const add = (id: string, label: string, o: Omit<HouseOpts, 'seed'>): void => {
     const s = (seed += 13);
     addModel('house', id, label, (b) => house(b, { ...o, seed: s }));
+    HOUSE_PLANS.set(`house/${id}`, planOf(o));
   };
   const each = (prefix: string, label: string, looks: Look[], make: (i: number, l: Look) => Omit<HouseOpts, 'seed' | 'wall' | 'trim' | 'roof' | 'door'>): void =>
     looks.forEach((l, i) => add(`${prefix}-${i + 1}`, `${label} ${i + 1}`, { ...make(i, l), wall: W(l[0]), trim: T(l[1]), roof: R(l[2]), door: D(l[3]), ...(l[4] ?? {}) }));
