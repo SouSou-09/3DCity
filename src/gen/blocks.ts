@@ -6,7 +6,7 @@ import { DistrictType, Districts, districtAt } from './districts';
 import { Rail } from './rail';
 import { RoadEdge, RoadGraph } from './roadGraph';
 import { RoadClass, isStreet } from './streamlines';
-import { Terrain, gradient, heightAt, inBounds, waterDistAt } from './terrain';
+import { Terrain, gradient, heightAt, inBounds, onRiverStrip, waterDistAt } from './terrain';
 
 /**
  * Roads added inside blocks that are too deep for their lots: service alleys, extra residential streets,
@@ -152,7 +152,7 @@ export function addInfillRoads(graph: RoadGraph, t: Terrain, districts: District
     for (let i = 0; i < n; i++) {
       const x = (i + 0.5) * G;
       const y = (j + 0.5) * G;
-      let blocked = !inBounds(t, x, y, 12) || waterDistAt(t, x, y) < 8;
+      let blocked = !inBounds(t, x, y, 12) || waterDistAt(t, x, y) < 8 || onRiverStrip(t, x, y);
       if (!blocked) {
         const g = gradient(t, t.height, x, y, 8);
         blocked = Math.hypot(g.x, g.y) > 0.3;

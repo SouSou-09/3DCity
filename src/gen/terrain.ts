@@ -28,6 +28,13 @@ export interface Terrain {
 export const TERRAIN_CELL = 8;
 /** Map side the generator was first tuned for. Feature sizes in metres are tied to it, so a bigger map gets more features instead of stretched ones. */
 export const REF_SIZE = 2400;
+/** Height of made ground at the shore, above which the plain rises only gently, metres. */
+export const FILL_HEIGHT = 2.6;
+/** The strip along the river that belongs to it: the bank wall, the path on its berm and the embankment, metres from the water. */
+export const RIVER_RESERVE = 22;
+/** How far from the water the level berm reaches, and its height. */
+export const BERM_WIDTH = 13;
+export const BERM_HEIGHT = 1.3;
 /** Length scale for features that should grow with the map, but slower than the map itself. */
 export const featureScale = (size: number): number => REF_SIZE * Math.sqrt(Math.max(1, size / REF_SIZE));
 
@@ -60,6 +67,8 @@ export const riverBankAt = (t: Terrain, x: number, y: number) => sample(t, t.riv
 export const hillAt = (t: Terrain, x: number, y: number) => sample(t, t.hill, x, y);
 export const waterDistAt = (t: Terrain, x: number, y: number) => Math.min(seaDistAt(t, x, y), riverBankAt(t, x, y));
 export const isWater = (t: Terrain, x: number, y: number) => waterDistAt(t, x, y) < 0;
+/** Whether a street's centre line would be on the river or on the strip kept for its bank, path and embankment. */
+export const onRiverStrip = (t: Terrain, x: number, y: number) => riverBankAt(t, x, y) < RIVER_RESERVE + 6;
 export const inBounds = (t: Terrain, x: number, y: number, margin = 0) =>
   x >= margin && y >= margin && x <= t.size - margin && y <= t.size - margin;
 
@@ -266,18 +275,24 @@ export function generateTerrain(size: number, rng: Rng): Terrain {
       hill[k] = hl;
 
       const sd = seaDist[k];
-      let h = clamp(sd * 0.03, -15, 3.5);
+      // The shore rises to the level of the made ground behind it and no higher.
+      let h = clamp(sd * 0.03, -15, FILL_HEIGHT);
       if (sd > 0) {
-        h += smoothstep(60, 300, sd) * (2.5 + 2.5 * noise.fbm(x / 600, y / 600 + 7, 3));
-        // The plain rises inland, but the river stays at sea level, so the land also falls gently
-        // towards it. Without this the banks far inland would drop like a wall.
-        const rise = 0.012 * Math.max(0, sd - 150);
-        const valley = 0.045 * Math.max(0, bank - 10);
-        const w = clamp(0.5 + (valley - rise) / 12, 0, 1);
-        h += Math.max(0, mix(valley, rise, w) - 6 * w * (1 - w));
+        // A town's plain is graded land: all but level, with a long, even fall to the sea and to the river.
+        h += smoothstep(80, 420, sd) * (1.1 + 0.9 * noise.fbm(x / 1100, y / 1100 + 7, 2));
+        const rise = 0.004 * Math.max(0, sd - 250);
+        const valley = 0.02 * Math.max(0, bank - RIVER_RESERVE);
+        const w = clamp(0.5 + (valley - rise) / 6, 0, 1);
+        h += Math.max(0, mix(valley, rise, w) - 3 * w * (1 - w));
         const ridge = 0.5 + 0.5 * noise.fbm(x / 420 + 3, y / 420 + 9, 4);
         h += Math.pow(hl, 1.5) * (25 + 85 * ridge) * (F / REF_SIZE);
-        if (bank < 15) h = mix(-1.5, h, smoothstep(-3, 15, bank));
+        // The river runs in a made channel: a walled bank, a level berm for the path along it, and an
+        // embankment up to the town.
+        if (bank < RIVER_RESERVE) {
+          const berm = Math.min(h, BERM_HEIGHT);
+          h = mix(berm, h, smoothstep(BERM_WIDTH, RIVER_RESERVE - 2, bank));
+          if (bank < 5) h = mix(bank < -6 ? -2.4 : -1.6, h, smoothstep(-2, 5, bank));
+        }
       }
       height[k] = h;
     }

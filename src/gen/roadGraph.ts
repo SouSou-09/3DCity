@@ -4,7 +4,7 @@ import { Vec2, angleDiff, clamp, dist } from '../core/vec2';
 import { Districts, districtAt } from './districts';
 import { RailIndex } from './rail';
 import { BRIDGE_APPROACH, BRIDGE_SPACING, CLASS_RANK, RoadClass, RoadLine, isStreet, waterCrossings } from './streamlines';
-import { Terrain, heightAt, isWater, riverBankAt, seaDistAt, waterDistAt } from './terrain';
+import { BERM_WIDTH, RIVER_RESERVE, Terrain, heightAt, isWater, riverBankAt, seaDistAt, waterDistAt } from './terrain';
 
 export interface RoadNode {
   id: number;
@@ -377,7 +377,7 @@ function buildable(g: Builder, ctx: Ctx, a: Vec2, b: Vec2, cls: RoadClass, ignor
     if (seaDistAt(t, x, y) < 12) return { ok: false, water };
     if (ctx.rail?.blocks(x, y, cls !== 'arterial', (b.x - a.x) / d, (b.y - a.y) / d) || (cls === 'arterial' && ctx.rail?.atGrade(x, y))) return { ok: false, water };
     const bank = riverBankAt(t, x, y);
-    if (bank < 0) {
+    if (bank < RIVER_RESERVE) {
       if (ctx.bridges.some((q) => Math.hypot(q.x - x, q.y - y) < BRIDGE_SPACING)) return { ok: false, water };
       water = true;
     }
@@ -575,7 +575,8 @@ function splitBridges(g: Builder, t: Terrain): void {
     for (let step = 0; step < e.len + 3; step += 3) {
       const s = Math.min(step, e.len);
       const p = pointAt(e.pts, s).p;
-      const wet = isWater(t, p.x, p.y);
+      // The deck also clears the path along the bank.
+      const wet = isWater(t, p.x, p.y) || riverBankAt(t, p.x, p.y) < BERM_WIDTH;
       if (wet && start < 0) start = s;
       if (start >= 0 && (!wet || s >= e.len)) {
         const a = Math.max(0, start - ABUTMENT);

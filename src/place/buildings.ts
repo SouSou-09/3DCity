@@ -1206,6 +1206,8 @@ export function placeBuildings(site: Site, shore: Waterfront): Buildings {
     const lot = f.lot;
     const edge = Math.max(0, f.v0);
     const mid = at(f, 0, f.d / 2);
+    // A hospital stands only where the lots beside it were planned for a big neighbour.
+    if (c.kind === 'hospital' && lot.area <= 2600) return false;
     if (c.apart > 0 && civicAt.some((o) => o.kind === c.kind && Math.hypot(o.x - mid.x, o.y - mid.y) < c.apart)) return false;
     for (const s of order(named(...c.models).map((s) => [s, 1 + (s.w * s.d) / 800] as [Shape, number]), lot, 170 + salt)) {
       for (const [side, front] of [[3, c.front], [1.5, Math.min(c.front, 4)]]) {

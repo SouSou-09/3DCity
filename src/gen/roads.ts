@@ -6,7 +6,7 @@ import { Highways, addRamps, generateHighways } from './highways';
 import { Rail, RailIndex, generateRail, separateGrades } from './rail';
 import { BRIDGE_APPROACH, EndReason, RoadBuilder, RoadLine } from './streamlines';
 import { TensorField, buildField, fieldAngle, sepAt } from './tensorField';
-import { Terrain, gradient, heightAt, hillAt, inBounds, isWater, riverBankAt, seaDistAt } from './terrain';
+import { Terrain, gradient, heightAt, hillAt, inBounds, isWater, onRiverStrip, riverBankAt, seaDistAt } from './terrain';
 
 export interface RoadLines {
   lines: RoadLine[];
@@ -41,7 +41,7 @@ function traceAvenue(builder: RoadBuilder, start: Vec2, angle: number, maxLen: n
     }
     // It may cross the railway, but not at so flat an angle that it runs along it.
     if (rail.blocks(nx, ny, false, dx, dy)) return { pts, reason: 'steep', along: true };
-    if (isWater(t, nx, ny)) {
+    if (isWater(t, nx, ny) || onRiverStrip(t, nx, ny)) {
       const landing = seaDistAt(t, nx, ny) > 40 ? builder.findLanding(nx, ny, dx, dy) : null;
       if (!landing) return { pts, reason: 'water', along: false };
       nx = landing.x;
