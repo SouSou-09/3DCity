@@ -8,7 +8,7 @@ import { STREET_CLEARANCE, roadLevels } from '../src/gen/roadHeights';
 import { profileWidth } from '../src/gen/roadSections';
 import { bayReach, layout } from '../src/assets/mesh/section';
 import { MODELS } from '../src/assets/mesh/registry';
-import { TEXTURES } from '../src/assets/tex';
+import { TEXTURES, textureSpec } from '../src/assets/tex';
 import { EDGE_STUB, RoadModel, buildRoadModel } from '../src/place/roadModel';
 import { RailModel, buildRailModel, crossingLook } from '../src/place/railModel';
 import { roadAt, trackAt } from '../src/place/railProfile';
@@ -1377,6 +1377,18 @@ describe('parks, waterfront and boundaries', () => {
         expect(p.entrances.length, at).toBeGreaterThan(0);
         expect(p.paths.length, at).toBeGreaterThan(0);
       }
+      // Every further way in leads on into the park, not to a stub at the gate.
+      p.entrances.forEach((e, i) => {
+        if (!i) return;
+        const from = e.from ?? { x: e.x - e.nx * 1.4, y: e.y - e.ny * 1.4 };
+        const path = p.paths.find((q) => Math.hypot(q.pts[0].x - from.x, q.pts[0].y - from.y) < 0.5);
+        expect(path, `${at}: entrance ${i}`).toBeDefined();
+        let len = 0;
+        for (let q = 1; q < path!.pts.length; q++) len += Math.hypot(path!.pts[q].x - path!.pts[q - 1].x, path!.pts[q].y - path!.pts[q - 1].y);
+        expect(len, `${at}: entrance ${i}`).toBeGreaterThan(3.7);
+      });
+      // A pitch lies along the plot booked for it.
+      for (const f of p.features) if (f.type === 'soccer') expect([f.hx, f.hz], at).toEqual([20, 28]);
       for (let i = 0; i < p.play.length; i++)
         for (let j = i + 1; j < p.play.length; j++) {
           const [a, b] = [p.play[i], p.play[j]];
@@ -1403,6 +1415,76 @@ describe('parks, waterfront and boundaries', () => {
     for (const r of o.shore.reaches) if (r.top !== undefined) expect(r.top, `${r.kind} quay`).toBeLessThan(3);
   });
 
+  it.each(OPEN_SEEDS)('seed %i: a public pier stands straight out from the end of a street', (seed) => {
+    const o = open(seed);
+    const c = city(seed);
+    const r = o.site.roads;
+    const pub = o.shore.piers.filter((p) => p.public && p.street !== null);
+    if (o.shore.reaches.some((x) => x.kind === 'beach' && x.length > 500)) expect(pub.length).toBeGreaterThan(0);
+    for (const p of pub) {
+      const at = `${p.model} at ${p.x.toFixed(0)}, ${p.y.toFixed(0)}`;
+      const e = c.graph.edges[p.street!];
+      const line = r.lines[e.id]!;
+      expect(isStreet(e.cls), at).toBe(true);
+      // The line of the street at one of its ends, carried on, runs down the middle of the pier.
+      const dir = { x: Math.cos(p.yaw), y: Math.sin(p.yaw) };
+      const fit = [e.a, e.b].map((id) => {
+        const n = c.graph.nodes[id];
+        const far = line[id === e.a ? Math.min(3, line.length - 1) : Math.max(0, line.length - 4)];
+        const l = Math.hypot(n.x - far[0], n.y - far[2]) || 1;
+        const t = { x: (n.x - far[0]) / l, y: (n.y - far[2]) / l };
+        return { turn: t.x * dir.x + t.y * dir.y, off: Math.abs((p.x - n.x) * t.y - (p.y - n.y) * t.x), ahead: (p.x - n.x) * t.x + (p.y - n.y) * t.y };
+      }).sort((a, b) => b.turn - a.turn)[0];
+      expect(fit.turn, at).toBeGreaterThan(0.995);
+      expect(fit.off, at).toBeLessThan(1.5);
+      expect(fit.ahead, at).toBeGreaterThan(0);
+      expect(fit.ahead, at).toBeLessThan(140);
+      // It starts at the water's edge and its far end is afloat.
+      expect(Math.abs(o.site.heightAt(p.x, p.y) - -0.4), at).toBeLessThan(1.6);
+      expect(seaDistAt(c.terrain, p.x + dir.x * p.length, p.y + dir.y * p.length), at).toBeLessThan(-8);
+    }
+  });
+
+  it.each(OPEN_SEEDS)('seed %i: a street along a beach has a walk, planting and a low wall between it and the sand', (seed) => {
+    const o = open(seed);
+    const c = city(seed);
+    const r = o.site.roads;
+    const sand = new Set(o.shore.sandLots.map((i) => c.land.lots[i].id));
+    if (o.shore.reaches.some((x) => x.kind === 'beach' && x.length > 500)) expect(o.shore.fronts.length).toBeGreaterThan(0);
+    // Lots given back to the beach are open ground, and nothing is fenced on them.
+    for (const id of o.shore.sandLots) {
+      const lot = c.land.lots[id];
+      const m = lot.poly.reduce((a, q) => ({ x: a.x + q.x / lot.poly.length, y: a.y + q.y / lot.poly.length }), { x: 0, y: 0 });
+      expect(seaDistAt(c.terrain, m.x, m.y), `lot ${id}`).toBeLessThan(46);
+      expect(o.site.at(m.x, m.y), `lot ${id}`).not.toBe(ON_ROAD);
+    }
+    for (const f of o.bounds.lots) expect(sand.has(f.lot), `fenced lot ${f.lot}`).toBe(false);
+    for (const f of o.shore.fronts) {
+      const at = `front on street ${f.edge} at ${f.kerb[0].x.toFixed(0)}, ${f.kerb[0].y.toFixed(0)}`;
+      expect(f.kerb.length, at).toBeGreaterThanOrEqual(9);
+      expect(f.wall.length, at).toBeGreaterThan(0);
+      for (let i = 0; i < f.kerb.length; i++) {
+        const q = f.kerb[i];
+        // Off the carriageways, on dry land, and level with the pavement it runs beside.
+        expect(waterDistAt(c.terrain, q.x, q.y), at).toBeGreaterThan(2);
+        expect(Math.abs(f.top[i] - o.site.heightAt(q.x, q.y)), at).toBeLessThan(0.9);
+        if (i) expect(Math.hypot(q.x - f.kerb[i - 1].x, q.y - f.kerb[i - 1].y), at).toBeLessThan(3.5);
+      }
+      for (const q of f.wall) {
+        // The wall stands on open ground, not on a carriageway.
+        for (const e of c.graph.edges) {
+          const line = r.lines[e.id];
+          if (!line || Math.abs(line[0][0] - q.x) > 400 || Math.abs(line[0][2] - q.y) > 400) continue;
+          const half = Math.max(...layout(r.sections[e.id]).outer.map(Math.abs));
+          for (let k = 0; k + 1 < line.length; k++) expect(pointSeg(q.x, q.y, { x: line[k][0], y: line[k][2] }, { x: line[k + 1][0], y: line[k + 1][2] }).d, `${at} on street ${e.id}`).toBeGreaterThan(half);
+        }
+      }
+    }
+    // Palms and benches stand in the bed along the walk.
+    const fronted = o.shore.fronts.reduce((n, f) => n + f.wall.length, 0);
+    if (fronted > 60) expect(o.items.filter((it) => it.kind === 'tree' && /palm/.test(it.model)).length).toBeGreaterThan(fronted / 12);
+  });
+
   it.each(OPEN_SEEDS)('seed %i: yards and car parks are fenced once, with a way in', (seed) => {
     const o = open(seed);
     const b = o.bounds;
@@ -1427,5 +1509,56 @@ describe('parks, waterfront and boundaries', () => {
     expect(doubled).toBe(0);
     expect(o.stats.guardrail).toBeGreaterThan(0);
     for (const r of b.runs) expect(r.pts.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it.each(OPEN_SEEDS)('seed %i: beaches are marked by the tide and by use, and lawns are worn where they are used', (seed) => {
+    const o = open(seed);
+    const t = city(seed).terrain;
+    const beaches = o.shore.reaches.filter((r) => r.kind === 'beach');
+    if (beaches.length) {
+      // The line of weed, and things lying on the sand.
+      expect(o.shore.marks.filter((m) => m.kind === 'site/sand-weed').length).toBeGreaterThan(0);
+      const lying = o.items.filter((it) => /driftwood|seaweed-heap|beach-towel|sandcastle/.test(it.model));
+      expect(lying.length).toBeGreaterThan(5);
+      for (const it of lying) {
+        const at = `${it.model} at ${it.x.toFixed(0)}, ${it.y.toFixed(0)}`;
+        expect(it.kind, at).toBe('beach');
+        // On the sand, not afloat and not up in the streets.
+        expect(seaDistAt(t, it.x, it.y), at).toBeGreaterThan(-2);
+        expect(seaDistAt(t, it.x, it.y), at).toBeLessThan(60);
+      }
+    }
+    for (const m of o.shore.marks) {
+      expect(m.pts.length, m.kind).toBeGreaterThanOrEqual(3);
+      expect(() => textureSpec(m.kind), m.kind).not.toThrow();
+      for (const p of m.pts) {
+        const at = `${m.kind} at ${p.x.toFixed(0)}, ${p.y.toFixed(0)}`;
+        expect(o.site.all(p.x, p.y, 0.5, ON_ROAD), at).toBe(false);
+        expect(o.site.all(p.x, p.y, 0.5, ON_RAIL), at).toBe(false);
+        expect(seaDistAt(t, p.x, p.y), at).toBeGreaterThan(-6);
+      }
+      // A line bends; it does not jump.
+      for (let q = 1; q < m.pts.length; q++) expect(Math.hypot(m.pts[q].x - m.pts[q - 1].x, m.pts[q].y - m.pts[q - 1].y), m.kind).toBeLessThan(8);
+    }
+    // Lawns: worn patches inside the park, and short cuts that keep off roads and water.
+    expect(o.parks.reduce((n, p) => n + p.worn.length, 0)).toBeGreaterThan(3);
+    for (const p of o.parks) {
+      for (const w of p.worn) {
+        const at = `worn patch at ${w.x.toFixed(0)}, ${w.y.toFixed(0)}`;
+        expect(o.site.all(w.x, w.y, 1, ON_ROAD), at).toBe(false);
+        expect(waterDistAt(t, w.x, w.y), at).toBeGreaterThan(0);
+      }
+      for (const trail of p.trails) {
+        expect(trail.length).toBeGreaterThanOrEqual(4);
+        for (const q of trail) {
+          const at = `trail at ${q.x.toFixed(0)}, ${q.y.toFixed(0)}`;
+          expect(o.site.all(q.x, q.y, 0.5, ON_ROAD), at).toBe(false);
+          expect(waterDistAt(t, q.x, q.y), at).toBeGreaterThan(0);
+        }
+      }
+    }
+    // Groves have something growing under the trees.
+    const under = o.items.filter((it) => it.kind === 'plant' && it.park !== undefined);
+    expect(under.length).toBeGreaterThan(40);
   });
 });

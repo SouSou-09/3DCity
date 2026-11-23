@@ -691,4 +691,117 @@ add('tunnel-dark', 'トンネルの奥(暗がり)', [1, 1], (t) => new Layers(t,
 add('tunnel-lining', 'トンネル覆工 すす汚れ', [4, 4], (t, s) => { const L = S.concreteLayers(t, { seed: s, color: hex(0x8a867e), slab: [2, 0], finish: 'formwork', streaks: 1, dirt: 1, stains: 0.6 }); t.map((_x, y, k) => { const d = sstep(1.5, 4, y) * 0.55; L.r[k] *= 1 - d; L.g[k] *= 1 - d; L.b[k] *= 1 - d; return 0; }); return L.finish(); }, { tile: 'x', density: 64 });
 add('tunnel-tile', 'トンネル内壁 タイル', [2, 2], (t, s) => S.masonry(t, { seed: s, block: [0.2, 0.1], colors: [hex(0xd8d4c4), hex(0xcec8b6), hex(0xc4bca8)], mortar: [0.3, 0.29, 0.27], streaks: 1 }), tiled);
 
+// --- Marks on sand and grass: laid over the ground, clear where there is nothing to see. ---
+const marks: Extra = { decal: true, density: 64 };
+/** Footprints along a way worn down the beach, thickest in the middle. */
+add('sand-trail', '砂浜 足跡の筋', [2.4, 6], (t, s) => {
+  const L = new Layers(t, [0.5, 0.42, 0.29], 0.95, 0);
+  const steps = t.cells(0.3, s);
+  const scuff = t.noise(0.5, 0.5, s + 1, 2);
+  t.map((x, y, k) => {
+    const c = steps(x * 1.7, y);
+    const mid = 1 - sstep(0.35, 1.15, Math.abs(x - 1.2));
+    const foot = (1 - sstep(0.1, 0.3, c.f1)) * (c.id > 0.42 ? 1 : 0);
+    L.alpha[k] = clamp01(mid * (foot * 0.6 + sstep(0.1, 0.6, scuff(x, y)) * 0.16));
+    L.height[k] = -foot * 0.01;
+    return 0;
+  });
+  return L.finish();
+}, { ...marks, tile: 'y' });
+/** The line of weed, shells and sticks the last high tide left. */
+add('sand-weed', '砂浜 打ち上げられた海藻の線', [2, 6], (t, s) => {
+  const L = new Layers(t, [0.1, 0.1, 0.05], 0.9, 0);
+  const wander = t.noise(2, 2, s, 2);
+  const weed = t.noise(0.12, 0.05, s + 1, 3);
+  const clump = t.noise(0.9, 0.9, s + 2, 2);
+  const shell = t.cells(0.05, s + 3);
+  t.map((x, y, k) => {
+    const band = 1 - sstep(0.1, 0.75, Math.abs(x - 1 - wander(x, y) * 0.35));
+    const w = clamp01(band * sstep(-0.25, 0.3, weed(x, y) + clump(x, y) * 0.5) * 1.4);
+    const sc = shell(x, y);
+    const sh = band > 0.2 && sc.id > 0.93 ? 1 - sstep(0.15, 0.3, sc.f1) : 0;
+    const dry = hash2(k, 2, s) * 0.08;
+    L.r[k] = lerp(0.1 + dry * 1.6, 0.86, sh);
+    L.g[k] = lerp(0.1 + dry, 0.82, sh);
+    L.b[k] = lerp(0.05, 0.76, sh);
+    L.alpha[k] = clamp01(Math.max(w * 0.92, sh));
+    L.height[k] = w * 0.008;
+    return 0;
+  });
+  return L.finish();
+}, { ...marks, tile: 'y' });
+/** Wheel tracks of the patrol truck and the beach rake. */
+add('sand-tyres', '砂浜 タイヤの跡', [2.6, 4], (t, s) => {
+  const L = new Layers(t, [0.5, 0.42, 0.29], 0.95, 0);
+  const fade = t.noise(1.5, 1.5, s, 2);
+  t.map((x, y, k) => {
+    const rut = Math.max(1 - sstep(0.08, 0.2, Math.abs(x - 0.45)), 1 - sstep(0.08, 0.2, Math.abs(x - 2.15)));
+    const off = Math.abs(x - (x < 1.3 ? 0.45 : 2.15));
+    const tread = 0.6 + 0.4 * sstep(0.3, 0.5, Math.abs((((y + off * 0.9) / 0.12) % 1 + 1) % 1 - 0.5) * 2);
+    L.alpha[k] = clamp01(rut * tread * (0.34 + fade(x, y) * 0.12));
+    L.height[k] = -rut * 0.012;
+    return 0;
+  });
+  return L.finish();
+}, { ...marks, tile: 'y' });
+/** Grass worn through to the earth, ragged at the edge. The middle of the texture is the middle of the patch. */
+add('lawn-worn', '芝生 すり切れて土が出た所', [3, 3], (t, s) => {
+  const L = new Layers(t, [0.36, 0.29, 0.2], 0.95, 0);
+  const edge = t.noise(0.5, 0.5, s, 3);
+  const soil = t.noise(0.15, 0.15, s + 1, 2);
+  const tuft = t.cells(0.07, s + 2);
+  t.map((x, y, k) => {
+    const d = Math.hypot(x - 1.5, y - 1.5) / 1.5 + edge(x, y) * 0.22;
+    const c = tuft(x, y);
+    const m = 0.9 + soil(x, y) * 0.16 + (hash2(k, 1, s) - 0.5) * 0.1;
+    L.r[k] = 0.36 * m;
+    L.g[k] = 0.29 * m;
+    L.b[k] = 0.2 * m;
+    // Tufts hang on towards the edge.
+    L.alpha[k] = clamp01((1 - sstep(0.4, 0.92, d)) * (d > 0.45 && c.id > 0.55 ? sstep(0.1, 0.45, c.f1) : 1) * 0.95);
+    return 0;
+  });
+  return L.finish();
+}, marks);
+/** A line people have walked into the grass. */
+add('lawn-trail', '芝生 踏み跡の道', [1.4, 4], (t, s) => {
+  const L = new Layers(t, [0.36, 0.29, 0.2], 0.95, 0);
+  const edge = t.noise(0.4, 0.6, s, 3);
+  const soil = t.noise(0.15, 0.15, s + 1, 2);
+  t.map((x, y, k) => {
+    const d = Math.abs(x - 0.7) + edge(x, y) * 0.16;
+    const m = 0.9 + soil(x, y) * 0.16 + (hash2(k, 1, s) - 0.5) * 0.1;
+    L.r[k] = 0.37 * m;
+    L.g[k] = 0.3 * m;
+    L.b[k] = 0.2 * m;
+    L.alpha[k] = clamp01((1 - sstep(0.16, 0.58, d)) * 0.9);
+    return 0;
+  });
+  return L.finish();
+}, { ...marks, tile: 'y' });
+/** Fallen leaves under a tree, thinning away from the trunk. */
+const leaves = (t: Tex, s: number, colors: RGB[]): TextureData => {
+  const L = new Layers(t, colors[0], 0.9, 0);
+  const leaf = t.cells(0.09, s);
+  const drift = t.noise(0.8, 0.8, s + 1, 2);
+  t.map((x, y, k) => {
+    const d = Math.hypot(x - 2, y - 2) / 2;
+    const c = leaf(x, y);
+    const keep = (1 - sstep(0.25, 0.95, d)) * (0.75 + drift(x, y) * 0.4);
+    const on = c.id < keep * 0.8 ? 1 - sstep(0.22, 0.4, c.f1) : 0;
+    const col = colors[Math.floor(c.id * 977) % colors.length];
+    const m = 0.8 + ((c.id * 131) % 1) * 0.4;
+    L.r[k] = col[0] * m;
+    L.g[k] = col[1] * m;
+    L.b[k] = col[2] * m;
+    L.alpha[k] = on * 0.95;
+    L.height[k] = on * 0.004;
+    return 0;
+  });
+  return L.finish();
+};
+add('leaf-litter', '落ち葉 茶色', [4, 4], (t, s) => leaves(t, s, [hex(0x6a4a26), hex(0x7c5a2c), hex(0x54401f), hex(0x8a6a34)]), { ...marks, density: 128 });
+add('leaf-litter-autumn', '落ち葉 紅葉', [4, 4], (t, s) => leaves(t, s, [hex(0xb86a1c), hex(0xc8a02c), hex(0x9c3c1c), hex(0x7c5a2c)]), { ...marks, density: 128 });
+add('petals-fallen', '散った花びら', [4, 4], (t, s) => leaves(t, s, [hex(0xe8c8d8), hex(0xd8b0d0), hex(0xf0e0e8)]), { ...marks, density: 128 });
+
 export const SITE_TEXTURES: readonly TextureSpec[] = list;

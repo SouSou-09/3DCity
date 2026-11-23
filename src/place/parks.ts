@@ -52,7 +52,20 @@ export interface ParkPlan {
   fence: string | null;
   /** Things that children play on, with the radius each needs to itself. */
   play: { x: number; y: number; r: number; model: string }[];
+  /** Grass worn to earth, where people stand about and play. */
+  worn: { x: number; y: number; r: number }[];
+  /** Lines walked into the grass, off the paths. */
+  trails: Vec2[][];
 }
+
+/** Shrubs and grasses under the trees of a grove. */
+const UNDER: Record<string, string[]> = {
+  beach: ['plant/shrub-hibiscus-red', 'plant/shrub-hibiscus-pink', 'plant/shrub-plumbago', 'plant/grass-fountain', 'plant/shrub-bougainvillea'],
+  hills: ['plant/shrub-dry', 'plant/grass-fescue', 'plant/grass-tuft-dry', 'plant/shrub-broadleaf'],
+  default: ['plant/shrub-broadleaf', 'plant/shrub-camellia', 'plant/shrub-box-light', 'plant/grass-fountain', 'plant/grass-patch', 'plant/shrub-box'],
+};
+/** Beds beside the main walks. */
+const BEDS = ['plant/flower-strip', 'plant/flower-strip-red', 'plant/flower-lavender-row', 'plant/flower-bed-round', 'plant/grass-fountain-row', 'plant/hedge-low'];
 
 // What a cell of a park holds.
 const OUT = 0;
@@ -189,7 +202,7 @@ export function placeParks(site: Site): { parks: ParkPlan[]; tiles: ModelData[] 
         const k = cellOf(x, y);
         return k < 0 ? OUT : occ[k];
       };
-      const plan: ParkPlan = { park: pi, tier, type, area, centre, entrances: [], paths: [], features: [], lawns: [], fence: null, play: [] };
+      const plan: ParkPlan = { park: pi, tier, type, area, centre, entrances: [], paths: [], features: [], lawns: [], fence: null, play: [], worn: [], trails: [] };
       const put = (model: string, kind: SiteKind, x: number, y: number, yaw: number, o: Partial<SiteItem> & { lift?: number } = {}): SiteItem => site.put(model, kind, x, y, yaw, { park: pi, ...o });
       const local = (r: Rect, mx: number, mz: number): Vec2 => Site.local(r.x, r.y, r.yaw, mx, mz);
       /** Marks the cells under a rectangle (only those that are lawn, or apron when a solid thing lands on its own apron). */
@@ -390,15 +403,13 @@ export function placeParks(site: Site): { parks: ParkPlan[]; tiles: ModelData[] 
       const towards = (r: Rect, x: number, y: number): Rect => {
         const d = { x: x - r.x, y: y - r.y };
         let best = r.yaw;
-        for (let q = 0; q < 4; q++) {
+        // An oblong only turns about: what stands on it is laid out for its own length and width.
+        const step = Math.abs(r.hx - r.hz) < 1e-6 ? 1 : 2;
+        for (let q = step; q < 4; q += step) {
           const yaw = r.yaw + (q * Math.PI) / 2;
           if (-Math.sin(yaw) * d.x + Math.cos(yaw) * d.y > -Math.sin(best) * d.x + Math.cos(best) * d.y) best = yaw;
         }
-        return q4(r, best);
-      };
-      const q4 = (r: Rect, yaw: number): Rect => {
-        const quarter = Math.round((yaw - r.yaw) / (Math.PI / 2));
-        return quarter % 2 ? { ...r, yaw, hx: r.hz, hz: r.hx } : { ...r, yaw };
+        return { ...r, yaw: best };
       };
       /** Where paths reach a feature: just outside the middle of its front. */
       const access: Vec2[] = [];
@@ -743,7 +754,8 @@ export function placeParks(site: Site): { parks: ParkPlan[]; tiles: ModelData[] 
 
       // --- Paths ---
       const pass = (k: number): boolean => occ[k] === LAWN || occ[k] === PATH || occ[k] === APRON || occ[k] === OPEN;
-      const dist = new Float32Array(w * w);
+      // As precise as the costs on the heap, or a live entry would look stale.
+      const dist = new Float64Array(w * w);
       const from = new Int32Array(w * w);
       /** Cheapest way over the grass from a point to the first cell that `goal` accepts. */
       const route = (start: Vec2, goal: (k: number) => boolean, cost: (k: number) => number): Vec2[] | null => {
@@ -802,6 +814,8 @@ export function placeParks(site: Site): { parks: ParkPlan[]; tiles: ModelData[] 
         neighbourhood: ['concrete/walk-square', 'concrete/walk-square', 'ground/gravel-fine'],
         pocket: ['concrete/walk-square', 'concrete/walk-square', 'concrete/walk-square'],
       }[tier];
+      /** Cells a path really covers; the ground kept clear inside an entrance is `PATH` before any path is laid. */
+      const laid = new Uint8Array(w * w);
       const addPath = (cellsIn: Vec2[] | null, kind: ParkPath['kind']): void => {
         if (!cellsIn || cellsIn.length < 2) return;
         const rank = kind === 'main' ? 0 : kind === 'loop' ? 1 : 2;
@@ -812,7 +826,9 @@ export function placeParks(site: Site): { parks: ParkPlan[]; tiles: ModelData[] 
           for (let dy = -wd / 2 - 0.4; dy <= wd / 2 + 0.4; dy += 1)
             for (let dx = -wd / 2 - 0.4; dx <= wd / 2 + 0.4; dx += 1) {
               const k = cellOf(p.x + dx, p.y + dy);
-              if (k >= 0 && (occ[k] === LAWN || occ[k] === OPEN || occ[k] === APRON)) occ[k] = PATH;
+              if (k < 0) continue;
+              laid[k] = 1;
+              if (occ[k] === LAWN || occ[k] === OPEN || occ[k] === APRON) occ[k] = PATH;
             }
         plan.paths.push({ pts, w: wd, kind });
         site.ribbon(b, paving[rank], pts, wd, 0.065 - rank * 0.008);
@@ -823,7 +839,7 @@ export function placeParks(site: Site): { parks: ParkPlan[]; tiles: ModelData[] 
       plan.entrances.forEach((e, i) => {
         // The gateway itself: from the back of the pavement to the first of the grass.
         const stub = [e.from ?? { x: e.x - e.nx * 1.4, y: e.y - e.ny * 1.4 }, inside(e)];
-        const way = route(inside(e), i === 0 ? atMiddle : (k) => occ[k] === PATH || atMiddle(k), walk);
+        const way = route(inside(e), i === 0 ? atMiddle : (k) => laid[k] === 1 || atMiddle(k), walk);
         addPath(way ? [stub[0], ...way] : stub, i === 0 ? 'main' : 'link');
       });
       if ((tier === 'central' || tier === 'district') && plan.entrances.length >= 3) {
@@ -836,7 +852,7 @@ export function placeParks(site: Site): { parks: ParkPlan[]; tiles: ModelData[] 
           if (way && polyLength(way) < 700) addPath(way, 'loop');
         });
       }
-      for (const a of access) addPath(route(a, (k) => occ[k] === PATH, walk), 'link');
+      for (const a of access) addPath(route(a, (k) => laid[k] === 1, walk), 'link');
 
       // --- Along the paths: benches, lights, bins ---
       let count = 0;
@@ -857,6 +873,11 @@ export function placeParks(site: Site): { parks: ParkPlan[]; tiles: ModelData[] 
           if (path.kind !== 'link' || tier === 'neighbourhood') {
             const lamp = at(-(path.w / 2 + 0.7));
             small(LIGHTS[tier], 'light', lamp.x, lamp.y, 0, 0.5, true);
+          }
+          // Planting beside the main walks of the bigger parks.
+          if (path.kind === 'main' && tier !== 'pocket' && count % 2 === 0) {
+            const bed = at(-(path.w / 2 + 2.4));
+            small(pick(BEDS, rnd(76, count)), 'plant', bed.x, bed.y, Math.atan2(tan.y, tan.x), 1.6);
           }
         }
       }
@@ -895,19 +916,108 @@ export function placeParks(site: Site): { parks: ParkPlan[]; tiles: ModelData[] 
       const tclr = clearance(occ, w, w, LAWN);
       const G = 8;
       const dense = tier === 'central' || tier === 'district' ? 1 : 0.6;
+      /** The tree of a grid square, if the square has one: where it stands, and whether in a grove or on the rim of the park. */
+      const treeAt = (gx: number, gy: number): { x: number; y: number; grove: number; rim: boolean } | null => {
+        const x = (gx + 0.2 + hash(seed, pi, gx, gy, 1) * 0.6) * G;
+        const y = (gy + 0.2 + hash(seed, pi, gx, gy, 2) * 0.6) * G;
+        const k = cellOf(x, y);
+        if (k < 0 || occ[k] !== LAWN || tclr[k] * C < 2.6) return null;
+        const grove = noise(seed * 7 + pi, x, y, 46);
+        const rim = clr0[k] * C < 10;
+        const p = rim ? 0.75 : (grove > 0.54 ? 0.95 : grove > 0.4 ? 0.5 : 0.18) * dense;
+        return hash(seed, pi, gx, gy, 3) > p ? null : { x, y, grove, rim };
+      };
+      // Every tree of the grid is known before any is planted, so one added beside a tree can keep clear of the rest.
+      const trunks = new Map<string, Vec2>();
       for (let gy = Math.floor(cy(0) / G); gy * G < cy(w); gy++)
         for (let gx = Math.floor(cx(0) / G); gx * G < cx(w); gx++) {
-          const x = (gx + 0.2 + hash(seed, pi, gx, gy, 1) * 0.6) * G;
-          const y = (gy + 0.2 + hash(seed, pi, gx, gy, 2) * 0.6) * G;
-          const k = cellOf(x, y);
-          if (k < 0 || occ[k] !== LAWN || tclr[k] * C < 2.6) continue;
-          const grove = noise(seed * 7 + pi, x, y, 46);
-          const rim = clr0[k] * C < 10;
-          const p = rim ? 0.75 : (grove > 0.54 ? 0.95 : grove > 0.4 ? 0.5 : 0.18) * dense;
-          if (hash(seed, pi, gx, gy, 3) > p) continue;
+          const t = treeAt(gx, gy);
+          if (t) trunks.set(`${gx},${gy}`, t);
+        }
+      const seconds: Vec2[] = [];
+      for (let gy = Math.floor(cy(0) / G); gy * G < cy(w); gy++)
+        for (let gx = Math.floor(cx(0) / G); gx * G < cx(w); gx++) {
+          const tree = treeAt(gx, gy);
+          if (!tree) continue;
+          const { x, y, grove, rim } = tree;
           const kind = pick(palette, hash(seed, pi, Math.floor(x / 46), Math.floor(y / 46), rim ? 5 : 4) * 0.75 + hash(seed, pi, gx, gy, 6) * 0.25);
           put(kind, 'tree', x, y, hash(seed, pi, gx, gy, 7) * Math.PI * 2, { scale: 0.85 + hash(seed, pi, gx, gy, 8) * 0.4 });
+          const h = (n: number): number => hash(seed, pi, gx, gy, n);
+          // What has fallen from it lies under it.
+          if (h(9) < 0.7) {
+            const litter = /autumn/.test(kind) ? 'site/leaf-litter-autumn' : /cherry|jacaranda|tabebuia|magnolia|spring/.test(kind) ? 'site/petals-fallen' : 'site/leaf-litter';
+            const lr = 2.2 + h(10) * 1.4;
+            if (!/palm/.test(kind)) site.decal(b, litter, x, y, h(11) * 6.3, lr, lr, 0.045);
+          }
+          if (rim || grove <= 0.54) continue;
+          // In a grove the trees stand in twos and threes, with shrubs under them.
+          for (let q = 0; q < 2; q++) {
+            if (h(12 + q) > 0.45) continue;
+            const a = h(14 + q) * 6.3;
+            const d = 3.2 + h(16 + q) * 1.6;
+            const [tx, ty] = [x + Math.cos(a) * d, y + Math.sin(a) * d];
+            const tk = cellOf(tx, ty);
+            if (tk < 0 || occ[tk] !== LAWN || tclr[tk] * C < 2.6) continue;
+            // Clear of the trees of the squares round about and of the other trees added to groves.
+            let clash = seconds.some((t) => Math.hypot(t.x - tx, t.y - ty) < 2.4);
+            for (let ny = gy - 1; ny <= gy + 1 && !clash; ny++)
+              for (let nx = gx - 1; nx <= gx + 1 && !clash; nx++) {
+                const t = trunks.get(`${nx},${ny}`);
+                clash = !!t && (nx !== gx || ny !== gy) && Math.hypot(t.x - tx, t.y - ty) < 2.4;
+              }
+            if (clash) continue;
+            seconds.push({ x: tx, y: ty });
+            put(kind, 'tree', tx, ty, h(18 + q) * 6.3, { scale: 0.6 + h(20 + q) * 0.35 });
+          }
+          for (let q = 0; q < 3; q++) {
+            if (h(22 + q) > 0.3) continue;
+            const a = h(25 + q) * 6.3;
+            const d = 1.6 + h(28 + q) * 2.2;
+            small(pick(UNDER[type] ?? UNDER.default, h(31 + q)), 'plant', x + Math.cos(a) * d, y + Math.sin(a) * d, h(34 + q) * 6.3, 0.8);
+          }
         }
+
+      // --- Where the grass has given out: goal mouths, the middle of the open lawns, the lines people cut to them ---
+      const worn = (x: number, y: number, r: number, yaw: number, surface?: (x: number, y: number) => number): void => {
+        site.decal(b, 'site/lawn-worn', x, y, yaw, r, r * (0.7 + hash(seed, pi, Math.round(x), Math.round(y), 40) * 0.3), 0.04, surface);
+        plan.worn.push({ x, y, r });
+      };
+      for (const f of plan.features)
+        if (f.type === 'soccer') {
+          // The pitch is turf laid on a plane above the ground: the goal mouths wear on the turf, not under it.
+          const fit = site.plane(f.x, f.y, f.yaw, f.hx, f.hz);
+          const [c, s] = [Math.cos(f.yaw), Math.sin(f.yaw)];
+          const turf = (x: number, y: number): number => fit.h + fit.over + fit.gx * (c * (x - f.x) + s * (y - f.y)) + fit.gz * (c * (y - f.y) - s * (x - f.x)) + 0.05;
+          for (const sd of [-1, 1]) {
+            const p = Site.local(f.x, f.y, f.yaw, 0, sd * (f.hz - 3));
+            worn(p.x, p.y, 3.2, f.yaw, turf);
+          }
+        }
+      plan.lawns.forEach((lawn, li) => {
+        for (let q = 0; q < 1 + Math.floor(lawn.r / 9); q++) {
+          const [a, d] = [rnd(90, li, q) * 6.3, rnd(91, li, q) * lawn.r * 0.6];
+          worn(lawn.x + Math.cos(a) * d, lawn.y + Math.sin(a) * d, 2 + rnd(92, li, q) * 2.2, rnd(93, li, q) * 6.3);
+        }
+        // The short cut from the nearest path to the middle of the lawn.
+        let near: Vec2 | null = null;
+        for (const path of plan.paths) for (const p of path.pts) if (!near || Math.hypot(p.x - lawn.x, p.y - lawn.y) < Math.hypot(near.x - lawn.x, near.y - lawn.y)) near = p;
+        if (!near) return;
+        const len = Math.hypot(near.x - lawn.x, near.y - lawn.y);
+        if (len < 8 || len > 90) return;
+        const pts: Vec2[] = [];
+        const [ux, uy] = [(lawn.x - near.x) / len, (lawn.y - near.y) / len];
+        for (let d = 0; d < len - lawn.r * 0.3; d += 2) {
+          // It wanders a little, as feet do.
+          const off = Math.sin(d / 9 + li) * 1.2 * Math.min(1, d / 6);
+          const p = { x: near.x + ux * d - uy * off, y: near.y + uy * d + ux * off };
+          const k = cellOf(p.x, p.y);
+          if (k < 0 || (occ[k] !== LAWN && occ[k] !== OPEN && occ[k] !== PATH)) break;
+          pts.push(p);
+        }
+        if (pts.length < 4) return;
+        site.ribbon(b, 'site/lawn-trail', pts, 1.4, 0.045);
+        plan.trails.push(pts);
+      });
 
       // --- Fence along the streets ---
       const fence =

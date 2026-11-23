@@ -1,7 +1,9 @@
 import { MeshBuilder, ModelData, V3 } from '../assets/mesh/builder';
-import { pointAt, polyLength, resample } from '../core/geom';
+import { pointAt, pointSeg, polyLength, resample } from '../core/geom';
 import { Vec2 } from '../core/vec2';
 import { DistrictType, districtAt } from '../gen/districts';
+import { layout } from '../assets/mesh/section';
+import { CLASS_RANK, isStreet } from '../gen/streamlines';
 import { hillAt, riverBankAt, seaDistAt } from '../gen/terrain';
 import { FREE, LOT, RAIL, ROAD, USED, WATER, Site, SiteItem, SiteKind, along, facing, hash, pick } from './site';
 
@@ -38,9 +40,19 @@ export interface Waterfront {
   sand: Float32Array;
   /** How much of the ground is the paving of a port yard, 0..1 on the terrain grid. */
   paved: Float32Array;
-  piers: { x: number; y: number; yaw: number; length: number; model: string; public: boolean }[];
+  /** `street` is the road edge whose line a pier carries on out to sea, if it stands at the end of one. */
+  piers: { x: number; y: number; yaw: number; length: number; model: string; public: boolean; street: number | null }[];
   towers: Vec2[];
   lighthouse: Vec2 | null;
+  /** Lots (by index) that lie on the sand of a beach. They are left open: no building, yard or fence goes on them. */
+  sandLots: number[];
+  /**
+   * Where a street runs along the back of a beach: the outer edge of its pavement, the level of the walk laid beside it,
+   * the line of the low wall above the sand and the places where a ramp goes down through it.
+   */
+  fronts: { edge: number; side: number; kerb: Vec2[]; top: number[]; wall: Vec2[]; steps: Vec2[] }[];
+  /** Marks laid on the sand: the tide line, wheel tracks, footprints. `kind` is the texture. */
+  marks: { kind: string; pts: Vec2[] }[];
 }
 
 const WALL_TOP: Record<string, number> = { 'waterfront/seawall-concrete': 2.2, 'waterfront/seawall-concrete-old': 2.2, 'waterfront/seawall-stone': 2.2, 'waterfront/seawall-sheetpile': 1.6, 'waterfront/seawall-quay': 2.6 };
@@ -62,7 +74,7 @@ export function placeWaterfront(site: Site): Waterfront {
   const rnd = (...v: number[]): number => hash(seed, 9001, ...v);
   const sea = (x: number, y: number): number => seaDistAt(t, x, y);
   const b = new MeshBuilder();
-  const out: Waterfront = { coasts: [], reaches: [], tiles: [], sand: new Float32Array(t.n * t.n), paved: new Float32Array(t.n * t.n), piers: [], towers: [], lighthouse: null };
+  const out: Waterfront = { coasts: [], reaches: [], tiles: [], sand: new Float32Array(t.n * t.n), paved: new Float32Array(t.n * t.n), piers: [], towers: [], lighthouse: null, marks: [], fronts: [], sandLots: [] };
 
   // --- The shore line: for each line across the coast, where the sea ends ---
   const at = (u: number, v: number): Vec2 => ({ x: size / 2 + t.along.x * u + t.inland.x * v, y: size / 2 + t.along.y * u + t.inland.y * v });
@@ -259,8 +271,287 @@ export function placeWaterfront(site: Site): Waterfront {
     const len = (model.includes('fishing') ? 38 : /wide|concrete$|lamps/.test(model) ? 30 : /narrow/.test(model) ? 18 : /derelict/.test(model) ? 20 : /float/.test(model) ? 12 : 24) * stretch;
     if (sea(st.x + st.nx * (len - root), st.y + st.ny * (len - root)) > -8) return false;
     site.set(model, 'pier', p.x, p.y, h, out2sea(st), { afloat: true, stretch: stretch === 1 ? undefined : stretch });
-    out.piers.push({ x: p.x, y: p.y, yaw: out2sea(st), length: len, model, public: isPublic });
+    out.piers.push({ x: p.x, y: p.y, yaw: out2sea(st), length: len, model, public: isPublic, street: (st as StreetEnd).street ?? null });
     return true;
+  };
+
+  // --- Streets that run down to the shore: a public pier carries the line of one straight on out to sea ---
+  /** Where the line of a street, carried on past its last junction, meets the shore: a station there that looks out along the street. */
+  interface StreetEnd extends ShoreStation {
+    street: number;
+    node: number;
+    /** From the junction to the shore, and from the junction to the far edge of the road it meets, along the line of the street. */
+    gap: number;
+    kerb: number;
+    rank: number;
+  }
+  const heads: StreetEnd[] = [];
+  for (const node of city.graph.nodes) {
+    const d0 = sea(node.x, node.y);
+    if (!(d0 > 4 && d0 < 90)) continue;
+    const arms = node.edges.map((id) => {
+      const e = city.graph.edges[id];
+      const pts = e.a === node.id ? e.points : [...e.points].reverse();
+      // The way the street runs over its last stretch into the junction.
+      const far = pointAt(pts, Math.min(30, polyLength(pts))).p;
+      const len = Math.hypot(node.x - far.x, node.y - far.y) || 1;
+      const lay = site.roads.sections[id] ? layout(site.roads.sections[id]) : null;
+      return { e, x: (node.x - far.x) / len, y: (node.y - far.y) / len, len, half: lay ? Math.max(-lay.outer[0], lay.outer[1]) : 0 };
+    });
+    for (const arm of arms) {
+      if (!isStreet(arm.e.cls) || arm.e.bridge || arm.len < 20) continue;
+      // Nothing goes on ahead: the street ends here, or at the road along the shore.
+      if (arms.some((o) => o !== arm && -(o.x * arm.x + o.y * arm.y) > 0.72)) continue;
+      let left = false;
+      for (let d = 2; d <= 90; d += 1) {
+        const [x, y] = [node.x + arm.x * d, node.y + arm.y * d];
+        if (sea(x, y) <= 0) {
+          if (!left) break;
+          const type = districtAt(t, city.districts, x, y).type;
+          // The road along the shore lies across the line of the street: its far edge is where a walk to the pier starts.
+          let kerb = 0;
+          for (const o of arms) if (o !== arm) kerb = Math.max(kerb, o.half / Math.max(0.5, Math.abs(o.x * arm.y - o.y * arm.x)));
+          heads.push({ x, y, nx: arm.x, ny: arm.y, kind: 'natural', type, street: arm.e.id, node: node.id, gap: d, kerb, rank: CLASS_RANK[arm.e.cls] });
+          break;
+        }
+        const c = site.at(x, y);
+        if (c === ROAD && !left) continue;
+        if (c !== FREE && c !== USED) break;
+        left = true;
+      }
+    }
+  }
+  /** The street ends that come down to a reach, best first: a main street, square to the shore, near the middle of the reach. */
+  const ashore = (r: Reach): StreetEnd[] => {
+    const stations = out.coasts[r.coast];
+    const found: { h: StreetEnd; v: number }[] = [];
+    for (const h of heads) {
+      let [best, at] = [8, -1];
+      for (let i = r.from + 2; i <= r.to - 2; i++) {
+        const d = Math.hypot(stations[i].x - h.x, stations[i].y - h.y);
+        if (d < best) [best, at] = [d, i];
+      }
+      if (at < 0) continue;
+      const square = h.nx * stations[at].nx + h.ny * stations[at].ny;
+      if (square < 0.8) continue;
+      found.push({ h, v: h.rank * 40 - h.gap * 0.5 - (1 - square) * 250 - (Math.abs(at - (r.from + r.to) / 2) * 4) * 0.1 });
+    }
+    return found.sort((a, c) => c.v - a.v || a.h.street - c.h.street).map((f) => f.h);
+  };
+  // --- Lots laid out on the sand of a beach are given back to it: nothing is built between the street and the water there ---
+  city.land.lots.forEach((lot, id) => {
+    if (lot.use === 'OS') return;
+    const c = { x: 0, y: 0 };
+    for (const q of lot.poly) [c.x, c.y] = [c.x + q.x / lot.poly.length, c.y + q.y / lot.poly.length];
+    const to = sea(c.x, c.y) < 46 ? nearest(c.x, c.y, 90) : null;
+    if (to?.reach.kind !== 'beach') return;
+    // Only on the beach's own side of the street: a lot across the road from the sand is an ordinary one.
+    const far = Math.hypot(to.st.x - c.x, to.st.y - c.y);
+    for (let d = 0; d < far; d += 2) if (site.at(c.x + ((to.st.x - c.x) * d) / far, c.y + ((to.st.y - c.y) * d) / far) === ROAD) return;
+    out.sandLots.push(id);
+  });
+  site.release(out.sandLots);
+
+  // --- The back of a beach along a street: a walk, a strip of palms and a low wall, the sand a step below, and ways down to it ---
+  const WALK = 2.6;
+  const BED = 1.7;
+  const WALL = 0.35;
+  const DROP = 0.9;
+  interface FrontPost { p: Vec2; n: Vec2; top: number; s: number }
+  const fronts: { edge: number; side: number; posts: FrontPost[]; nodes: [number, number] }[] = [];
+  const paving = city.graph.edges.map((e) => {
+    const line = site.roads.lines[e.id];
+    if (!line) return null;
+    const lay = layout(site.roads.sections[e.id]);
+    return { pts: line.map((q) => ({ x: q[0], y: q[2] })), half: Math.max(-lay.outer[0], lay.outer[1]) };
+  });
+  /** Whether the pavement of one of the given streets covers a point. The ground taken for a junction is rounder than what is paved. */
+  const paved = (x: number, y: number, edges: number[]): boolean =>
+    edges.some((id) => {
+      const pv = paving[id];
+      if (!pv) return false;
+      for (let i = 0; i + 1 < pv.pts.length; i++) if (pointSeg(x, y, pv.pts[i], pv.pts[i + 1]).d < pv.half + 0.8) return true;
+      return false;
+    });
+  city.graph.edges.forEach((e) => {
+    const line = site.roads.lines[e.id];
+    if (!line || !isStreet(e.cls) || e.bridge) return;
+    const pts = line.map((q) => ({ x: q[0], y: q[2] }));
+    const total = polyLength(pts);
+    const mid = pointAt(pts, total / 2).p;
+    if (Math.abs(sea(mid.x, mid.y)) > 120 + total / 2) return;
+    const lay = layout(site.roads.sections[e.id]);
+    const others = [e.a, e.b].flatMap((n) => city.graph.nodes[n].edges.filter((id) => id !== e.id));
+    const open = (q: Vec2): boolean => site.at(q.x, q.y) === FREE || (site.at(q.x, q.y) === ROAD && Math.min(Math.hypot(q.x - pts[0].x, q.y - pts[0].y), Math.hypot(q.x - pts[pts.length - 1].x, q.y - pts[pts.length - 1].y)) < 40 && !paved(q.x, q.y, others));
+    for (const side of [1, -1]) {
+      const off = Math.abs(side > 0 ? lay.outer[1] : lay.outer[0]);
+      const kerb = side > 0 ? lay.outerY[1] : lay.outerY[0];
+      let run: FrontPost[] = [];
+      const flush = (): void => {
+        // A run that reaches the end of its street may go on round the junction there.
+        if (run.length >= 4) fronts.push({ edge: e.id, side, posts: run, nodes: [run[0].s < 1 ? e.a : -1, run[run.length - 1].s > total - 1 ? e.b : -1] });
+        run = [];
+      };
+      const step = total / Math.max(1, Math.round(total / 2));
+      for (let d = 0; d <= total + 0.01; d += step) {
+        const { p, tan, seg } = pointAt(pts, d);
+        const n = { x: -tan.y * side, y: tan.x * side };
+        const at = (o: number): Vec2 => ({ x: p.x + n.x * (off + o), y: p.y + n.y * (off + o) });
+        const near = nearest(at(1).x, at(1).y, 90);
+        const segLen = Math.hypot(pts[seg + 1].x - pts[seg].x, pts[seg + 1].y - pts[seg].y) || 1;
+        const u = Math.hypot(p.x - pts[seg].x, p.y - pts[seg].y) / segLen;
+        const top = line[seg][1] + (line[seg + 1][1] - line[seg][1]) * u + kerb;
+        // The far side of the road is open sand that faces the sea, with room for the strip and beach beyond it.
+        const ok = near?.reach.kind === 'beach' && n.x * near.st.nx + n.y * near.st.ny > 0.35 && top > WATER_Y + 1 &&
+          [0.6, 2, 4, 6, 8].every((o) => open(at(o))) && site.heightAt(at(9).x, at(9).y) > WATER_Y + 0.6;
+        if (ok) run.push({ p: at(0), n, top, s: d });
+        else flush();
+      }
+      flush();
+    }
+  });
+  // Runs on the two sides of a junction that the street passes straight through are one front, carried along the far side of the junction.
+  for (let again = true; again; ) {
+    again = false;
+    search: for (const f of fronts)
+      for (const g of fronts) {
+        if (f === g) continue;
+        const node = f.nodes.find((n) => n >= 0 && g.nodes.includes(n));
+        if (node === undefined) continue;
+        if (f.nodes[1] !== node) [f.posts, f.nodes] = [f.posts.reverse(), [f.nodes[1], f.nodes[0]]];
+        if (g.nodes[0] !== node) [g.posts, g.nodes] = [g.posts.reverse(), [g.nodes[1], g.nodes[0]]];
+        const [q, r] = [f.posts[f.posts.length - 1], g.posts[0]];
+        const span = Math.hypot(r.p.x - q.p.x, r.p.y - q.p.y);
+        const arms = city.graph.nodes[node].edges;
+        const across: FrontPost[] = [];
+        let clear = span < 90 && q.n.x * r.n.x + q.n.y * r.n.y > 0.5;
+        for (let k = 1, m = Math.max(1, Math.round(span / 2)); k < m && clear; k++) {
+          const u = k / m;
+          const nl = Math.hypot(q.n.x + (r.n.x - q.n.x) * u, q.n.y + (r.n.y - q.n.y) * u) || 1;
+          const post = { p: { x: q.p.x + (r.p.x - q.p.x) * u, y: q.p.y + (r.p.y - q.p.y) * u }, n: { x: (q.n.x + (r.n.x - q.n.x) * u) / nl, y: (q.n.y + (r.n.y - q.n.y) * u) / nl }, top: q.top + (r.top - q.top) * u, s: 0 };
+          clear = [0.8, 2, 4, 6, 8].every((o) => {
+            const [x, y] = [post.p.x + post.n.x * o, post.p.y + post.n.y * o];
+            return (site.at(x, y) === FREE || site.at(x, y) === ROAD) && !paved(x, y, arms);
+          });
+          across.push(post);
+        }
+        f.nodes[1] = g.nodes[0] = -1;
+        if (clear) {
+          f.posts.push(...across, ...g.posts);
+          f.nodes[1] = g.nodes[1];
+          fronts.splice(fronts.indexOf(g), 1);
+        }
+        again = true;
+        break search;
+      }
+  }
+  // A front that comes to a junction alone goes on along its far side as far as the sand is open.
+  for (const f of fronts)
+    for (const end of [0, 1]) {
+      const node = f.nodes[end];
+      if (node < 0) continue;
+      const arms = city.graph.nodes[node].edges;
+      const [q, prev] = end ? [f.posts[f.posts.length - 1], f.posts[f.posts.length - 2]] : [f.posts[0], f.posts[1]];
+      const l = Math.hypot(q.p.x - prev.p.x, q.p.y - prev.p.y) || 1;
+      const [dx, dy] = [(q.p.x - prev.p.x) / l, (q.p.y - prev.p.y) / l];
+      for (let d = 2; d <= 46; d += 2) {
+        const post = { p: { x: q.p.x + dx * d, y: q.p.y + dy * d }, n: q.n, top: q.top, s: 0 };
+        const clear = [0.8, 2, 4, 6, 8].every((o) => {
+          const [x, y] = [post.p.x + q.n.x * o, post.p.y + q.n.y * o];
+          return (site.at(x, y) === FREE || site.at(x, y) === ROAD) && !paved(x, y, arms);
+        });
+        if (!clear || Math.abs(site.heightAt(post.p.x, post.p.y) - q.top) > 0.6) break;
+        if (end) f.posts.push(post);
+        else f.posts.unshift(post);
+      }
+    }
+  for (let k = fronts.length - 1; k >= 0; k--) if (fronts[k].posts.length < 9) fronts.splice(k, 1);
+  // On the outside of a bend the posts spread apart; fill in so the strip stays evenly sampled.
+  for (const f of fronts)
+    for (let i = f.posts.length - 1; i > 0; i--) {
+      const [a, b] = [f.posts[i - 1], f.posts[i]];
+      if (Math.hypot(b.p.x - a.p.x, b.p.y - a.p.y) <= 3) continue;
+      const nl = Math.hypot(a.n.x + b.n.x, a.n.y + b.n.y) || 1;
+      f.posts.splice(i, 0, { p: { x: (a.p.x + b.p.x) / 2, y: (a.p.y + b.p.y) / 2 }, n: { x: (a.n.x + b.n.x) / nl, y: (a.n.y + b.n.y) / nl }, top: (a.top + b.top) / 2, s: 0 });
+    }
+  for (const f of fronts) f.posts.forEach((q, i) => (q.s = i ? f.posts[i - 1].s + Math.hypot(q.p.x - f.posts[i - 1].p.x, q.p.y - f.posts[i - 1].p.y) : 0));
+  // The sand beyond the wall lies lower than the street, easing back to the street's own level at the ends of the wall.
+  for (const f of fronts)
+    f.posts.forEach((q, i) => {
+      const ease = smooth(0, 5, Math.min(i, f.posts.length - 1 - i));
+      for (let d = WALK + BED + 2; d <= 34; d += 4) {
+        const [x, y] = [q.p.x + q.n.x * d, q.p.y + q.n.y * d];
+        const [ci, cj] = [Math.round(x / t.cell), Math.round(y / t.cell)];
+        if (ci < 0 || cj < 0 || ci >= t.n || cj >= t.n || !site.all(ci * t.cell, cj * t.cell, 6, FREE, USED, WATER)) continue;
+        const k = cj * t.n + ci;
+        site.ground[k] = Math.min(site.ground[k], Math.max(q.top - DROP * ease * smooth(0, 6, d - WALK - BED), WATER_Y + 0.45));
+      }
+    });
+  for (const f of fronts) {
+    const palms = ['plant/palm-coconut', 'plant/palm-date', 'plant/palm-fan', 'plant/palm-queen'];
+    const palm = pick(palms, rnd(120, f.edge));
+    const under = ['plant/shrub-hibiscus-red', 'plant/shrub-hibiscus-pink', 'plant/grass-fountain', 'plant/shrub-plumbago', 'plant/grass-fescue'];
+    const at = (q: FrontPost, o: number, h = q.top): V3 => [q.p.x + q.n.x * o, h, q.p.y + q.n.y * o];
+    /** A way through the wall: where a street's line runs on to the beach, and every 40 m or so besides. */
+    const way = (q: FrontPost, i: number): boolean =>
+      heads.some((h) => {
+        const [dx, dy] = [q.p.x - h.x, q.p.y - h.y];
+        return Math.abs(dx * h.ny - dy * h.nx) < 3.2 && Math.hypot(dx, dy) < h.gap + 10;
+      }) || (i > 4 && i < f.posts.length - 5 && Math.floor((q.s + rnd(121, f.edge) * 40) / 2) % 22 < 2);
+    const wall: Vec2[] = [];
+    const steps: Vec2[] = [];
+    for (let i = 0; i + 1 < f.posts.length; i++) {
+      const [q, r] = [f.posts[i], f.posts[i + 1]];
+      const [s0, s1] = [q.s, r.s];
+      const uv = (a: number, c: number): [number, number][] => [[a, s0], [c, s0], [c, s1], [a, s1]];
+      b.quadUp('paving/slabs-sandstone', at(q, -0.05, q.top + 0.015), at(q, WALK, q.top + 0.015), at(r, WALK, r.top + 0.015), at(r, -0.05, r.top + 0.015), 0, uv(0, WALK));
+      const open = way(q, i) && way(r, i + 1);
+      if (open) {
+        // A ramp of boards from the walk down on to the sand.
+        const foot = (x: FrontPost): V3 => at(x, WALK + BED + WALL + 5, site.heightAt(x.p.x + x.n.x * (WALK + BED + WALL + 5), x.p.y + x.n.y * (WALK + BED + WALL + 5)) + 0.1);
+        b.quadUp('paving/boardwalk', at(q, WALK), foot(q), foot(r), at(r, WALK), 0, [[0, s0], [7, s0], [7, s1], [0, s1]]);
+        if (!way(f.posts[Math.max(0, i - 1)], i - 1)) steps.push({ x: q.p.x + q.n.x * (WALK + BED), y: q.p.y + q.n.y * (WALK + BED) });
+      } else {
+        b.quadUp('ground/mulch', at(q, WALK), at(q, WALK + BED), at(r, WALK + BED), at(r, WALK), 0, uv(0, BED));
+        const [w0, w1] = [WALK + BED, WALK + BED + WALL];
+        const cap = (x: FrontPost, o: number): V3 => at(x, o, x.top + 0.45);
+        b.quadUp('site/retaining-concrete', cap(q, w0), cap(q, w1), cap(r, w1), cap(r, w0), 0, uv(0, WALL));
+        b.quadFacing('site/retaining-concrete', cap(q, w0), cap(r, w0), at(r, w0), at(q, w0), [-q.n.x, 0, -q.n.y], [[s0, 0], [s1, 0], [s1, 0.45], [s0, 0.45]]);
+        b.quadFacing('site/retaining-concrete', cap(q, w1), cap(r, w1), at(r, w1, r.top - 2.4), at(q, w1, q.top - 2.4), [q.n.x, 0, q.n.y], [[s0, 0], [s1, 0], [s1, 2.85], [s0, 2.85]]);
+        // The wall is closed off where a way through begins or the run ends.
+        for (const [x, o, edge] of [[q, r, i === 0 || way(f.posts[i - 1], i - 1)], [r, q, i + 2 === f.posts.length || way(f.posts[i + 2], i + 2)]] as const)
+          if (edge) {
+            b.quadFacing('site/retaining-concrete', cap(x, WALK), cap(x, w1), at(x, w1, x.top - 2.4), at(x, WALK, x.top - 2.4), [x.p.x - o.p.x, 0, x.p.y - o.p.y], [[0, 0], [BED + WALL, 0], [BED + WALL, 2.85], [0, 2.85]]);
+          }
+        wall.push({ x: q.p.x + q.n.x * w0, y: q.p.y + q.n.y * w0 });
+        // Palms down the bed, a bench between them here and there, low planting under them.
+        const yaw = facing(q.n);
+        const slot = Math.round(q.s / 2);
+        const bed = at(q, WALK + BED / 2);
+        // Round a junction the bed is left bare: sight lines, and the ground there is the junction's.
+        if (site.at(bed[0], bed[2]) === ROAD) {
+          // No more than the bare bed.
+        } else if (slot % 5 === 0) {
+          if (rnd(122, f.edge, slot) < 0.22) site.put(pick(['furniture/bench-flat', 'furniture/bench-park', 'furniture/bench-flat-dark-long'], rnd(123, f.edge)), 'bench', bed[0], bed[2], yaw, { h: q.top });
+          else site.put(rnd(124, f.edge, slot) < 0.8 ? palm : pick(palms, rnd(125, f.edge, slot)), 'tree', bed[0], bed[2], rnd(126, f.edge, slot) * 6.3, { h: q.top, scale: 0.85 + rnd(127, f.edge, slot) * 0.3 });
+        } else if (rnd(128, f.edge, slot) < 0.55) site.put(pick(under, rnd(129, f.edge, slot)), 'plant', bed[0], bed[2], rnd(130, f.edge, slot) * 6.3, { h: q.top, scale: 0.7 + rnd(131, f.edge, slot) * 0.4 });
+      }
+      // A ramp reaches further out over the sand than the bed and wall do; nothing is set down on its boards.
+      for (const o of open ? [1.2, 3.4, 5.6, 7.8] : [1.2, 3.4]) site.stampDisc(q.p.x + q.n.x * o, q.p.y + q.n.y * o, 2.2, USED, FREE);
+    }
+    out.fronts.push({ edge: f.edge, side: f.side, kerb: f.posts.map((q) => q.p), top: f.posts.map((q) => q.top), wall, steps });
+  }
+
+  /** A public pier on the line of a street if one comes down to the reach, else in the middle of it. Returns the station it stands at. */
+  const publicPier = (model: string, r: Reach, mid: ShoreStation, root: number, h: number, stretch = 1): ShoreStation | null => {
+    for (const st of [...ashore(r), mid]) {
+      // The shore line is the mean one; on a flat beach the water's edge lies well out from it. The pier starts from the water.
+      let wet = 0;
+      while (wet > -40 && site.heightAt(P(st, 0, wet).x, P(st, 0, wet).y) > WATER_Y + 0.25) wet -= 1;
+      const from = { ...st, x: P(st, 0, wet).x, y: P(st, 0, wet).y, ...('gap' in st ? { gap: (st as StreetEnd).gap - wet } : {}) };
+      if (pier(model, from, root, h, true, stretch)) return from;
+    }
+    return null;
   };
 
   // The lighthouse: on the point that stands furthest out to sea from the shore either side of it.
@@ -318,6 +609,41 @@ export function placeWaterfront(site: Site): Waterfront {
         }
     if (r.kind === 'beach') {
       const resort = r.length > 500;
+      // One pleasure pier on a long beach, straight out from the street that comes down to it, on a ramp of boardwalk up from the sand.
+      // It goes in first: the rest of the beach is laid out round it.
+      const at = resort ? publicPier('waterfront/pier-boardwalk-wide', r, mid, 6, WATER_Y - 0.6, 1.6) : null;
+      if (at) {
+        const deck = WATER_Y - 0.6 + 2.2;
+        const open = (d: number): boolean => site.all(P(at, 0, d).x, P(at, 0, d).y, 4.5, FREE, USED);
+        // The boardwalk runs back over the sand to whatever street or lot backs the beach.
+        let back = 10;
+        while (back < 96 && open(back + 2)) back += 2;
+        const foot = Math.min(back, 16);
+        const [a, c] = [P(at, 0, 6), P(at, 0, foot)];
+        const g = site.heightAt(c.x, c.y) + 0.1;
+        const corner = (p: Vec2, sd: number, h: number): V3 => [p.x + at.ny * sd * 4, h, p.y - at.nx * sd * 4];
+        b.quadUp('paving/boardwalk', corner(a, -1, deck), corner(a, 1, deck), corner(c, 1, g), corner(c, -1, g), 0, [[0, 0], [8, 0], [8, foot - 6], [0, foot - 6]]);
+        for (const sd of [-1, 1]) b.quadFacing('paving/boardwalk', corner(a, sd, deck), corner(c, sd, g), corner(c, sd, g - 1.5), corner(a, sd, deck - 2.5), [at.ny * sd, 0, -at.nx * sd], [[0, 0], [foot - 6, 0], [foot - 6, 1.5], [0, 2.5]]);
+        if (back > foot) {
+          const pts: Vec2[] = [];
+          for (let d = foot; d <= back + 1; d += 2) pts.push(P(at, 0, d));
+          site.ribbon(b, 'paving/boardwalk', pts, 8, 0.1);
+        }
+        for (let d = 6; d <= back; d += 2) site.stampDisc(P(at, 0, d).x, P(at, 0, d).y, 5, USED, FREE);
+        // Where the full width has no room, a narrower walk goes on to the edge of the street.
+        let end = back + 1;
+        while (end < 110 && site.all(P(at, 0, end + 1).x, P(at, 0, end + 1).y, 1, FREE, USED)) end += 1;
+        // The ground taken for a junction is rounder than its pavement: the walk goes on to the kerb itself.
+        const street = at as Partial<StreetEnd>;
+        if (street.gap !== undefined && street.gap - street.kerb! - end < 14) end = Math.max(end, street.gap - street.kerb! - 0.4);
+        if (end > back + 2) {
+          const pts: Vec2[] = [];
+          for (let d = back; d < end; d += 1) pts.push(P(at, 0, d));
+          pts.push(P(at, 0, end));
+          site.ribbon(b, 'paving/boardwalk', pts, 4, 0.11);
+          for (const p of pts) site.stampDisc(p.x, p.y, 2.5, USED, FREE);
+        }
+      }
       every(220, 110, (at0, i) => {
         const found = seek(i, [15, 12, 18, 10], 4);
         if (!found) return;
@@ -398,19 +724,72 @@ export function placeWaterfront(site: Site): Waterfront {
           site.put('waterfront/beach-huts-row', 'beach', p.x, p.y, alongShore(st), {});
         } else if (rnd(25, i) < 0.5) drop('waterfront/beach-cabana', 'beach', P(st, 0, 26), alongShore(st), 2.4);
       });
-      // One pleasure pier on the longest beach, on a ramp of boardwalk up from the sand.
-      if (resort && pier('waterfront/pier-boardwalk-wide', mid, 6, WATER_Y - 0.6, true, 1.6)) {
-        const deck = WATER_Y - 0.6 + 2.2;
-        // The ramp comes down to the sand short of whatever street or lot backs the beach.
-        let back = 10;
-        while (back < 30 && site.all(P(mid, 0, back + 2).x, P(mid, 0, back + 2).y, 4.5, FREE, USED)) back += 2;
-        const [a, c] = [P(mid, 0, 6), P(mid, 0, back)];
-        const g = site.heightAt(c.x, c.y) + 0.1;
-        const corner = (p: Vec2, sd: number, h: number): V3 => [p.x + mid.ny * sd * 4, h, p.y - mid.nx * sd * 4];
-        b.quadUp('paving/boardwalk', corner(a, -1, deck), corner(a, 1, deck), corner(c, 1, g), corner(c, -1, g), 0, [[0, 0], [8, 0], [8, back - 6], [0, back - 6]]);
-        for (const sd of [-1, 1]) b.quadFacing('paving/boardwalk', corner(a, sd, deck), corner(c, sd, g), corner(c, sd, g - 1.5), corner(a, sd, deck - 2.5), [mid.ny * sd, 0, -mid.nx * sd], [[0, 0], [back - 6, 0], [back - 6, 1.5], [0, 2.5]]);
-        for (let d = 6; d <= back; d += 2) site.stampDisc(P(mid, 0, d).x, P(mid, 0, d).y, 5, USED, FREE);
-      }
+      // --- A beach in use: the line the tide left, wheel tracks, footprints, and what lies about on the sand ---
+      /** How far up the beach from a station the sand stands this high above the water. */
+      const upTo = (st: ShoreStation, above: number): number => {
+        for (let d = -8; d <= 40; d += 0.5) if (site.heightAt(P(st, 0, d).x, P(st, 0, d).y) >= WATER_Y + above) return d;
+        return 40;
+      };
+      const sand = (p: Vec2): boolean => site.at(p.x, p.y) === FREE || site.at(p.x, p.y) === USED;
+      /** Lays a mark along the beach at a depth that follows the stations, in the stretches `keep` allows and the sand is open. */
+      const lay = (tex: string, w: number, depth: (st: ShoreStation, i: number) => number, keep: (i: number) => boolean): void => {
+        let pts: Vec2[] = [];
+        const flush = (): void => {
+          if (pts.length >= 4) {
+            site.ribbon(b, tex, pts, w, 0.06);
+            out.marks.push({ kind: tex, pts });
+          }
+          pts = [];
+        };
+        let d = depth(stations[r.from], r.from);
+        for (let i = r.from; i < r.to; i++) {
+          // Eased from station to station, so the line bends rather than jumps.
+          d += (depth(stations[i], i) - d) * 0.35;
+          for (const u of [0, 0.5]) {
+            const [a, c] = [P(stations[i], 0, d), P(stations[i + 1], 0, d)];
+            const p = { x: a.x + (c.x - a.x) * u, y: a.y + (c.y - a.y) * u };
+            // Round a point of the shore the stations fan apart: the line breaks rather than leaps.
+            if (pts.length && Math.hypot(p.x - pts[pts.length - 1].x, p.y - pts[pts.length - 1].y) > 5) flush();
+            if (keep(i) && d < 26 && sand(p) && sea(p.x, p.y) > -6) pts.push(p);
+            else flush();
+          }
+        }
+        flush();
+      };
+      // Weed in broken lengths where the last high water turned; wheel tracks of the patrol along the dry sand.
+      lay('site/sand-weed', 2, (st, i) => upTo(st, 0.95) + (rnd(40, Math.floor(i / 3)) - 0.5) * 1.6, (i) => rnd(41, Math.floor(i / 7)) < 0.62);
+      if (r.length > 200) lay('site/sand-tyres', 2.6, (st) => upTo(st, 1.1) + 5.5, (i) => rnd(42, Math.floor(i / 40)) < 0.8);
+      // Footprints from every way down to the water, and round the lifeguards' towers.
+      every(170, 60, (st) => {
+        const pts: Vec2[] = [];
+        for (let d = upTo(st, 0.35); d <= 14 && sand(P(st, 0, d)); d += 2) pts.push(P(st, 0, d));
+        if (pts.length < 3) return;
+        site.ribbon(b, 'site/sand-trail', pts, 2.4, 0.07);
+        out.marks.push({ kind: 'site/sand-trail', pts });
+      });
+      every(resort ? 7 : 11, 5, (st, i) => {
+        const u = rnd(43, i);
+        const tide = upTo(st, 0.95);
+        const yaw = alongShore(st) + (rnd(44, i) - 0.5) * 1.2;
+        const a = (rnd(45, i) - 0.5) * 6;
+        if (u < 0.16) drop(pick(['waterfront/driftwood-log', 'waterfront/driftwood-branch', 'waterfront/driftwood-branch', 'waterfront/driftwood-pile'], rnd(46, i)), 'beach', P(st, a, tide + rnd(47, i) * 3), yaw, 1.3);
+        else if (u < 0.28) drop('waterfront/seaweed-heap', 'beach', P(st, a, tide + (rnd(47, i) - 0.5)), yaw, 1.2);
+        else if (u < 0.36) drop('waterfront/sandcastle', 'beach', P(st, a, upTo(st, 0.6) + 1 + rnd(47, i) * 2), rnd(48, i) * 6.3, 1.2);
+        else if (u < (resort ? 0.72 : 0.56)) {
+          const kinds = ['waterfront/beach-towel-blue', 'waterfront/beach-towel-red', 'waterfront/beach-towel-yellow', 'waterfront/beach-towel-set', 'waterfront/beach-towel-set'];
+          drop(pick(kinds, rnd(46, i)), 'beach', P(st, a, tide + 3 + rnd(47, i) * 12), out2sea(st) + (rnd(48, i) - 0.5) * 0.9, 1.3);
+        }
+      });
+      // Marram on the dunes and the back of the beach, in clumps.
+      every(6, 3, (st, i) => {
+        if (rnd(50, i) < 0.35) return;
+        const c = P(st, (rnd(51, i) - 0.5) * 6, 27 + rnd(52, i) * 14);
+        for (let q = 0; q < 2 + Math.floor(rnd(53, i) * 4); q++) {
+          const p = { x: c.x + (rnd(54, i, q) - 0.5) * 3.4, y: c.y + (rnd(55, i, q) - 0.5) * 3.4 };
+          if (site.at(p.x, p.y) !== FREE || sea(p.x, p.y) < 14) continue;
+          site.put(pick(['plant/grass-fescue', 'plant/grass-tuft-dry', 'plant/grass-tuft-dry', 'plant/grass-fountain'], rnd(56, i, q)), 'plant', p.x, p.y, rnd(57, i, q) * 6.3, { scale: 0.8 + rnd(58, i, q) * 0.7 });
+        }
+      });
     } else if (r.kind === 'port') {
       const top = r.top!;
       every(18, 4, (st, i) => onDeck(pick(['waterfront/bollard-tee', 'waterfront/bollard-horn', 'waterfront/bollard-double'], rnd(30, r.from)), 'port', P(st, 0, 0.9), alongShore(st), top, i % 3 ? {} : {}));
@@ -470,7 +849,7 @@ export function placeWaterfront(site: Site): Waterfront {
       every(104, 40, (st) => onDeck('waterfront/lifering-post', 'feature', P(st, 0, 1.2), alongShore(st), top));
       every(78, 30, (st) => onDeck('furniture/bin-hood-green', 'bin', P(st, 2, 5.4), alongShore(st), top));
       every(14, 6, (st, i) => onDeck(tree, 'tree', P(st, 0, 10.5), rnd(54, i) * 6.3, top, { scale: 0.9 + rnd(55, i) * 0.25 }));
-      if (r.length >= 240) pier(rnd(56, r.from) < 0.5 ? 'waterfront/pier-concrete' : 'waterfront/pier-concrete-wide', mid, 0, top - 2.2, true);
+      if (r.length >= 240) publicPier(rnd(56, r.from) < 0.5 ? 'waterfront/pier-concrete' : 'waterfront/pier-concrete-wide', r, mid, 0, top - 2.2);
     } else if (r.kind === 'rocky') {
       every(9, 2, (st, i) => {
         if (rnd(60, i) < 0.2) return;
@@ -502,7 +881,7 @@ export function placeWaterfront(site: Site): Waterfront {
           afloat(pick(['waterfront/boat-dinghy-white', 'waterfront/boat-skiff-aluminium', 'waterfront/boat-dinghy-blue', 'waterfront/boat-skiff-white', 'waterfront/boat-rib-grey'], rnd(79, i)), 'boat', q, out2sea(st));
         } else if (u > 0.93) pier('waterfront/pier-derelict', st, 2, WATER_Y - 1.4, false);
       });
-      if (r.length >= 400) pier(rnd(80, r.from) < 0.5 ? 'waterfront/pier-fishing' : 'waterfront/pier-timber-lamps', mid, 3, WATER_Y - 1, true);
+      if (r.length >= 400) publicPier(rnd(80, r.from) < 0.5 ? 'waterfront/pier-fishing' : 'waterfront/pier-timber-lamps', r, mid, 3, WATER_Y - 1);
     }
     n++;
   }
@@ -529,7 +908,7 @@ export function placeWaterfront(site: Site): Waterfront {
     for (const a of [-34, 0, 34]) {
       const p = P(st, a, r.top !== undefined ? -1.2 : 1);
       site.set('waterfront/marina-slips', 'dock', p.x, p.y, WATER_Y, out2sea(st), { afloat: true });
-      out.piers.push({ x: p.x, y: p.y, yaw: out2sea(st), length: 36, model: 'waterfront/marina-slips', public: false });
+      out.piers.push({ x: p.x, y: p.y, yaw: out2sea(st), length: 36, model: 'waterfront/marina-slips', public: false, street: null });
       const g = P(st, a + 3, 2.5);
       if (r.top !== undefined) onDeck('waterfront/dock-box', 'dock', g, alongShore(st), h);
       else drop('waterfront/dock-box', 'dock', g, alongShore(st), 0.9);
@@ -637,7 +1016,7 @@ export function placeWaterfront(site: Site): Waterfront {
         const root = q(0.5);
         if (!out.piers.some((o) => Math.hypot(o.x - root.x, o.y - root.y) < 200)) {
           site.set('waterfront/dock-float-timber', 'pier', root.x, root.y, WATER_Y, along({ x: -mx, y: -my }), { afloat: true });
-          out.piers.push({ x: root.x, y: root.y, yaw: along({ x: -mx, y: -my }), length: 12, model: 'waterfront/dock-float-timber', public: false });
+          out.piers.push({ x: root.x, y: root.y, yaw: along({ x: -mx, y: -my }), length: 12, model: 'waterfront/dock-float-timber', public: false, street: null });
         }
       }
     }
