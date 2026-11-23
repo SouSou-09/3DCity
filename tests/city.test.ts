@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { SegmentIndex, pointSeg, segSeg } from '../src/core/geom';
+import { SegmentIndex, pointSeg, polyLength, segSeg } from '../src/core/geom';
 import { Vec2, angleDiff, clamp, dist, mix } from '../src/core/vec2';
 import { City, DEFAULT_CONFIG, generateCity } from '../src/gen/city';
 import { districtAt } from '../src/gen/districts';
@@ -14,12 +14,13 @@ import { RailModel, buildRailModel, crossingLook } from '../src/place/railModel'
 import { roadAt, trackAt } from '../src/place/railProfile';
 import { LOW_TREES, STREET_TREES, placeStreetFurniture } from '../src/place/streetFurniture';
 import { Building } from '../src/place/buildings';
+import { landCover } from '../src/place/landCover';
 import { OpenSpace, placeOpenSpace } from '../src/place/openSpace';
 import { RAIL as ON_RAIL, ROAD as ON_ROAD, bbox } from '../src/place/site';
 import { RAIL_MAX_GRADE, RAIL_MIN_RADIUS, RAIL_STEP, RailIndex, sharpestRailTurn } from '../src/gen/rail';
 import { STATION_HALF } from '../src/gen/stations';
 import { isStreet } from '../src/gen/streamlines';
-import { BERM_WIDTH, REF_SIZE, heightAt, inBounds, isWater, riverBankAt, seaDistAt, waterDistAt } from '../src/gen/terrain';
+import { BERM_HEIGHT, BERM_WIDTH, REF_SIZE, heightAt, inBounds, isWater, riverBankAt, seaDistAt, waterDistAt } from '../src/gen/terrain';
 
 const SEEDS = [1, 2, 3, 4, 5, 6, 7, 8, 16, 21];
 // Generating a full-size city takes several seconds.
@@ -1742,5 +1743,71 @@ describe('parks, waterfront and boundaries', () => {
       for (let i = 0; i < of.length; i++) for (let j = i + 1; j < of.length; j++) expect(Math.hypot(of[i].x - of[j].x, of[i].y - of[j].y), kind).toBeGreaterThan(apart - 120);
     }
     for (const x of civic.filter((y) => y.civic === 'city-hall')) expect(['downtown', 'oldtown', 'midtown']).toContain(lots[x.lot].site.type);
+  });
+  it.each(OPEN_SEEDS)('seed %i: houses do not stand beside the big works, malls, office blocks, towers and public buildings', (seed) => {
+    const lots = city(seed).land.lots;
+    const big = lots.filter((l) => l.use === 'I2' || (l.use === 'I1' && l.area > 4000) || l.use === 'C4' || l.use === 'O2' || (l.use === 'CV' && l.area > 2600) || ((l.use === 'R3' || l.use === 'O1') && l.floors >= 7));
+    expect(big.length).toBeGreaterThan(50);
+    const box = (poly: Vec2[]): number[] => [Math.min(...poly.map((p) => p.x)), Math.max(...poly.map((p) => p.x)), Math.min(...poly.map((p) => p.y)), Math.max(...poly.map((p) => p.y))];
+    const boxes = big.map((l) => box(l.poly));
+    let beside = 0;
+    for (const l of lots) {
+      if (l.use !== 'R1') continue;
+      const b = box(l.poly);
+      if (big.some((g, i) => b[0] <= boxes[i][1] + 3 && b[1] >= boxes[i][0] - 3 && b[2] <= boxes[i][3] + 3 && b[3] >= boxes[i][2] - 3 && l.poly.some((p) => g.poly.some((q, k) => pointSeg(p.x, p.y, q, g.poly[(k + 1) % g.poly.length]).d < 3)))) beside++;
+    }
+    // Two lots that only meet at a corner across a block may remain.
+    expect(beside).toBeLessThanOrEqual(4);
+  });
+
+  it.each(OPEN_SEEDS)('seed %i: the town stands on graded ground: little relief within a lot off the hills', (seed) => {
+    const relief = city(seed).land.lots.filter((l) => l.site.type !== 'hills' && l.use !== 'OS').map((l) => l.site.relief).sort((a, b) => a - b);
+    expect(relief[Math.floor(relief.length * 0.5)]).toBeLessThan(0.4);
+    expect(relief[Math.floor(relief.length * 0.9)]).toBeLessThan(1.4);
+  });
+
+  it.each(OPEN_SEEDS)('seed %i: the river has walled banks with a walk along them, level, off the streets, with ways up to the town', (seed) => {
+    const o = open(seed);
+    const t = city(seed).terrain;
+    const { walks, walkWays } = o.shore;
+    expect(walks.reduce((a, w) => a + polyLength(w.pts), 0)).toBeGreaterThan(3000);
+    expect(walkWays.length).toBeGreaterThan(10);
+    for (const w of walks) {
+      expect(w.top).toBeCloseTo(BERM_HEIGHT + 0.06, 2);
+      for (const p of w.pts) {
+        const at = `walk at ${p.x.toFixed(0)}, ${p.y.toFixed(0)}`;
+        const bank = riverBankAt(t, p.x, p.y);
+        expect(bank, at).toBeGreaterThan(-2);
+        expect(bank, at).toBeLessThan(BERM_WIDTH + 6);
+      }
+    }
+    // A way up ends on dry ground beside the river, not in it.
+    for (const p of walkWays) expect(riverBankAt(t, p.x, p.y), `way at ${p.x.toFixed(0)}, ${p.y.toFixed(0)}`).toBeGreaterThan(2);
+  });
+
+  it.each(OPEN_SEEDS)('seed %i: refuse has somewhere to wait: stores behind the big buildings, collection points among the houses, yards at the works', (seed) => {
+    const o = open(seed);
+    const lots = city(seed).land.lots;
+    const count = (re: RegExp): number => o.items.filter((i) => re.test(i.model)).length;
+    expect(count(/dumpster-enclosure/)).toBeGreaterThan(250);
+    expect(count(/bin-dumpster/)).toBeGreaterThan(800);
+    expect(count(/bin-point/)).toBeGreaterThan(150);
+    expect(count(/pallet/)).toBeGreaterThan(30);
+    // A works lot with no shed on it is a storage yard, not a house or a shop.
+    for (const id of o.buildings.yards) expect(['I1', 'I2'], `lot ${id}`).toContain(lots[id].use);
+  });
+
+  it.each(OPEN_SEEDS)('seed %i: the ground is lawn, rough grass, earth or hard standing by what it is used for', (seed) => {
+    const o = open(seed);
+    const cover = landCover(city(seed), o);
+    const n = o.site.n;
+    expect(cover.length).toBe(n * n * 4);
+    const share = [0, 0, 0, 0];
+    for (let i = 0; i < cover.length; i++) share[i % 4] += cover[i] / 255 / (n * n);
+    // No one kind of ground everywhere, and each of them somewhere.
+    for (const s of share) {
+      expect(s).toBeGreaterThan(0.04);
+      expect(s).toBeLessThan(0.9);
+    }
   });
 });
