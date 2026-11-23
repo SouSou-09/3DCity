@@ -19,6 +19,8 @@ export interface Leftover {
   trees: number;
   rocks: number;
   tufts: number;
+  /** Shrubs on the narrow ground beside houses. */
+  shrubs: number;
 }
 
 /** How far a lot's ground reaches into what lies open beside it. */
@@ -34,6 +36,7 @@ const TREES: Record<number, string[]> = {
   [COPSE]: ['plant/wood-oak', 'plant/wood-maple', 'plant/wood-plane', 'plant/wood-birch', 'plant/wood-elm'],
   [COURT]: ['plant/wood-plane', 'plant/wood-elm', 'plant/wood-maple'],
 };
+const BORDER = ['plant/shrub-garden-box', 'plant/grass-fountain', 'plant/shrub-garden-light', 'plant/flower-lavender', 'plant/shrub-garden-broadleaf', 'plant/shrub-garden-rose', 'plant/grass-fescue', 'plant/shrub-garden-hibiscus'];
 const GARDEN = ['plant/wood-maple', 'plant/wood-birch', 'plant/wood-olive', 'plant/wood-oak'];
 const ROCKS = ['waterfront/rock-sandstone', 'waterfront/rock-granite', 'waterfront/rock-sandstone', 'waterfront/rock-mossy'];
 
@@ -61,7 +64,7 @@ export function placeLeftover(site: Site, shore: Waterfront, buildings: Building
   const land = city.land;
   const n = site.n;
   const seed = site.seed;
-  const out: Leftover = { claim: new Int32Array(n * n), kind: new Uint8Array(n * n), trees: 0, rocks: 0, tufts: 0 };
+  const out: Leftover = { claim: new Int32Array(n * n), kind: new Uint8Array(n * n), trees: 0, rocks: 0, tufts: 0, shrubs: 0 };
   const sandLot = new Set(shore.sandLots);
   const vacant = new Set(buildings.vacant);
   const lotOf = (i: number, j: number): number => {
@@ -175,6 +178,15 @@ export function placeLeftover(site: Site, shore: Waterfront, buildings: Building
         const model = pick(list, hash(seed, 9092, Math.floor(x / 52), Math.floor(y / 52)) * 0.7 + h(4) * 0.3);
         site.put(model, 'tree', x, y, h(5) * Math.PI * 2, { scale: 0.75 + h(6) * 0.5, lift: -0.05 });
         out.trees++;
+      } else if (garden && /R1|R2/.test(use!) && clear >= 1 && h(7) < 0.3) {
+        // The strip beside a house that is too narrow for a tree is planted all the same.
+        for (let q = 0; q < 1 + Math.floor(h(11) * 2.5); q++) {
+          const [tx, ty] = [x + (h(12 + q) - 0.5) * 4, y + (h(16 + q) - 0.5) * 4];
+          const tc = Math.floor(ty / SITE_CELL) * n + Math.floor(tx / SITE_CELL);
+          if (tx < 0 || ty < 0 || tx >= n * SITE_CELL || ty >= n * SITE_CELL || !open[tc] || !out.claim[tc] || room[tc] * SITE_CELL < 1) continue;
+          site.put(pick(BORDER, h(20 + q)), 'plant', tx, ty, h(24 + q) * 6.3);
+          out.shrubs++;
+        }
       } else if (kind === WILD || kind === YARD || kind === BELT) {
         if (kind === WILD && steep > 0.3 && noise(seed + 79, x, y, 38) > 0.62 && h(7) < 0.5 && clear >= 2) {
           // Rock breaks the surface where the slope is steep, in outcrops rather than evenly: one stone of a kind to a place, most of it in the ground.

@@ -249,6 +249,8 @@ export interface ShrubOpts {
   /** Flower heads per leaf card. */
   bloom?: number;
   flowerScale?: number;
+  /** Sides of the opaque core, 10 unless given. */
+  sides?: number;
 }
 export function shrub(b: MeshBuilder, f: Pose, o: ShrubOpts): void {
   const rnd = new Rand(o.seed);
@@ -256,7 +258,7 @@ export function shrub(b: MeshBuilder, f: Pose, o: ShrubOpts): void {
   const [rc, hc] = [Math.max(o.r * 0.4, o.r - s * 0.6), Math.max(o.h * 0.4, o.h - s * 0.6)];
   const prof: [number, number][] = [];
   for (let i = 0; i <= 6; i++) prof.push([Math.max(0, rc * 0.66 * Math.cos(-0.3 + (i / 6) * 1.87)), hc * 0.2 + hc * 0.62 * Math.sin(-0.3 + (i / 6) * 1.87)]);
-  lathe(b, T('foliage-core'), f, [[rc * 0.4, 0], ...prof], 10);
+  lathe(b, T('foliage-core'), f, [[rc * 0.4, 0], ...prof], o.sides ?? 10);
   const n = Math.round(((22 * (o.r * o.r + 1.5 * o.r * o.h)) / (s * s)) * (o.dense ?? 1));
   const spot = (i: number): [V3, V3] => {
     const sy = -0.3 + 1.3 * Math.pow(rnd.next(), 0.85);
@@ -491,6 +493,16 @@ export function addPlants(): void {
     const s = seed++;
     add(`shrub-${id}`, label, (b) => shrub(b, O, { ...o, seed: s }));
   }
+  // The same bushes for the gardens of a whole town: a few large sprays over the core.
+  const GARDEN_SHRUBS: [string, string, Omit<ShrubOpts, 'seed'>][] = [
+    ['garden-box', '低木 ツゲ(庭用・軽量)', { r: 0.5, h: 0.75, leaf: 'leaf-small', card: 0.42, dense: 0.3, sides: 6 }],
+    ['garden-light', '低木 若葉(庭用・軽量)', { r: 0.55, h: 0.9, leaf: 'leaf-small-light', card: 0.45, dense: 0.3, sides: 6 }],
+    ['garden-broadleaf', '低木 広葉(庭用・軽量)', { r: 0.8, h: 1.3, leaf: 'leaf-shrub', card: 0.6, dense: 0.3, sides: 6 }],
+    ['garden-rose', '低木 バラ(庭用・軽量)', { r: 0.5, h: 0.9, leaf: 'leaf-shrub', card: 0.45, dense: 0.3, sides: 6, flowers: ['flower-rose-pink', 'flower-rose-white'], bloom: 0.6 }],
+    ['garden-hibiscus', '低木 ハイビスカス(庭用・軽量)', { r: 0.7, h: 1.2, leaf: 'leaf-shrub', card: 0.55, dense: 0.3, sides: 6, flowers: ['flower-hibiscus-pink'], bloom: 0.5 }],
+  ];
+  GARDEN_SHRUBS.forEach(([id, label, o], i) => add(`shrub-${id}`, label, (b) => shrub(b, O, { ...o, seed: 620 + i })));
+  add('hedge-garden', '生垣 庭の境(庭用・軽量) 2m', (b) => hedge(b, O, { seed: 630, len: 2.2, w: 0.6, h: 0.9, leaf: 'leaf-small', card: 0.42, dense: 0.1 }));
   const HEDGES: [string, string, Omit<HedgeOpts, 'seed'>][] = [
     ['low', '生垣 低い 2m', { len: 2, w: 0.5, h: 0.6, leaf: 'leaf-small' }],
     ['tall', '生垣 高い 3m', { len: 3, w: 0.7, h: 1.6, leaf: 'leaf-small' }],

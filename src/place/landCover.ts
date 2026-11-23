@@ -25,8 +25,8 @@ const LOTS: Record<LandUse, [number, number, number, number]> = {
   C2: [0, 0, 0, 1],
   C3: [0, 0, 0.1, 1],
   C4: [0, 0, 0, 1],
-  O1: [0.3, 0.4, 0, 0.8],
-  O2: [0.3, 0.4, 0, 0.8],
+  O1: [0, 0, 0, 1],
+  O2: [0, 0, 0, 1],
   I1: [0, 0.2, 1, 0.3],
   I2: [0, 0.1, 1, 0.2],
   PK: [0, 0, 0.2, 1],
@@ -105,6 +105,9 @@ export function landCover(city: City, open: OpenSpace): Uint8Array<ArrayBuffer> 
           w[0] = care < 0.12 ? 0.15 : 0.5 + 0.5 * hash(id, 2);
           w[2] = care < 0.12 ? 0.45 : 0;
         }
+        // Grass is for gardens and grounds: the forecourt of a block of flats, an office's yard, the front of a public building are hard.
+        const hard = buildings.hard.get(id);
+        if (hard && (x - hard[0]) * hard[2] + (y - hard[1]) * hard[3] < hard[4]) [w[0], w[1], w[2], w[3]] = [0, 0, lot.use === 'R1' ? 0.12 : 0.04, 1];
         // A plot nothing was built on is waste ground until something is.
         if (vacant.has(id) && lot.use !== 'OS' && lot.use !== 'PK') [w[0], w[1], w[2], w[3]] = [0, 0.85, 0.4, 0];
       } else {

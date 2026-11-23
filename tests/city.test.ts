@@ -1831,6 +1831,46 @@ describe('parks, waterfront and boundaries', () => {
       expect(s).toBeLessThan(0.9);
     }
   });
+  it.each(OPEN_SEEDS)('seed %i: grass is for gardens: flats, offices and public buildings stand on paved ground at the back of the pavement', (seed) => {
+    const o = open(seed);
+    const c = city(seed);
+    const lots = c.land.lots;
+    const b = o.buildings;
+    const cover = landCover(c, o);
+    const n = o.site.n;
+    const main = b.list.filter((x) => x.main);
+    const median = (v: number[]): number => [...v].sort((p, q) => p - q)[Math.floor(v.length / 2)];
+    const town = (x: Building): boolean => ['downtown', 'midtown', 'oldtown'].includes(lots[x.lot].site.type);
+    // Every office and every tall block of flats is on hard ground, and so is all that is not a house in the middle of town.
+    const offices = main.filter((x) => (x.use === 'O1' || x.use === 'O2' || x.use === 'R3') && !x.civic && !x.model.startsWith('house/'));
+    expect(offices.length).toBeGreaterThan(80);
+    for (const x of offices) expect(b.hard.has(x.lot), `${x.model} on lot ${x.lot}`).toBe(true);
+    const flats = main.filter((x) => x.use === 'R2' && x.model.startsWith('apartment/'));
+    expect(flats.length).toBeGreaterThan(300);
+    for (const x of flats) expect(b.hard.has(x.lot), `${x.model} on lot ${x.lot}`).toBe(true);
+    // The ground between such a building and the street is no lawn.
+    let [seen, green] = [0, 0];
+    for (const x of [...offices, ...flats]) {
+      const h = b.hard.get(x.lot)!;
+      // Halfway from the street to the front wall, before the middle of the building.
+      const along = (x.x - h[0]) * h[2] + (x.y - h[1]) * h[3] - x.hz;
+      if (along < 1.5) continue;
+      const [px, py] = [x.x - h[2] * (x.hz + along / 2), x.y - h[3] * (x.hz + along / 2)];
+      const k = Math.floor(py / SITE_CELL) * n + Math.floor(px / SITE_CELL);
+      if (o.site.grid[k] !== ON_LOT) continue;
+      seen++;
+      if (cover[k * 4] > 60) green++;
+    }
+    expect(seen).toBeGreaterThan(50);
+    expect(green / seen).toBeLessThan(0.03);
+    // Houses keep their gardens: most of the lots of a district of houses are not hard.
+    const houses = main.filter((x) => x.use === 'R1' && (lots[x.lot].site.type === 'suburb' || lots[x.lot].site.type === 'residential'));
+    expect(houses.filter((x) => b.hard.has(x.lot)).length / houses.length).toBeLessThan(0.3);
+    // In the middle of town buildings stand at the back of the pavement; flats further out keep a short forecourt and no more.
+    expect(median(flats.filter(town).map((x) => x.setback))).toBeLessThan(2);
+    expect(median(offices.filter(town).map((x) => x.setback))).toBeLessThan(2.6);
+    expect(median(flats.filter((x) => !town(x)).map((x) => x.setback))).toBeLessThan(4);
+  });
   it.each(OPEN_SEEDS)('seed %i: the ground no lot took is put to use: it goes with the lot beside it, or is wood, bank, belt or yard', (seed) => {
     const o = open(seed);
     const c = city(seed);
