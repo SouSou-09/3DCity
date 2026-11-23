@@ -54,6 +54,8 @@ export interface Buildings {
   /** Garden sheds and washing lines behind the houses. */
   sheds: number;
   lines: number;
+  /** Paved terraces behind the houses. */
+  patios: number;
   /** Marked parking spaces. */
   stalls: number;
   /** Buildings per use, and public buildings per kind. */
@@ -241,7 +243,7 @@ export function placeBuildings(site: Site, shore: Waterfront): Buildings {
   const land = city.land;
   const seed = site.seed;
   const rnd = (...v: number[]): number => hash(seed, 7717, ...v);
-  const out: Buildings = { list: [], tiles: [], plots: [], owner: new Int32Array(0), vacant: [], yards: [], fence: 0, runs: [], sheds: 0, lines: 0, stalls: 0, count: {}, civic: {} };
+  const out: Buildings = { list: [], tiles: [], plots: [], owner: new Int32Array(0), vacant: [], yards: [], fence: 0, runs: [], sheds: 0, lines: 0, patios: 0, stalls: 0, count: {}, civic: {} };
   const sand = new Set(shore.sandLots);
   const builders = new Map<string, MeshBuilder>();
   const tile = (x: number, y: number): MeshBuilder => {
@@ -914,9 +916,10 @@ const BACK_TABLES = ['park/picnic-table-wood', 'park/picnic-table-red', 'park/pi
       const pu = (house[0] + house[1]) / 2 + (rnd(lot.id, 302) - 0.5) * (house[1] - house[0] - w);
       const patio: Rect = [pu - w / 2, pu + w / 2, house[3], house[3] + 2.8];
       const [plo, phi] = span(f, patio[2], patio[3], 0.5);
-      if (rnd(lot.id, 300) < 0.55 && w > 2.6 && patio[0] > plo && patio[1] < phi && free(f, pu, house[3] + 1.4, w / 2) && Math.abs(ground(f, pu, house[3] + 2.8) - ground(f, pu, house[3])) < 0.5) {
+      if (rnd(lot.id, 300) < 0.55 && w > 2.6 && patio[0] > plo && patio[1] < phi && f.taken.every(([u0, u1, v0, v1]) => patio[1] <= u0 || patio[0] >= u1 || patio[3] <= v0 || patio[2] >= v1 - 0.01) && Math.abs(ground(f, pu, house[3] + 2.8) - ground(f, pu, house[3])) < 0.5) {
         pave(f, WALKS[Math.floor(rnd(lot.id, 303) * WALKS.length)], patio, 0.06, 3);
         f.taken.push(patio);
+        out.patios++;
         if (rnd(lot.id, 304) < 0.7) stand(f, BACK_TABLES[Math.floor(rnd(lot.id, 305) * BACK_TABLES.length)], 'yard', pu + (rnd(lot.id, 306) - 0.5) * (w - 2.2), house[3] + 1.5);
         if (rnd(lot.id, 307) < 0.4) stand(f, 'park/grill', 'yard', pu + (rnd(lot.id, 308) < 0.5 ? -1 : 1) * (w / 2 - 0.5), house[3] + 2.2);
       }

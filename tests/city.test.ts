@@ -1943,6 +1943,7 @@ describe('parks, waterfront and boundaries', () => {
     // Behind the houses: sheds, and washing on the line.
     expect(o.buildings.sheds).toBeGreaterThan(900);
     expect(o.buildings.lines).toBeGreaterThan(250);
+    expect(o.buildings.patios).toBeGreaterThan(1200);
     const masts = o.items.filter((i) => i.model === 'furniture/light-flood-4' && i.park !== undefined);
     const courts = o.parks.flatMap((p) => p.features.filter((f) => f.type === 'tennis' || f.type === 'basketball').map((f) => ({ f, tier: p.tier })));
     expect(masts.length).toBe(2 * courts.filter((c) => c.tier !== 'pocket').length);
