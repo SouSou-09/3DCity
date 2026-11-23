@@ -64,19 +64,20 @@ const WORLD = '#include <begin_vertex>\nvGround = (modelMatrix * vec4(transforme
  * rough grass on the hills. `cover` on the geometry is how much of each vertex is sand, lawn, rough grass and
  * open shore.
  */
-export function groundMaterial(materials: Materials, waterY: number): THREE.Material {
+export function groundMaterial(materials: Materials, waterY: number, land: THREE.Texture, landSize: number): THREE.Material {
   const map = (id: string): THREE.Texture => (materials.material(id, 0) as THREE.MeshStandardMaterial).map!;
   const m = new THREE.MeshLambertMaterial({ vertexColors: true });
   m.onBeforeCompile = (shader) => {
     Object.assign(shader.uniforms, {
       uNoise: { value: noise() }, uSand: { value: map('ground/sand') }, uLawn: { value: map('ground/grass-mown') }, uWorn: { value: map('ground/grass-patchy') },
-      uRough: { value: map('ground/grass-dry') }, uWater: { value: waterY },
+      uRough: { value: map('ground/grass-dry') }, uWater: { value: waterY }, uLand: { value: land }, uLandSize: { value: landSize },
+      uDirt: { value: map('ground/gravel-dirt') }, uEarth: { value: map('ground/dirt') }, uHard: { value: map('concrete/road-smooth-cracked') }, uWeeds: { value: map('ground/grass-patchy') },
     });
     shader.vertexShader = shader.vertexShader
       .replace('#include <common>', `#include <common>\nattribute vec4 cover;\nvarying vec4 vCover;\n${VARYING}`)
       .replace('#include <begin_vertex>', `${WORLD}\nvCover = cover;`);
     shader.fragmentShader = shader.fragmentShader
-      .replace('#include <common>', `#include <common>\nuniform sampler2D uNoise, uSand, uLawn, uWorn, uRough;\nuniform float uWater;\nvarying vec4 vCover;\n${VARYING}`)
+      .replace('#include <common>', `#include <common>\nuniform sampler2D uNoise, uSand, uLawn, uWorn, uRough, uLand, uDirt, uEarth, uHard, uWeeds;\nuniform float uWater, uLandSize;\nvarying vec4 vCover;\n${VARYING}`)
       .replace('#include <color_fragment>', `#include <color_fragment>
         vec2 gp = vGround.xz;
         vec3 mid = texture2D(uNoise, gp / 41.0).rgb;
@@ -92,7 +93,17 @@ export function groundMaterial(materials: Materials, waterY: number): THREE.Mate
         lawn *= mix(vec3(0.84, 0.9, 0.78), vec3(1.12, 1.08, 0.98), wide.b);
         // Mown in stripes, each pass of the mower bending the grass the other way.
         lawn *= 1.0 + 0.09 * (smoothstep(-0.25, 0.25, sin(dot(gp, vec2(0.8, 0.6)) * 1.745)) - 0.5) * (1.0 - tired);
-        ground = mix(ground, lawn, vCover.y);
+        // What covers the made ground of the town: rough grass with bare patches, earth and gravel, hard standing, and lawn over them.
+        vec4 land = texture2D(uLand, gp / uLandSize);
+        vec3 weeds = mix(texture2D(uWeeds, gp / 2.6).rgb, texture2D(uRough, gp / 6.1).rgb, 0.45) * (0.95 + 0.5 * wide.g) * mix(vec3(1.0), vec3(1.12, 1.02, 0.8), smoothstep(0.4, 0.75, mid.b));
+        vec3 earth = mix(texture2D(uDirt, gp / 3.0).rgb, texture2D(uEarth, gp / 4.7).rgb, smoothstep(0.35, 0.7, mid.g)) * (0.9 + 0.3 * wide.b);
+        vec3 hard = texture2D(uHard, gp / 4.0).rgb * (0.92 + 0.2 * mid.r) * mix(vec3(1.0), vec3(0.82, 0.8, 0.78), smoothstep(0.55, 0.8, wide.r * 0.6 + mid.b * 0.4));
+        ground = mix(ground, weeds, land.g);
+        // Rough grass wears through to the earth where it is walked on and where nothing will grow.
+        float bare = smoothstep(0.6, 0.82, mid.r * 0.55 + wide.b * 0.3 + fine * 0.15);
+        ground = mix(ground, earth, max(land.b, land.g * (1.0 - land.r) * bare * 0.7));
+        ground = mix(ground, hard, land.a);
+        ground = mix(ground, lawn, max(vCover.y, land.r));
 
         float above = vGround.y - uWater;
         // The grain of the sand over its own colour: the texture alone is the shade between the grains.

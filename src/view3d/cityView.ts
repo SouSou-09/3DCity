@@ -5,7 +5,9 @@ import { City } from '../gen/city';
 import { MODELS } from '../assets/mesh/registry';
 import { RoadModel, buildRoadModel } from '../place/roadModel';
 import { RailModel, buildRailModel } from '../place/railModel';
+import { landCover } from '../place/landCover';
 import { OpenSpace, placeOpenSpace } from '../place/openSpace';
+import { SITE_CELL } from '../place/site';
 import { StreetFurniture, placeStreetFurniture } from '../place/streetFurniture';
 import { WATER_Y } from '../place/waterfront';
 import { bedTexture, groundMaterial, waterMaterial } from './ground';
@@ -179,22 +181,13 @@ export class CityView {
         r = mix(r, 0.56, yard);
         g = mix(g, 0.56, yard);
         b = mix(b, 0.55, yard);
-        const sand = Math.max(open.shore.sand[k], 1 - smoothstep(0, 8, t.riverBank[k]));
+        // The banks of the river are sand and silt where they were left as they are.
+        const sand = Math.max(open.shore.sand[k], (1 - smoothstep(0, 8, t.riverBank[k])) * (1 - open.shore.banks[k]));
         r = mix(r, 0.85, sand);
         g = mix(g, 0.78, sand);
         b = mix(b, 0.58, sand);
-        const lawn = open.isPark(i * t.cell, j * t.cell);
-        if (lawn) {
-          r = 0.36;
-          g = 0.55;
-          b = 0.3;
-        }
-        // Gardens: grass, drier than a park's and not on the sand.
-        const garden = !lawn && sand < 0.3 && open.isYard(i * t.cell, j * t.cell) ? 0.7 : 0;
-        r = mix(r, 0.45, garden);
-        g = mix(g, 0.56, garden);
-        b = mix(b, 0.31, garden);
-        cover.set([lawn ? 0 : sand, lawn ? 1 : garden, lawn ? 0 : hl * (1 - yard) * (1 - garden), clamp((t.riverBank[k] - t.seaDist[k]) / 40 + 0.5, 0, 1)], k * 4);
+        // Lawns, rough grass, bare earth and hard standing are laid over this from the map of what covers the ground.
+        cover.set([open.isPark(i * t.cell, j * t.cell) ? 0 : sand, 0, hl * (1 - yard), clamp((t.riverBank[k] - t.seaDist[k]) / 40 + 0.5, 0, 1)], k * 4);
         color.setRGB(clamp(r, 0, 1), clamp(g, 0, 1), clamp(b, 0, 1), THREE.SRGBColorSpace);
         col[k * 3] = color.r;
         col[k * 3 + 1] = color.g;
@@ -216,8 +209,14 @@ export class CityView {
     geo.setAttribute('cover', new THREE.BufferAttribute(cover, 4));
     geo.setIndex(new THREE.BufferAttribute(index, 1));
     geo.computeVertexNormals();
-    const mesh = new THREE.Mesh(geo, groundMaterial(this.materials, WATER_Y));
+    const land = new THREE.DataTexture(landCover(city, open), open.site.n, open.site.n, THREE.RGBAFormat);
+    land.magFilter = THREE.LinearFilter;
+    land.minFilter = THREE.LinearMipmapLinearFilter;
+    land.generateMipmaps = true;
+    land.needsUpdate = true;
+    const mesh = new THREE.Mesh(geo, groundMaterial(this.materials, WATER_Y, land, open.site.n * SITE_CELL));
     mesh.userData.ownMaterial = true;
+    mesh.userData.ownTextures = [land];
     return mesh;
   }
 
