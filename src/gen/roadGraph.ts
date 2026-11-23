@@ -14,6 +14,15 @@ export interface RoadNode {
   edges: number[];
   /** Number of road arms; an edge that loops back to this node counts twice. */
   degree: number;
+  /** The junction here is a roundabout. */
+  roundabout?: Roundabout;
+}
+
+export interface Roundabout {
+  /** Outer radius of the circulating road. */
+  radius: number;
+  /** Width of the circulating road. */
+  ring: number;
 }
 
 export interface RoadEdge {
@@ -64,6 +73,7 @@ interface TmpNode {
   y: number;
   edges: Set<number>;
   alive: boolean;
+  roundabout?: Roundabout;
 }
 
 interface TmpEdge {
@@ -683,6 +693,171 @@ function contractShortEdges(g: Builder): number {
   return count;
 }
 
+/** Streets within this distance of the middle of a radial quarter are cleared for the roundabout its main streets meet at. */
+const RB_CLEAR = 88;
+/** Least angle between two arms of a roundabout. */
+const RB_GAP = (40 * Math.PI) / 180;
+const RB_WIDTH: Partial<Record<RoadClass, number>> = { arterial: 15, collector: 10, local: 7 };
+
+/**
+ * The streets of a radial quarter run in towards its middle and stop at whatever ring happens to be the innermost. Here they are
+ * brought together instead: the tangle inside is cleared, the streets that head for the middle run on to it, and they meet at a roundabout.
+ */
+function addRoundabouts(g: Builder, ctx: Ctx): number {
+  let made = 0;
+  for (const d of ctx.districts.list) {
+    if (!d.radial) continue;
+    // Where a freeway passes close by the middle, the roundabout stands off to the side of it.
+    let c = d.center;
+    let [near, nx, ny] = [Infinity, 0, 0];
+    for (const e of g.edges) {
+      if (!e.alive || (e.cls !== 'highway' && e.cls !== 'ramp')) continue;
+      for (let i = 1; i < e.pts.length; i++) {
+        const h = pointSeg(c.x, c.y, e.pts[i - 1], e.pts[i]);
+        if (h.d < near) [near, nx, ny] = [h.d, c.x - h.x, c.y - h.y];
+      }
+    }
+    if (near < RB_CLEAR + 34) {
+      if (near < 1) continue;
+      c = { x: c.x + (nx / near) * (RB_CLEAR + 36 - near), y: c.y + (ny / near) * (RB_CLEAR + 36 - near) };
+    }
+    if (c.x < RB_CLEAR + 60 || c.y < RB_CLEAR + 60 || c.x > ctx.t.size - RB_CLEAR - 60 || c.y > ctx.t.size - RB_CLEAR - 60) continue;
+    let dry = true;
+    for (let a = 0; a < 16 && dry; a++) for (const r of [0, 50, RB_CLEAR + 20]) if (waterDistAt(ctx.t, c.x + Math.cos((a * Math.PI) / 8) * r, c.y + Math.sin((a * Math.PI) / 8) * r) < 8) dry = false;
+    if (!dry || ctx.districts.parks.some((p) => dist(p.center, c) < p.radius + RB_CLEAR) || ctx.rail?.nearest(c.x, c.y, RB_CLEAR + 30)) continue;
+    interface Piece { edge: number; pts: Vec2[]; from: number; to: number; len: number }
+    const touched: number[] = [];
+    const pieces: Piece[] = [];
+    let blocked = false;
+    g.edges.forEach((e, id) => {
+      if (!e.alive || blocked) return;
+      let near = Infinity;
+      for (let i = 1; i < e.pts.length; i++) near = Math.min(near, pointSeg(c.x, c.y, e.pts[i - 1], e.pts[i]).d);
+      if (e.cls === 'highway' || e.cls === 'ramp' || e.bridge) {
+        if (near < RB_CLEAR + 30) blocked = true;
+        return;
+      }
+      if (near >= RB_CLEAR) return;
+      touched.push(id);
+      // What is left of the street outside the circle; an end that was cut has no node (-1).
+      let cur: Vec2[] | null = dist(e.pts[0], c) >= RB_CLEAR ? [e.pts[0]] : null;
+      let from = cur ? e.a : -1;
+      for (let i = 1; i < e.pts.length; i++) {
+        const [p, q] = [e.pts[i - 1], e.pts[i]];
+        const [dx, dy, fx, fy] = [q.x - p.x, q.y - p.y, p.x - c.x, p.y - c.y];
+        const [A, B, C] = [dx * dx + dy * dy, 2 * (fx * dx + fy * dy), fx * fx + fy * fy - RB_CLEAR * RB_CLEAR];
+        const disc = B * B - 4 * A * C;
+        const ts = disc > 0 && A > 1e-9 ? [(-B - Math.sqrt(disc)) / (2 * A), (-B + Math.sqrt(disc)) / (2 * A)].filter((t) => t > 0 && t < 1) : [];
+        for (const t of ts) {
+          const x = { x: p.x + dx * t, y: p.y + dy * t };
+          if (cur) {
+            cur.push(x);
+            pieces.push({ edge: id, pts: cur, from, to: -1, len: polyLength(cur) });
+            cur = null;
+          } else {
+            cur = [x];
+            from = -1;
+          }
+        }
+        if (cur) cur.push(q);
+      }
+      if (cur) pieces.push({ edge: id, pts: cur, from, to: e.b, len: polyLength(cur) });
+    });
+    if (blocked) continue;
+    // The streets that head for the middle, the greater ones first.
+    interface Cand { piece: Piece; pts: Vec2[]; node: number; angle: number; rank: number; aim: number }
+    const cands: Cand[] = [];
+    const rest: Piece[] = [];
+    for (const piece of pieces) {
+      if (piece.from < 0 && piece.to < 0) continue;
+      if (piece.from >= 0 && piece.to >= 0) {
+        rest.push(piece);
+        continue;
+      }
+      if (piece.len < 30 || !isStreet(g.edges[piece.edge].cls)) continue;
+      const pts = piece.to < 0 ? piece.pts : piece.pts.slice().reverse();
+      const P = pts[pts.length - 1];
+      const back = pointAt(pts, Math.max(0, piece.len - 14)).p;
+      const tl = dist(back, P) || 1;
+      const tin = { x: (P.x - back.x) / tl, y: (P.y - back.y) / tl };
+      const aim = (tin.x * (c.x - P.x) + tin.y * (c.y - P.y)) / RB_CLEAR;
+      if (aim < 0.35) continue;
+      // It swings onto a line through the middle and comes in straight.
+      const P1 = { x: P.x + tin.x * 0.35 * RB_CLEAR, y: P.y + tin.y * 0.35 * RB_CLEAR };
+      const ul = dist(P1, c);
+      const u = { x: (P1.x - c.x) / ul, y: (P1.y - c.y) / ul };
+      const P2 = { x: c.x + u.x * 0.5 * RB_CLEAR, y: c.y + u.y * 0.5 * RB_CLEAR };
+      const curve: Vec2[] = [];
+      for (let k = 1; k <= 12; k++) {
+        const [t, m] = [k / 12, 1 - k / 12];
+        curve.push({ x: m * m * m * P.x + 3 * m * m * t * P1.x + 3 * m * t * t * P2.x + t * t * t * c.x, y: m * m * m * P.y + 3 * m * m * t * P1.y + 3 * m * t * t * P2.y + t * t * t * c.y });
+      }
+      cands.push({ piece, pts: [...pts, ...curve], node: piece.to < 0 ? piece.from : piece.to, angle: Math.atan2(u.y, u.x), rank: CLASS_RANK[g.edges[piece.edge].cls], aim });
+    }
+    cands.sort((a, b) => b.rank - a.rank || b.aim - a.aim);
+    const arms: Cand[] = [];
+    for (const k of cands) if (arms.length < 6 && arms.every((a) => angleDiff(a.angle, k.angle) >= RB_GAP && a.node !== k.node)) arms.push(k);
+    for (const id of touched) g.removeEdge(id);
+    const hub = g.nodes.length;
+    g.nodes.push({ x: c.x, y: c.y, edges: new Set(), alive: true });
+    const angles = arms.map((a) => a.angle);
+    let top = Math.max(...arms.map((a) => a.rank));
+    for (const a of arms) g.addEdge(a.node, hub, g.edges[a.piece.edge].cls, a.pts);
+    for (const p of rest) g.addEdge(p.from, p.to, g.edges[p.edge].cls, p.pts);
+    // Where no street comes in over a wide angle, a new one is laid out from the roundabout to the nearest street that way.
+    for (let tries = 0; tries < 4 && angles.length < 5; tries++) {
+      const sorted = [...angles].sort((p, q) => p - q);
+      let [gap, start] = sorted.length ? [0, 0] : [2 * Math.PI, d.angle];
+      sorted.forEach((a, i) => {
+        const w = i + 1 < sorted.length ? sorted[i + 1] - a : sorted[0] + 2 * Math.PI - a;
+        if (w > gap) [gap, start] = [w, a];
+      });
+      if (gap < (angles.length < 3 ? 2 * RB_GAP : 2.3)) break;
+      let done = false;
+      for (const off of [0, 0.22, -0.22, 0.44, -0.44]) {
+        const ang = start + gap / 2 + off * Math.min(1, (gap - 2 * RB_GAP) / 0.9);
+        const [dx, dy] = [Math.cos(ang), Math.sin(ang)];
+        const reach = 320;
+        const to = { x: c.x + dx * reach, y: c.y + dy * reach };
+        let best: { edge: number; seg: number; p: Vec2; t: number } | null = null;
+        for (let k = 0; k < g.edges.length; k++) {
+          const o = g.edges[k];
+          if (!o.alive || !isStreet(o.cls) || o.a === o.b || o.a === hub || o.b === hub) continue;
+          for (let i = 1; i < o.pts.length; i++) {
+            const h = segSeg(c, to, o.pts[i - 1], o.pts[i]);
+            if (h && (!best || h.t < best.t)) best = { edge: k, seg: i - 1, p: { x: h.x, y: h.y }, t: h.t };
+          }
+        }
+        if (!best || best.t * reach < RB_CLEAR - 20) continue;
+        const hit: { edge: number; seg: number; p: Vec2; t: number } = best;
+        const target = g.edges[hit.edge];
+        const [sa, sb] = [target.pts[hit.seg], target.pts[hit.seg + 1]];
+        if (Math.abs(dx * (sb.y - sa.y) - dy * (sb.x - sa.x)) / dist(sa, sb) < 0.55) continue;
+        const cls: RoadClass = target.cls === 'local' ? 'local' : 'collector';
+        if (!buildable(g, ctx, c, hit.p, cls, new Set([hit.edge, ...g.nodes[hub].edges])).ok) continue;
+        const end = splitEdge(g, hit.edge, hit.seg, hit.p);
+        const en = g.nodes[end];
+        const p = { x: en.x, y: en.y };
+        const real = Math.atan2(p.y - c.y, p.x - c.x);
+        if (dist(p, c) < RB_CLEAR - 20 || angles.some((a) => angleDiff(a, real) < RB_GAP) || !roomAt(g, end, Math.atan2(c.y - p.y, c.x - p.x))) continue;
+        if (dist(p, hit.p) > 1 && !buildable(g, ctx, c, p, cls, new Set([...en.edges, ...g.nodes[hub].edges])).ok) continue;
+        g.addEdge(end, hub, cls, [p, { x: c.x, y: c.y }]);
+        angles.push(real);
+        top = Math.max(top, CLASS_RANK[cls]);
+        done = true;
+        break;
+      }
+      if (!done) break;
+    }
+    if (angles.length < 3) continue;
+    const need = [...g.nodes[hub].edges].reduce((s, k) => s + (RB_WIDTH[g.edges[k].cls] ?? 7) + 11, 0) / (2 * Math.PI);
+    const radius = clamp(Math.max(need, top >= CLASS_RANK.arterial ? 22 : top >= CLASS_RANK.collector ? 17 : 13), 13, 30);
+    g.nodes[hub].roundabout = { radius, ring: top >= CLASS_RANK.arterial ? 8.5 : top >= CLASS_RANK.collector ? 6.5 : 5.5 };
+    made++;
+  }
+  return made;
+}
+
 /** Makes one junction of two: every street of drop ends at keep instead. */
 function moveOnto(g: Builder, drop: number, keep: number): void {
   const kn = g.nodes[keep];
@@ -866,6 +1041,7 @@ export function buildRoadGraph(lines: RoadLine[], t: Terrain, districts: Distric
     tidy();
     if (!changed) break;
   }
+  if (addRoundabouts(g, ctx)) tidy();
   keepLargestComponent(g);
   mergeChains(g);
   splitBridges(g, t);
@@ -876,7 +1052,7 @@ export function buildRoadGraph(lines: RoadLine[], t: Terrain, districts: Distric
   g.nodes.forEach((n, i) => {
     if (!n.alive || n.edges.size === 0) return;
     nodeId[i] = nodes.length;
-    nodes.push({ id: nodes.length, x: n.x, y: n.y, edges: [], degree: g.degree(i) });
+    nodes.push({ id: nodes.length, x: n.x, y: n.y, edges: [], degree: g.degree(i), ...(n.roundabout ? { roundabout: n.roundabout } : {}) });
   });
   const edges: RoadEdge[] = [];
   for (const e of g.edges) {
