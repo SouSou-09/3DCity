@@ -931,6 +931,7 @@ const BACK_TABLES = ['park/picnic-table-wood', 'park/picnic-table-red', 'park/pi
     }
     const dtex = DRIVES[Math.floor(rnd(lot.id, 33) * DRIVES.length)];
     // Where the drive can pass the house, it may run on to a garage of its own behind it.
+    let garageBack: number | null = null;
     if (drive && !plan?.garage && rnd(lot.id, 340) < { suburb: 0.7, residential: 0.5, hills: 0.6, beach: 0.2, oldtown: 0, industrial: 0, midtown: 0, downtown: 0 }[f.type]) {
       const s = drive[0] < house[0] ? -1 : 1;
       const [hw, hd, hh, pitch] = [1.8, 3, 2.5, 0.45];
@@ -957,6 +958,7 @@ const BACK_TABLES = ['park/picnic-table-wood', 'park/picnic-table-red', 'park/pi
         }
         for (const z of [-hd, hd]) b.tri(wall, poseAt(pose, -hw, hh, z), poseAt(pose, hw, hh, z), poseAt(pose, 0, hh + hw * pitch, z), [[0, 0], [2 * hw, 0], [hw, hw * pitch]]);
         drive = [uc - 1.5, uc + 1.5, -f.gap, v0];
+        garageBack = vc + hd;
         const r: Rect = [uc - hw, uc + hw, vc - hd, vc + hd];
         f.taken.push(r);
         f.solid.push(r);
@@ -1083,7 +1085,9 @@ const BACK_TABLES = ['park/picnic-table-wood', 'park/picnic-table-red', 'park/pi
       for (const s of [-1, 1]) if (stand(f, model, 'bin', s < 0 ? lo + 1.6 : hi - 1.6, Math.max(0, f.v0) + 0.95)) break;
     }
     const start = house[2] + made.hz * (0.5 + 0.8 * rnd(lot.id, 59));
-    const startOn = (s: -1 | 1): number => (drive && !plan?.garage && (s < 0 ? drive[0] < house[0] : drive[1] > house[1]) ? Math.min(house[3], drive[3] + 0.3) : start);
+    // On the side the drive runs down, the fence starts where the drive ends: behind the garage, if the drive goes on to one.
+    const startOn = (s: -1 | 1): number =>
+      drive && !plan?.garage && (s < 0 ? drive[0] < house[0] : drive[1] > house[1]) ? (garageBack !== null ? garageBack + 0.3 : Math.min(house[3], drive[3] + 0.3)) : start;
     yardFence(f, house, startOn(-1), startOn(1), gaps);
     return true;
   };
