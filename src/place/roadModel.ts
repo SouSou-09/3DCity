@@ -1,5 +1,5 @@
 import { Frame, MeshBuilder, ModelData, Path, V3, frameAt, offset, pathLength, slicePath } from '../assets/mesh/builder';
-import { Arm, Control, armReach, junction } from '../assets/mesh/junction';
+import { Arm, Control, RoundaboutOpts, armReach, junction, roundabout, roundaboutReach } from '../assets/mesh/junction';
 import { plainTex } from '../assets/mesh/presets';
 import { Bay, Section, layout, reversed, sweepSection } from '../assets/mesh/section';
 import { pointSeg, resample } from '../core/geom';
@@ -50,6 +50,8 @@ export interface Junction {
   plane: NodePlane;
   arms: JunctionArm[];
   signal: boolean;
+  /** Built as a roundabout: outer radius of the circulating road and radius of the planted island in its middle. */
+  roundabout?: { radius: number; island: number };
 }
 export interface RoadModel {
   tiles: ModelData[];
@@ -267,7 +269,7 @@ export function buildRoadModel(city: City): RoadModel {
   const swallowed = new Uint8Array(E);
   /** Edges too short for a full approach at both ends: no crosswalk or stop line there, tighter kerbs. */
   const tight = new Uint8Array(E);
-  interface Cluster extends Junction { jarms: Arm[]; radius: number; floor: string }
+  interface Cluster extends Junction { jarms: Arm[]; radius: number; floor: string; round?: RoundaboutOpts }
   let clusters: Cluster[] = [];
   /** Junction arm of each edge end (index edge * 2 + end). */
   let armOf: (JunctionArm | null)[] = [];
@@ -279,22 +281,28 @@ export function buildRoadModel(city: City): RoadModel {
     const rank = info.map((i) => RANK[i.e.cls]);
     const top = Math.max(...rank);
     const tops = rank.filter((r) => r === top).length;
-    c.signal = n >= 3 && top >= 3 && rank.filter((r) => r >= 2).length >= 3;
+    // A roundabout, where the plan has one and none of its streets is too short for an entry.
+    const rb = c.nodes.length === 1 && n >= 3 && !c.arms.some((a) => tight[a.edge]) ? graph.nodes[c.nodes[0]].roundabout : undefined;
+    const apron = rb && rb.radius >= 16 ? 2 : 0;
+    const round = (arms: Arm[]): RoundaboutOpts => ({ arms, radius: rb!.radius, ring: rb!.ring, apron, floor: c.floor, splitter: 1 });
+    c.roundabout = rb ? { radius: rb.radius, island: rb.radius - rb.ring - apron - 0.15 } : undefined;
+    c.signal = !rb && n >= 3 && top >= 3 && rank.filter((r) => r >= 2).length >= 3;
     const control: Control[] = [];
     const crosswalk: (string | null)[] = [];
     const approach: number[] = [];
     info.forEach(({ e, p }, i) => {
       const walk = p.walk > 0 && e.cls !== 'ramp' && rank[i] >= 1;
-      if (n < 3 || rank[i] === 0) control.push('none');
+      if (rb) control.push('yield');
+      else if (n < 3 || rank[i] === 0) control.push('none');
       else if (c.signal) control.push('signal');
       else control.push(rank[i] < top || tops !== 2 ? 'stop' : 'none');
       const busy = p.trade > 0.3 || p.station || p.type === 'downtown' || p.type === 'midtown';
-      crosswalk.push(n >= 3 && walk && (c.signal || (control[i] === 'stop' && busy)) ? 'crosswalk/zebra' : null);
+      crosswalk.push(n >= 3 && walk && (rb || c.signal || (control[i] === 'stop' && busy)) ? 'crosswalk/zebra' : null);
       if (tight[e.id]) {
         crosswalk[i] = null;
         if (control[i] === 'stop') control[i] = 'none';
       }
-      approach.push(tight[e.id] ? 0.4 : crosswalk[i] ? 7.6 : control[i] !== 'none' ? 2.6 : rank[i] === 0 ? 0.4 : 0.6);
+      approach.push(rb ? 0.6 : tight[e.id] ? 0.4 : crosswalk[i] ? 7.6 : control[i] !== 'none' ? 2.6 : rank[i] === 0 ? 0.4 : 0.6);
     });
     c.arms.forEach((a, i) => {
       a.control = control[i];
@@ -348,14 +356,15 @@ export function buildRoadModel(city: City): RoadModel {
     });
     c.arms.forEach((a, i) => aim(i, start[i] + Math.min(12, 0.45 * graph.edges[a.edge].length)));
     spread();
-    const first = armReach(arms(), c.radius);
+    const reachOf = (arms: Arm[]): number[] => (rb ? roundaboutReach(round(arms)) : armReach(arms, c.radius));
+    const first = reachOf(arms());
     const target = first.map((l, i) => l + approach[i]);
     c.arms.forEach((a, i) => {
       if (!aim(i, Math.max(start[i] + 4, Math.min(target[i], AIM)))) a.reach = Infinity;
     });
     spread();
     const jarms = arms();
-    const second = armReach(jarms, c.radius);
+    const second = reachOf(jarms);
     c.arms.forEach((a, i) => {
       jarms[i].length = Math.max(0.4, target[i] - second[i]);
       if (a.reach !== Infinity) a.reach = second[i] + jarms[i].length!;
@@ -363,6 +372,7 @@ export function buildRoadModel(city: City): RoadModel {
     c.jarms = jarms;
     const lead = info[rank.indexOf(top)].p;
     c.floor = plainTex(...surface(lead));
+    c.round = rb ? round(jarms) : undefined;
   };
 
   /** End of a junction arm and the first point of the edge's line after it, far enough on to swing back onto the line. */
@@ -479,7 +489,8 @@ export function buildRoadModel(city: City): RoadModel {
   const stats = { junctions: clusters.length, signals: clusters.filter((c) => c.signal).length, swallowed: swallowed.reduce((s, v) => s + v, 0), folds: 0, piers: 0, triangles: 0 };
   for (const c of clusters) {
     const tb = new MeshBuilder();
-    junction(tb, { arms: c.jarms, radius: c.radius, floor: c.floor });
+    if (c.round) roundabout(tb, c.round);
+    else junction(tb, { arms: c.jarms, radius: c.radius, floor: c.floor });
     place(tile(c.x, c.y), tb, c.x, c.y, c.plane);
   }
 
@@ -1026,7 +1037,7 @@ export function buildRoadModel(city: City): RoadModel {
   for (const fn of standing) fn();
   const tiles = [...builders.values()].map((b) => b.build());
   stats.triangles = tiles.reduce((s, m) => s + m.triangles, 0);
-  return { tiles, ground, levels, junctions: clusters.map(({ nodes, x, y, plane, arms, signal }) => ({ nodes, x, y, plane, arms, signal })), lines, rail, cross: crossOf, sections: secs, bays, cuts, stats };
+  return { tiles, ground, levels, junctions: clusters.map(({ nodes, x, y, plane, arms, signal, roundabout }) => ({ nodes, x, y, plane, arms, signal, ...(roundabout ? { roundabout } : {}) })), lines, rail, cross: crossOf, sections: secs, bays, cuts, stats };
 }
 
 /** Terrain with the ground under and beside every at-grade road brought to the road's level. */

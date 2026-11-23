@@ -127,7 +127,7 @@ export class Site {
         r = Math.max(r, -lay.outer[0], lay.outer[1]);
         this.stampBand(j.x, j.y, j.x + a.dir.x * (a.reach + 0.5), j.y + a.dir.y * (a.reach + 0.5), lay.outer[0] - M, lay.outer[1] + M, ROAD, 0);
       }
-      this.stampDisc(j.x, j.y, r + M, ROAD);
+      this.stampDisc(j.x, j.y, (j.roundabout ? j.roundabout.radius + 3.5 : r) + M, ROAD);
     }
     for (const bay of roads.bays) {
       const line = roads.lines[bay.edge]!;

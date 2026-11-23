@@ -405,6 +405,8 @@ export function planLandUse(graph: RoadGraph, t: Terrain, districts: Districts, 
     }
   }
 
+  for (const nd of nodes) if (nd.roundabout) stamp(nd.x, nd.y, nd.roundabout.radius + 4.5, STREET);
+
   // Travel: walking to a station, driving to a ramp and to the centre.
   const nearestNode = (p: Vec2, ok: (id: number) => boolean): number => {
     let best = -1;
