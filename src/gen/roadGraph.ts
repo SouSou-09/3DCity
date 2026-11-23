@@ -4,7 +4,7 @@ import { Vec2, angleDiff, clamp, dist } from '../core/vec2';
 import { Districts, districtAt } from './districts';
 import { RailIndex } from './rail';
 import { BRIDGE_APPROACH, BRIDGE_SPACING, CLASS_RANK, RoadClass, RoadLine, isStreet, waterCrossings } from './streamlines';
-import { Terrain, heightAt, isWater, riverBankAt, seaDistAt, waterDistAt } from './terrain';
+import { BERM_WIDTH, RIVER_RESERVE, Terrain, heightAt, isWater, riverBankAt, seaDistAt, waterDistAt } from './terrain';
 
 export interface RoadNode {
   id: number;
@@ -53,6 +53,8 @@ const MIN_EDGE = 22;
 const MIN_DEAD_END = 35;
 const MAX_DEAD_END = 130;
 const ACUTE = (28 * Math.PI) / 180;
+/** Two streets alone at a node that meet at less than this are a fold: the lesser one goes. */
+const FOLD = (55 * Math.PI) / 180;
 
 interface TmpNode {
   x: number;
@@ -128,12 +130,12 @@ class Builder {
   }
 
   /** Direction in which edge e leaves node n. */
-  angleFrom(e: number, n: number): number {
+  angleFrom(e: number, n: number, reach = 12): number {
     const ed = this.edges[e];
     const fromA = ed.a === n;
     const pts = ed.pts;
     const o = fromA ? pts[0] : pts[pts.length - 1];
-    const q = fromA ? pointAt(pts, Math.min(12, ed.len)).p : pointAt(pts, Math.max(0, ed.len - 12)).p;
+    const q = fromA ? pointAt(pts, Math.min(reach, ed.len)).p : pointAt(pts, Math.max(0, ed.len - reach)).p;
     return Math.atan2(q.y - o.y, q.x - o.x);
   }
 }
@@ -255,6 +257,8 @@ function mergeChains(g: Builder): void {
     const a = g.edges[e1];
     const b = g.edges[e2];
     if (a.cls !== b.cls || a.a === a.b || b.a === b.b) continue;
+    // Two streets that meet end to end at a sharp angle are not one street folded back on itself.
+    if (angleDiff(g.angleFrom(e1, n), g.angleFrom(e2, n)) < FOLD) continue;
     const start = a.a === n ? a.b : a.a;
     const end = b.a === n ? b.b : b.a;
     const pts = [...orient(a, start), ...orient(b, n).slice(1)];
@@ -377,7 +381,7 @@ function buildable(g: Builder, ctx: Ctx, a: Vec2, b: Vec2, cls: RoadClass, ignor
     if (seaDistAt(t, x, y) < 12) return { ok: false, water };
     if (ctx.rail?.blocks(x, y, cls !== 'arterial', (b.x - a.x) / d, (b.y - a.y) / d) || (cls === 'arterial' && ctx.rail?.atGrade(x, y))) return { ok: false, water };
     const bank = riverBankAt(t, x, y);
-    if (bank < 0) {
+    if (bank < RIVER_RESERVE) {
       if (ctx.bridges.some((q) => Math.hypot(q.x - x, q.y - y) < BRIDGE_SPACING)) return { ok: false, water };
       water = true;
     }
@@ -575,7 +579,8 @@ function splitBridges(g: Builder, t: Terrain): void {
     for (let step = 0; step < e.len + 3; step += 3) {
       const s = Math.min(step, e.len);
       const p = pointAt(e.pts, s).p;
-      const wet = isWater(t, p.x, p.y);
+      // The deck also clears the path along the bank.
+      const wet = isWater(t, p.x, p.y) || riverBankAt(t, p.x, p.y) < BERM_WIDTH;
       if (wet && start < 0) start = s;
       if (start >= 0 && (!wet || s >= e.len)) {
         const a = Math.max(0, start - ABUTMENT);
@@ -625,12 +630,13 @@ function fixAcuteJunctions(g: Builder): number {
   for (let n = 0; n < g.nodes.length; n++) {
     const node = g.nodes[n];
     if (!node.alive) continue;
-    for (let guard = 0; guard < 6 && node.edges.size >= 3; guard++) {
-      const out = [...node.edges].filter((e) => g.edges[e].a !== g.edges[e].b).map((e) => ({ e, a: g.angleFrom(e, n) }));
+    for (let guard = 0; guard < 6 && node.edges.size >= 2; guard++) {
+      // Further out as well: a street that leaves with a short kink may still run on beside another.
+      const out = [...node.edges].filter((e) => g.edges[e].a !== g.edges[e].b).map((e) => ({ e, a: g.angleFrom(e, n), far: g.angleFrom(e, n, 45) }));
       let victim = -1;
       for (let i = 0; i < out.length && victim < 0; i++) {
         for (let j = i + 1; j < out.length; j++) {
-          if (angleDiff(out[i].a, out[j].a) >= ACUTE) continue;
+          if (angleDiff(out[i].a, out[j].a) >= (out.length === 2 ? FOLD : ACUTE) && angleDiff(out[i].far, out[j].far) >= 0.75 * ACUTE) continue;
           const ei = g.edges[out[i].e];
           const ej = g.edges[out[j].e];
           if (!isStreet(ei.cls) || !isStreet(ej.cls)) continue;

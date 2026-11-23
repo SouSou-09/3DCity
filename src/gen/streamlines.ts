@@ -3,7 +3,7 @@ import { SegmentIndex, pointSeg, polyLength, segSeg } from '../core/geom';
 import { Vec2 } from '../core/vec2';
 import { RAIL_CLEARANCE, RailIndex } from './rail';
 import { TensorField, fieldAngle } from './tensorField';
-import { Terrain, heightAt, inBounds, isWater, riverBankAt, seaDistAt, waterDistAt } from './terrain';
+import { Terrain, heightAt, inBounds, isWater, onRiverStrip, riverBankAt, seaDistAt, waterDistAt } from './terrain';
 
 /** `alley` and `path` are only added inside blocks, after the main network is finished. */
 export type RoadClass = 'highway' | 'ramp' | 'arterial' | 'collector' | 'local' | 'alley' | 'path';
@@ -166,11 +166,16 @@ export class RoadBuilder {
   /** Far bank of a river crossing, or null if the water ahead is too wide to bridge. */
   findLanding(x: number, y: number, dx: number, dy: number): Vec2 | null {
     const t = this.terrain;
-    for (let s = 5; s <= 170; s += 5) {
+    let wet = false;
+    for (let s = 5; s <= 210; s += 5) {
       const qx = x + dx * s;
       const qy = y + dy * s;
       if (!inBounds(t, qx, qy) || seaDistAt(t, qx, qy) < 25) return null;
-      if (!isWater(t, qx, qy) && !isWater(t, qx + dx * 14, qy + dy * 14)) {
+      wet ||= isWater(t, qx, qy);
+      // The bridge comes down beyond the far bank's path and embankment; a street that only strays onto the
+      // near bank's strip has nothing to cross.
+      if (!onRiverStrip(t, qx, qy) && !onRiverStrip(t, qx + dx * 14, qy + dy * 14)) {
+        if (!wet) return null;
         const mx = x + (dx * s) / 2;
         const my = y + (dy * s) / 2;
         if (this.bridges.some((b) => Math.hypot(b.x - mx, b.y - my) < BRIDGE_SPACING)) return null;
@@ -244,7 +249,7 @@ export class RoadBuilder {
         pts.push({ x: nx, y: ny });
         return { pts, reason: 'bounds' };
       }
-      if (isWater(t, nx, ny)) {
+      if (isWater(t, nx, ny) || onRiverStrip(t, nx, ny)) {
         const landing = opt.canBridge && seaDistAt(t, nx, ny) > 40 ? this.findLanding(nx, ny, ndx, ndy) : null;
         if (!landing) return { pts, reason: 'water' };
         s += Math.hypot(landing.x - x, landing.y - y);
@@ -275,7 +280,10 @@ export class RoadBuilder {
       const cs = (s + step) * sign;
       const d2test = dtest * dtest;
       for (const o of own) {
-        if (Math.abs(o.s - cs) > 3 * dtest && (o.x - nx) ** 2 + (o.y - ny) ** 2 < d2test) return { pts, reason: 'near' };
+        const d2 = (o.x - nx) ** 2 + (o.y - ny) ** 2;
+        if (Math.abs(o.s - cs) > 3 * dtest && d2 < d2test) return { pts, reason: 'near' };
+        // Round a knoll the field leads back onto the street's own start: it stops short of running over itself.
+        if (Math.abs(o.s - cs) > 70 && d2 < 18 * 18) return { pts, reason: 'near' };
       }
       pts.push({ x: nx, y: ny });
       own.push({ x: nx, y: ny, s: cs });
@@ -291,7 +299,7 @@ export class RoadBuilder {
 
   private seedOk(p: Vec2, family: number, opt: PassOptions, hash: SampleHash): boolean {
     const t = this.terrain;
-    if (!inBounds(t, p.x, p.y, 2) || waterDistAt(t, p.x, p.y) < 8) return false;
+    if (!inBounds(t, p.x, p.y, 2) || waterDistAt(t, p.x, p.y) < 8 || onRiverStrip(t, p.x, p.y)) return false;
     if (opt.cls === 'local' ? this.blocked(p.x, p.y, 'local') : this.barriers.nearest(p.x, p.y, 45) < 45) return false;
     if (this.rail?.nearest(p.x, p.y, 2 * RAIL_CLEARANCE) || this.besideRail(p.x, p.y, family, opt.sep(p.x, p.y, family))) return false;
     return hash.free(p.x, p.y, opt.sep(p.x, p.y, family));
@@ -394,7 +402,7 @@ export class RoadBuilder {
     for (let s = 4; s < d; s += 4) {
       const x = p.x + dir.x * s;
       const y = p.y + dir.y * s;
-      if (isWater(t, x, y) || this.blocked(x, y, cls, dir.x, dir.y)) return null;
+      if (isWater(t, x, y) || onRiverStrip(t, x, y) || this.blocked(x, y, cls, dir.x, dir.y)) return null;
     }
     return hit;
   }

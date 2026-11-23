@@ -45,6 +45,8 @@ export interface Buildings {
   owner: Int32Array;
   /** Lots that should have a building and have none: nothing in the catalogue fits them. */
   vacant: number[];
+  /** Industrial lots too small for a shed, laid out as open storage yards. */
+  yards: number[];
   /** Metres of fence and wall built round house and shop lots. */
   fence: number;
   /** Marked parking spaces. */
@@ -227,7 +229,7 @@ export function placeBuildings(site: Site, shore: Waterfront): Buildings {
   const land = city.land;
   const seed = site.seed;
   const rnd = (...v: number[]): number => hash(seed, 7717, ...v);
-  const out: Buildings = { list: [], tiles: [], plots: [], owner: new Int32Array(0), vacant: [], fence: 0, stalls: 0, count: {}, civic: {} };
+  const out: Buildings = { list: [], tiles: [], plots: [], owner: new Int32Array(0), vacant: [], yards: [], fence: 0, stalls: 0, count: {}, civic: {} };
   const sand = new Set(shore.sandLots);
   const builders = new Map<string, MeshBuilder>();
   const tile = (x: number, y: number): MeshBuilder => {
@@ -573,6 +575,8 @@ export function placeBuildings(site: Site, shore: Waterfront): Buildings {
   const tree = (f: Frame, u: number, v: number, salt: number, clear = 2.6, margin = 1.6): boolean => {
     if (!open(f, u, v, margin, 0.9) || !free(f, u, v, clear, f.solid)) return false;
     const p = at(f, u, v);
+    // A trunk stands a little off the middle of its crown: not at the very edge of what a junction takes.
+    if ([[1.3, 0], [-1.3, 0], [0, 1.3], [0, -1.3]].some(([dx, dy]) => site.at(p.x + dx, p.y + dy) === ROAD)) return false;
     const list = TREES[f.type];
     site.put(list[Math.floor(rnd(f.lot.id, salt, 1) * list.length)], 'tree', p.x, p.y, rnd(f.lot.id, salt, 2) * 6.28, { scale: 0.7 + rnd(f.lot.id, salt, 3) * 0.45 });
     f.taken.push([u - 0.5, u + 0.5, v - 0.5, v + 0.5]);
@@ -584,6 +588,41 @@ export function placeBuildings(site: Site, shore: Waterfront): Buildings {
     site.put(model, kind, p.x, p.y, f.yaw + turn);
     f.taken.push([u - r, u + r, v - r, v + r]);
     return true;
+  };
+  const DUMPSTERS = ['furniture/bin-dumpster', 'furniture/bin-dumpster-green', 'furniture/bin-dumpster-open', 'furniture/bin-dumpster-bags'];
+  /**
+   * Stands something that takes room of its own (a refuse store, a stack of pallets, a container) where the lot is
+   * clear of buildings. Nothing is marked or planted where it stands afterwards. `turn` is in quarter turns from facing the road.
+   */
+  const stand = (f: Frame, model: string, kind: 'yard' | 'bin', u: number, v: number, turn = 0): boolean => {
+    const { min, max } = bbox(model);
+    const [hx, hz] = [(max[0] - min[0]) / 2, (max[2] - min[2]) / 2];
+    const [ru, rv] = turn % 2 ? [hz, hx] : [hx, hz];
+    const r: Rect = [u - ru, u + ru, v - rv, v + rv];
+    if (r[2] < Math.max(0, f.v0) + 0.2 || r[3] > f.d - 0.2) return false;
+    const [lo, hi] = span(f, r[2], r[3], 0.2);
+    if (r[0] < lo || r[1] > hi) return false;
+    if (f.solid.some(([u0, u1, v0, v1]) => u0 < r[1] + 0.4 && u1 > r[0] - 0.4 && v0 < r[3] + 0.4 && v1 > r[2] - 0.4)) return false;
+    for (const [a, b] of [[r[0], r[2]], [r[1], r[2]], [r[1], r[3]], [r[0], r[3]], [u, v]]) {
+      const p = at(f, a, b);
+      const code = site.at(p.x, p.y);
+      if ((code !== LOT && code !== FREE) || !inPoly(f.poly, p.x, p.y)) return false;
+    }
+    const p = at(f, u, v);
+    site.put(model, kind, p.x, p.y, f.yaw + (turn * Math.PI) / 2);
+    f.solid.push(r);
+    f.taken.push(r);
+    return true;
+  };
+  /** Where the refuse of a building waits for the lorry: a walled store on a big lot, a dumpster on a small one, in a back corner. */
+  const refuse = (f: Frame, side: -1 | 1, big: boolean, back = f.d - 0.8): boolean => {
+    const [L, R] = span(f, back - 5, back, 0.4);
+    const model = DUMPSTERS[Math.floor(rnd(f.lot.id, 170) * DUMPSTERS.length)];
+    for (const s of [side, -side]) {
+      if (big && stand(f, 'infra/dumpster-enclosure', 'bin', s < 0 ? L + 3 : R - 3, back - 2.3)) return true;
+      if (stand(f, model, 'bin', s < 0 ? L + 2.1 : R - 2.1, back - 1.1)) return true;
+    }
+    return false;
   };
   /** Steps down from a door whose foot is above the ground; returns how far they run towards the road. */
   const steps = (f: Frame, u: number, v: number, top: number, w: number): number => {
@@ -659,6 +698,8 @@ export function placeBuildings(site: Site, shore: Waterfront): Buildings {
     }
   };
 
+  const POINTS = ['furniture/bin-point-block', 'furniture/bin-point-block-empty', 'furniture/bin-point-cage', 'furniture/bin-point-cage-carts'];
+  const kerb = new Map<string, number>();
   const houseLot = (f: Frame): boolean => {
     const lot = f.lot;
     const [s0, s1, sideMin, back] = HOUSE_SET[f.type];
@@ -749,6 +790,13 @@ export function placeBuildings(site: Site, shore: Waterfront): Buildings {
       const s = drive && drive[0] < house[0] ? -1 : 1;
       small(f, ['furniture/bin-cart-black', 'furniture/bin-cart-green', 'furniture/bin-cart-blue', 'furniture/bin-cart-trio'][Math.floor(rnd(lot.id, 58) * 4)], 'bin', s < 0 ? house[0] - 0.7 : house[1] + 0.7, house[2] + made.hz, s < 0 ? Math.PI / 2 : -Math.PI / 2, 0.5);
     }
+    // One house in every nine or so has the street's collection point at the corner of its front garden, open to the pavement.
+    const turnOf = (kerb.get(keyOf(lot)) ?? Math.floor(rnd(lot.edge, lot.side, 60) * 9)) + 1;
+    kerb.set(keyOf(lot), turnOf);
+    if (turnOf % 9 === 0 && f.type !== 'hills') {
+      const model = POINTS[Math.floor(rnd(lot.id, 61) * POINTS.length)];
+      for (const s of [-1, 1]) if (stand(f, model, 'bin', s < 0 ? lo + 1.6 : hi - 1.6, Math.max(0, f.v0) + 0.95)) break;
+    }
     const start = house[2] + made.hz * (0.5 + 0.8 * rnd(lot.id, 59));
     const startOn = (s: -1 | 1): number => (drive && !plan?.garage && (s < 0 ? drive[0] < house[0] : drive[1] > house[1]) ? Math.min(house[3], drive[3] + 0.3) : start);
     yardFence(f, house, startOn(-1), startOn(1), gaps);
@@ -816,6 +864,7 @@ export function placeBuildings(site: Site, shore: Waterfront): Buildings {
     pave(f, tex, pad, 0.05, 4);
     f.taken.push(drive, pad);
     gaps.push([drive[0] - 0.2, drive[1] + 0.2]);
+    refuse(f, roomL > roomR ? 1 : -1, lot.area > 1100 || lot.floors >= 4, f.d - 1.1);
     stalls(f, [L + 0.3, R - 0.3, from + 0.2, f.d - 1.2], undefined, [[drive[0], drive[1]]]);
     return drive;
   };
@@ -883,6 +932,7 @@ export function placeBuildings(site: Site, shore: Waterfront): Buildings {
       f.taken.push(court);
     }
     const drive = rearParking(f, group, gaps);
+    if (!drive) refuse(f, rnd(lot.id, 84) < 0.5 ? -1 : 1, false);
     const [lo, hi] = span(f, 0, f.d, 0);
     for (let i = 0; i < (high ? 4 : 2); i++) if (rnd(lot.id, 85, i) < 0.6) tree(f, lo + 2 + rnd(lot.id, 86, i) * (hi - lo - 4), 1.7 + rnd(lot.id, 87, i) * Math.max(0, group[2] - 3), 88 + i, 2.2);
     for (let i = 0; i < 4; i++) if (rnd(lot.id, 92, i) < 0.4) small(f, BEDS[Math.floor(rnd(lot.id, 93, i) * BEDS.length)], 'plant', group[0] + 1 + rnd(lot.id, 94, i) * (group[1] - group[0] - 2), group[2] - 0.8, rnd(lot.id, 95, i) * 6, 0.6);
@@ -954,7 +1004,7 @@ export function placeBuildings(site: Site, shore: Waterfront): Buildings {
       const yard: Rect = [lo + 0.3, hi - 0.3, back - 0.1, f.d - 0.4];
       pave(f, asphalt(lot), yard, 0.05, 4);
       if (f.d - back > 9) stalls(f, [lo + 0.6, hi - 0.6, back + 3.2, f.d - 0.8]);
-      if (rnd(lot.id, 112) < 0.6) small(f, ['furniture/bin-dumpster', 'furniture/bin-dumpster-green', 'furniture/bin-dumpster-open', 'furniture/bin-dumpster-bags'][Math.floor(rnd(lot.id, 113) * 4)], 'bin', lo + 2 + rnd(lot.id, 114) * Math.max(0, W - 4), back + 1.3, Math.PI, 1.2);
+      if (rnd(lot.id, 112) < 0.9) stand(f, DUMPSTERS[Math.floor(rnd(lot.id, 113) * 4)], 'bin', lo + 2.2 + rnd(lot.id, 114) * Math.max(0, W - 4.4), back + 1.4, 2);
       f.taken.push(yard);
     }
     return true;
@@ -1013,7 +1063,7 @@ export function placeBuildings(site: Site, shore: Waterfront): Buildings {
     }
     f.taken.push(lotRect);
     for (let u = L + 3, i = 0; u < R - 2; u += 9 + 5 * rnd(lot.id, 123, i), i++) if (ways.every((e) => Math.abs(u - e) > 5.5) && rnd(lot.id, 124, i) < 0.7) tree(f, u, edge + 1, 125 + i, 2, 0.6);
-    if (rnd(lot.id, 126) < 0.6) small(f, 'furniture/bin-dumpster', 'bin', clamp(uc + made.hx + 1.6, L + 1.5, R - 1.5), f.d - 2.4, Math.PI, 1.2);
+    refuse(f, rnd(lot.id, 126) < 0.5 ? -1 : 1, lot.area > 1400, f.d - 1.7);
     return true;
   };
 
@@ -1075,6 +1125,39 @@ export function placeBuildings(site: Site, shore: Waterfront): Buildings {
   };
 
   // --- Works and warehouses ---
+  const BOXES = ['waterfront/container-20-red', 'waterfront/container-20-blue', 'waterfront/container-20-green', 'waterfront/container-20-grey', 'waterfront/container-20-brown', 'waterfront/container-40-grey', 'waterfront/container-40-teal', 'waterfront/container-open'];
+  const LOOSE = ['infra/pallet-stack', 'infra/pallet-stack', 'infra/cable-reel-flat', 'furniture/bin-drum', 'furniture/bin-drum-blue', 'furniture/bin-drum-full'];
+  /** What a works keeps out of doors, along the back and the sides of its yard: containers end to end, pallets and drums in clusters. */
+  const stock = (f: Frame, heavy: boolean, want: number, from: number): void => {
+    const lot = f.lot;
+    let made = 0;
+    for (let k = 0; k < want * 3 && made < want; k++) {
+      const where = rnd(lot.id, 158, k);
+      const box = rnd(lot.id, 159, k) < (heavy ? 0.55 : 0.3);
+      const model = box ? BOXES[Math.floor(rnd(lot.id, 167, k) * BOXES.length)] : LOOSE[Math.floor(rnd(lot.id, 167, k) * LOOSE.length)];
+      const { min, max } = bbox(model);
+      const [hx, hz] = [(max[0] - min[0]) / 2, (max[2] - min[2]) / 2];
+      const t = rnd(lot.id, 168, k);
+      let ok = false;
+      if (where < 0.5) {
+        const v = f.d - 2.2 - hz;
+        const [lo, hi] = span(f, v - hz, v + hz, 2.2);
+        if (hi - lo > 2 * hx) ok = stand(f, model, 'yard', lo + hx + (hi - lo - 2 * hx) * t, v);
+      } else {
+        const v = from + hx + (f.d - 3 - from - 2 * hx) * t;
+        if (v - hx < from) continue;
+        const [lo, hi] = span(f, v - hx, v + hx, 2.2);
+        ok = stand(f, model, 'yard', where < 0.75 ? lo + hz : hi - hz, v, 1);
+      }
+      if (!ok) continue;
+      made++;
+      // Pallets and drums come several together.
+      if (!box) for (let j = 1; j <= 2; j++) if (rnd(lot.id, 169, k, j) < 0.6) {
+        const last = f.solid[f.solid.length - 1];
+        stand(f, model, 'yard', (last[0] + last[1]) / 2 + (where < 0.5 ? 2 * hx + 0.5 : 0), (last[2] + last[3]) / 2 + (where < 0.5 ? 0 : 2 * hx + 0.5), where < 0.5 ? 0 : 1);
+      }
+    }
+  };
   const works = (f: Frame): boolean => {
     const lot = f.lot;
     const heavy = lot.use === 'I2';
@@ -1123,8 +1206,54 @@ export function placeBuildings(site: Site, shore: Waterfront): Buildings {
     const tex = heavy ? ['ground/gravel-dirt', 'concrete/road-tined-stained', 'asphalt/plain-bleached-broken'][Math.floor(rnd(lot.id, 156) * 3)] : ['asphalt/plain-worn-patched', 'concrete/road-smooth-cracked', 'asphalt/plain-bleached-broken', 'asphalt/plain-used-patched', 'ground/gravel-dirt'][Math.floor(rnd(lot.id, 156) * 5)];
     pave(f, tex, [L, R, edge + 1.5, f.d - 1.5], 0.05, 5);
     pave(f, tex.startsWith('ground') ? 'concrete/road-smooth-cracked' : tex, [-6, 6, -f.gap, edge + 1.55], 0.05, 3);
+    refuse(f, rnd(lot.id, 157) < 0.5 ? -1 : 1, true, f.d - 2);
+    stock(f, heavy, Math.min(10, Math.floor(lot.area / 450)), edge + 8);
     // Staff parking along the front fence, clear of the gate.
     stalls(f, [L + 1, R - 1, edge + 2, edge + 7.4], [-8, 8, -1, f.d]);
+    return true;
+  };
+  /** A yard with no building that would fit it: hard standing behind the fence, let for storage. */
+  const storage = (f: Frame): boolean => {
+    const lot = f.lot;
+    const edge = Math.max(0, f.v0);
+    if (f.d - edge < 7) return false;
+    const [L, R] = span(f, edge + 1.5, f.d - 1.5, 1.5);
+    if (R - L < 7) return false;
+    const tex = ['ground/gravel-dirt', 'asphalt/plain-bleached-broken', 'concrete/road-smooth-cracked'][Math.floor(rnd(lot.id, 164) * 3)];
+    pave(f, tex, [L, R, edge + 1.5, f.d - 1.5], 0.05, 5);
+    pave(f, tex.startsWith('ground') ? 'concrete/road-smooth-cracked' : tex, [-4, 4, -f.gap, edge + 1.55], 0.05, 3);
+    if (R - L > 12 && f.d - edge > 12) stand(f, 'waterfront/container-office', 'yard', rnd(lot.id, 165) < 0.5 ? L + 5 : R - 5, edge + 5);
+    stock(f, rnd(lot.id, 166) < 0.4, Math.max(2, Math.min(12, Math.floor(lot.area / 110))), edge + 4);
+    out.yards.push(lot.id);
+    return true;
+  };
+
+  // --- Ground too small or too steep to build on ---
+  const PLAZA = ['paving/slabs-granite', 'concrete/walk-square', 'paving/running-grey', 'concrete/walk-exposed', 'paving/slabs-sandstone'];
+  const SEATS = ['furniture/bench-park', 'furniture/bench-park-weathered', 'furniture/bench-metal', 'furniture/bench-concrete-wood', 'furniture/bench-flat'];
+  /** In town it is paved, with trees and a seat; elsewhere it is planted and left. A steep bank stays as it is. */
+  const pocket = (f: Frame): boolean => {
+    const lot = f.lot;
+    const edge = Math.max(0, f.v0);
+    const depth = f.d - edge;
+    if (lot.site.slope > 0.22 || depth < 2.5 || f.type === 'hills') return true;
+    const [L, R] = span(f, edge + 0.4, f.d - 0.4, 0.4);
+    if (R - L < 2.5) return true;
+    const town = f.type === 'downtown' || f.type === 'midtown' || f.type === 'oldtown';
+    if (town && lot.site.relief < 1.2) {
+      pave(f, PLAZA[Math.floor(rnd(lot.id, 181) * PLAZA.length)], [L, R, -f.gap, f.d - 0.4], 0.055, 3);
+      for (let u = L + 2, i = 0; u < R - 1.5; u += 6 + 3 * rnd(lot.id, 182, i), i++) tree(f, u, edge + Math.min(depth - 1.2, Math.max(1.2, depth * 0.6)), 183 + i, 1.4, 0.8);
+      if (depth > 3.5 && R - L > 6) small(f, SEATS[Math.floor(rnd(lot.id, 190) * SEATS.length)], 'yard', (L + R) / 2 + (rnd(lot.id, 191) - 0.5) * (R - L - 5), f.d - 1.1, 0, 1);
+      if (rnd(lot.id, 192) < 0.5) small(f, ['furniture/planter-box-flowers', 'furniture/planter-trough-flowers', 'furniture/planter-bowl-flowers'][Math.floor(rnd(lot.id, 193) * 3)], 'plant', L + 1.2, edge + 1, 0, 0.7);
+      return true;
+    }
+    if (f.type === 'industrial') {
+      for (let i = 0; i < 2; i++) if (rnd(lot.id, 194, i) < 0.35) small(f, 'plant/shrub-dry', 'plant', L + 1 + rnd(lot.id, 195, i) * (R - L - 2), edge + 1 + rnd(lot.id, 196, i) * (depth - 2), 0, 0.6);
+      return true;
+    }
+    const n = lot.area < 70 ? (rnd(lot.id, 197) < 0.5 ? 1 : 0) : Math.min(3, Math.round(lot.area / 160 + rnd(lot.id, 197)));
+    for (let i = 0; i < n; i++) tree(f, L + 1.5 + rnd(lot.id, 198, i) * Math.max(0, R - L - 3), edge + 1.5 + rnd(lot.id, 199, i) * Math.max(0, depth - 3), 200 + i, 2.2, 1.2);
+    for (let i = 0; i < 3; i++) if (rnd(lot.id, 204, i) < 0.45) small(f, [...SHRUBS, ...BEDS][Math.floor(rnd(lot.id, 205, i) * (SHRUBS.length + BEDS.length))], 'plant', L + 0.8 + rnd(lot.id, 206, i) * Math.max(0, R - L - 1.6), edge + 0.8 + rnd(lot.id, 207, i) * Math.max(0, depth - 1.6), rnd(lot.id, 208, i) * 6, 0.6);
     return true;
   };
 
@@ -1143,8 +1272,17 @@ export function placeBuildings(site: Site, shore: Waterfront): Buildings {
         return true;
       }
     }
+    if (f.d - edge < 13.5) {
+      // Too shallow for an aisle of its own: one row of spaces nose in from the street, as beside a row of shops.
+      const back = Math.min(f.d - 0.3, edge + 5.9);
+      const [l, r] = span(f, edge, back, 0.4);
+      if (r - l < 5.4 || back - edge < 5.5) return pocket(f);
+      const tex = asphalt(lot);
+      pave(f, tex, [l, r, -f.gap, back], 0.05, 2.6);
+      return stalls(f, [l + 0.1, r - 0.1, back - 5.5, back - 0.1]) > 0 || pocket(f);
+    }
     const [L, R] = span(f, edge + 1, f.d - 1, 1);
-    if (R - L < 8 || f.d - edge < 9) return false;
+    if (R - L < 8) return pocket(f);
     const tex = asphalt(lot);
     pave(f, tex, [L, R, edge + 1, f.d - 1], 0.05, 4);
     pave(f, tex, [-3.6, 3.6, -f.gap, edge + 1.05], 0.05, 2.4);
@@ -1206,6 +1344,8 @@ export function placeBuildings(site: Site, shore: Waterfront): Buildings {
     const lot = f.lot;
     const edge = Math.max(0, f.v0);
     const mid = at(f, 0, f.d / 2);
+    // A hospital stands only where the lots beside it were planned for a big neighbour.
+    if (c.kind === 'hospital' && lot.area <= 2600) return false;
     if (c.apart > 0 && civicAt.some((o) => o.kind === c.kind && Math.hypot(o.x - mid.x, o.y - mid.y) < c.apart)) return false;
     for (const s of order(named(...c.models).map((s) => [s, 1 + (s.w * s.d) / 800] as [Shape, number]), lot, 170 + salt)) {
       for (const [side, front] of [[3, c.front], [1.5, Math.min(c.front, 4)]]) {
@@ -1240,6 +1380,7 @@ export function placeBuildings(site: Site, shore: Waterfront): Buildings {
           pave(f, tex, [e - 3.2, e + 3.2, -f.gap, pad[2] + 0.05], 0.05, 2.4);
           stalls(f, [pad[0] + 0.3, pad[1] - 0.3, pad[2] + 0.3, pad[3] - 0.3], undefined, [[e - 3.2, e + 3.2]]);
           f.taken.push(pad, [e - 3.2, e + 3.2, 0, pad[2]]);
+          refuse(f, roomL > roomR ? 1 : -1, lot.area > 1500);
         } else rearParking(f, box, []);
         // A school has a court in its yard.
         if (c.kind.includes('school')) {
@@ -1260,8 +1401,9 @@ export function placeBuildings(site: Site, shore: Waterfront): Buildings {
   };
 
   // --- Every lot in turn ---
-  const frames: (Frame | null)[] = land.lots.map((lot, index) => (sand.has(index) || lot.use === 'OS' ? null : frameOf(lot)));
-  for (const f of frames) if (f && f.lot.use !== 'I1' && f.lot.use !== 'I2' && f.lot.use !== 'PK') extend(f);
+  const frames: (Frame | null)[] = land.lots.map((lot, index) => (sand.has(index) ? null : frameOf(lot)));
+  // Works, car parks and open ground keep to their own fences.
+  for (const f of frames) if (f && f.lot.use !== 'I1' && f.lot.use !== 'I2' && f.lot.use !== 'PK' && f.lot.use !== 'OS') extend(f);
   out.plots = frames.map((f) => f?.poly ?? null);
   out.owner = owner;
   const done = new Set<number>();
@@ -1301,9 +1443,9 @@ export function placeBuildings(site: Site, shore: Waterfront): Buildings {
       : lot.use === 'C3' ? strip(f) || shopRow(f)
       : lot.use === 'C4' ? strip(f) || strip(f, 'C3')
       : lot.use === 'O1' || lot.use === 'O2' ? offices(f)
-      : lot.use === 'I1' || lot.use === 'I2' ? works(f)
+      : lot.use === 'I1' || lot.use === 'I2' ? works(f) || storage(f)
       : lot.use === 'PK' ? parkingLot(f)
-      : true;
+      : pocket(f);
     if (!ok) out.vacant.push(lot.id);
   }
   for (const b of out.list) if (b.main) out.count[b.use] = (out.count[b.use] ?? 0) + 1;

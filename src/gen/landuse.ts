@@ -9,7 +9,7 @@ import { RoadEdge, RoadGraph } from './roadGraph';
 import { rowWidth } from './roadSections';
 import { STATION_HALF, Station } from './stations';
 import { RoadClass } from './streamlines';
-import { Terrain, gradient, heightAt, inBounds, riverBankAt, seaDistAt, waterDistAt } from './terrain';
+import { RIVER_RESERVE, Terrain, gradient, heightAt, inBounds, riverBankAt, seaDistAt, waterDistAt } from './terrain';
 
 /**
  * Land use and lots. Every stretch of street frontage is scored for each use from its surroundings
@@ -367,7 +367,7 @@ export function planLandUse(graph: RoadGraph, t: Terrain, districts: Districts, 
     for (let i = 0; i < n; i++) {
       const x = (i + 0.5) * G;
       const y = (j + 0.5) * G;
-      if (!inBounds(t, x, y, 4) || waterDistAt(t, x, y) < 6) kind[j * n + i] = OBSTACLE;
+      if (!inBounds(t, x, y, 4) || waterDistAt(t, x, y) < 6 || riverBankAt(t, x, y) < RIVER_RESERVE) kind[j * n + i] = OBSTACLE;
     }
   }
   for (const p of districts.parks) stamp(p.center.x, p.center.y, p.radius, OBSTACLE);
@@ -689,6 +689,148 @@ export function planLandUse(graph: RoadGraph, t: Terrain, districts: Districts, 
         }
       }
     }
+  }
+
+  // --- What is left of the frontage ---
+  // A strip too shallow or too short to build on is still somebody's land: a row of parking spaces or a patch of green.
+  const FILL: Record<DistrictType, number> = { downtown: 0.85, midtown: 0.8, oldtown: 0.7, beach: 0.65, residential: 0.5, suburb: 0.3, industrial: 0.65, hills: 0 };
+  for (const e of order) {
+    const row = widthOf[e.id] / 2;
+    for (const side of [1, -1] as const) {
+      const r = rng.fork(`fill${e.id}:${side}`);
+      const frame = (s: number) => {
+        const q = pointAt(e.points, clamp(s, 0, e.length));
+        return { p: q.p, nx: -q.tan.y * side, ny: q.tan.x * side };
+      };
+      const open = (s: number): boolean => {
+        const f = frame(s);
+        return at(f.p.x + f.nx * (row + 2), f.p.y + f.ny * (row + 2)) === FREE;
+      };
+      let s = 0;
+      while (s < e.length - 4) {
+        if (!open(s)) {
+          s += G;
+          continue;
+        }
+        let clear = 0;
+        while (s + clear < e.length && clear < 36 && open(s + clear + G)) clear += G;
+        clear = Math.min(clear + G, e.length - s);
+        if (clear < 5) {
+          s += clear + G;
+          continue;
+        }
+        const width = clear > 30 ? clear / 2 : clear;
+        let depth = 30;
+        for (const c of [1, width / 2, width - 1]) {
+          const f = frame(s + c);
+          depth = Math.min(depth, probe(f.p, f.nx, f.ny, row, 30, true));
+        }
+        const [f0, fe, fc] = [frame(s), frame(s + width), frame(s + width / 2)];
+        const rear = (f: { p: Vec2; nx: number; ny: number }, d: number): Vec2 => ({ x: f.p.x + f.nx * (row + d), y: f.p.y + f.ny * (row + d) });
+        const poly: Vec2[] = [];
+        const m = Math.max(1, Math.ceil(width / 14));
+        for (let k = 0; k <= m; k++) poly.push(rear(frame(s + (width * k) / m), 0));
+        const front = poly.length;
+        const [a, b] = [rear(f0, depth), rear(fe, depth)];
+        poly.push(b, a);
+        const cells = depth < 4.5 || dist(a, b) < 0.4 * width ? [] : raster(poly, n);
+        if (cells.length < 5 || cells.some((c) => kind[c] !== FREE && kind[c] !== TAKEN) || cells.filter((c) => kind[c] === TAKEN).length > 0.15 * cells.length) {
+          s += 6;
+          continue;
+        }
+        const id = lots.length;
+        let area = 0;
+        for (const c of cells) {
+          if (kind[c] !== FREE) continue;
+          kind[c] = TAKEN;
+          grid[c] = id + 1;
+          area += G * G;
+        }
+        const site = siteAt(e, s + width / 2, rear(fc, depth / 2), [poly[0], poly[front - 1], a, b]);
+        // Room for a small house or a shop is built on, whatever else the place called for.
+        const level = site.slope < 0.08 && site.relief < 2.5;
+        const town = site.type === 'downtown' || site.type === 'midtown' || site.type === 'oldtown';
+        const use: LandUse =
+          level && depth >= 15 && width >= 10 && e.cls !== 'alley' ? (site.type === 'industrial' ? 'I1' : town || (site.type === 'beach' && e.cls !== 'local') ? 'C1' : 'R1')
+          : level && depth >= 5.5 && width >= 7.5 && e.cls !== 'alley' && r.next() < FILL[site.type] ? 'PK'
+          : 'OS';
+        lots.push({ id, use, poly, front, edge: e.id, side, s0: s, s1: s + width, width, depth, area, corner: false, floors: use === 'R1' || use === 'C1' ? floorsFor(use, site, false, r) : 0, site });
+        s += width;
+      }
+    }
+  }
+
+  // --- Big neighbours ---
+  // A hospital, a mall, an office tower or a works does not stand wall to wall with small houses: the lots beside one
+  // are flats, shops and parking, and beside industry a strip of parking or green.
+  const weight = (l: Lot): number =>
+    l.use === 'I2' || (l.use === 'I1' && l.area > 4000) ? 2
+    : l.use === 'C4' || l.use === 'O2' || (l.use === 'CV' && l.area > 2600) || ((l.use === 'R3' || l.use === 'O1') && l.floors >= 7) ? 1
+    : 0;
+  const beside = new Uint8Array(n * n);
+  let rim: number[] = [];
+  for (let c = 0; c < n * n; c++) {
+    const w = grid[c] ? weight(lots[grid[c] - 1]) : 0;
+    if (w) {
+      beside[c] = w;
+      rim.push(c);
+    }
+  }
+  // Five cells out, and never across a street.
+  for (let step = 0; step < 5; step++) {
+    const next: number[] = [];
+    for (const c of rim)
+      for (const o of [c - 1, c + 1, c - n, c + n]) {
+        if (o < 0 || o >= n * n || beside[o] || (kind[o] !== FREE && kind[o] !== TAKEN)) continue;
+        beside[o] = beside[c];
+        next.push(o);
+      }
+    rim = next;
+  }
+  const near = new Map<number, number>();
+  for (let c = 0; c < n * n; c++) if (beside[c] && grid[c] && lots[grid[c] - 1].use === 'R1') near.set(grid[c] - 1, Math.max(near.get(grid[c] - 1) ?? 0, beside[c]));
+  const rows = new Map<string, Lot[]>();
+  for (const id of [...near.keys()].sort((a, b) => a - b)) {
+    const l = lots[id];
+    const key = `${l.edge}:${l.side}`;
+    rows.set(key, [...(rows.get(key) ?? []), l]);
+  }
+  const gone = new Map<number, Lot>();
+  for (const [key, row] of rows) {
+    row.sort((a, b) => a.s0 - b.s0);
+    const r = rng.fork(`beside${key}`);
+    const main = edges[row[0].edge].cls === 'arterial' || edges[row[0].edge].cls === 'collector';
+    for (let k = 0; k < row.length; k++) {
+      const [a, b] = [row[k], row[k + 1]];
+      if (near.get(a.id) === 2) {
+        const u = r.next();
+        a.use = main || u < 0.2 ? 'C1' : u < 0.65 ? 'PK' : 'OS';
+        a.floors = a.use === 'C1' ? 1 : 0;
+        continue;
+      }
+      if (b && near.get(b.id) === 1 && Math.abs(b.s0 - a.s1) < 1 && a.width + b.width <= 40 && a.poly.length === a.front + 2 && b.poly.length === b.front + 2) {
+        // Two house lots make one for a block of flats.
+        a.poly = [...a.poly.slice(0, a.front), ...b.poly.slice(1, b.front), b.poly[b.front], a.poly[a.front + 1]];
+        a.front += b.front - 1;
+        [a.s1, a.width, a.depth, a.area, a.corner] = [b.s1, a.width + b.width, Math.min(a.depth, b.depth), a.area + b.area, a.corner || b.corner];
+        a.site = { ...a.site, relief: Math.max(a.site.relief, b.site.relief), slope: Math.max(a.site.slope, b.site.slope) };
+        gone.set(b.id, a);
+        a.use = 'R2';
+        k++;
+      } else a.use = a.width >= 15 ? 'R2' : main ? 'C1' : r.next() < 0.5 ? 'PK' : 'R2';
+      a.floors = a.use === 'PK' ? 0 : floorsFor(a.use, a.site, a.corner, r);
+    }
+  }
+  if (gone.size) {
+    const index = new Int32Array(lots.length).fill(-1);
+    const kept = lots.filter((l) => !gone.has(l.id));
+    const was = kept.map((l) => l.id);
+    kept.forEach((l, i) => (l.id = i));
+    was.forEach((id, i) => (index[id] = i));
+    for (const [id, l] of gone) index[id] = l.id;
+    for (let c = 0; c < n * n; c++) if (grid[c]) grid[c] = index[grid[c] - 1] + 1;
+    lots.length = 0;
+    lots.push(...kept);
   }
 
   const area = {} as Record<LandUse, number>;

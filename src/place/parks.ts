@@ -836,12 +836,16 @@ export function placeParks(site: Site): { parks: ParkPlan[]; tiles: ModelData[] 
       const walk = (k: number): number => 1 + (clr0[k] * C < 4 ? 3 : 0) + noise(seed + pi, cx(k % w), cy(Math.floor(k / w)), 26) * 1.2 - (occ[k] === PATH ? 0.7 : 0) + (occ[k] === OPEN ? 0.8 : 0);
       const atMiddle = (k: number): boolean => Math.hypot(cx(k % w) - middle.x, cy(Math.floor(k / w)) - middle.y) < Math.max(3, hubR - 1);
       const inside = (e: ParkEntrance): Vec2 => ({ x: e.x + e.nx * 2.2, y: e.y + e.ny * 2.2 });
+      const shut = new Set<ParkEntrance>();
       plan.entrances.forEach((e, i) => {
         // The gateway itself: from the back of the pavement to the first of the grass.
         const stub = [e.from ?? { x: e.x - e.nx * 1.4, y: e.y - e.ny * 1.4 }, inside(e)];
         const way = route(inside(e), i === 0 ? atMiddle : (k) => laid[k] === 1 || atMiddle(k), walk);
-        addPath(way ? [stub[0], ...way] : stub, i === 0 ? 'main' : 'link');
+        // A further way in that cannot reach the rest of the park (a corner cut off by a street or a bank) is no way in.
+        if (i > 0 && !way) shut.add(e);
+        else addPath(way ? [stub[0], ...way] : stub, i === 0 ? 'main' : 'link');
       });
+      plan.entrances = plan.entrances.filter((e) => !shut.has(e));
       if ((tier === 'central' || tier === 'district') && plan.entrances.length >= 3) {
         const ring = tier === 'central' ? 16 : 9;
         const order = [...plan.entrances].sort((a, c) => Math.atan2(a.y - centre.y, a.x - centre.x) - Math.atan2(c.y - centre.y, c.x - centre.x));
