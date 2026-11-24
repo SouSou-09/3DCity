@@ -510,7 +510,10 @@ export function buildPerson(b: MeshBuilder, who: Person): void {
   const jaw = fem ? 0.92 : child ? 0.96 : 1;
   const headMat = `person/head-${who.head}`;
   const hp = (q: V3): V3 => at(neckTop, headM, v3.scale(v3.sub(q, PIVOT), hh));
-  skin(b, headMat, HEAD_TS.map((t) => HEAD_US.map((u) => hp(headPt(u === 1 ? 0 : u, t, hair, jaw)))), HEAD_US, HEAD_TS, [0, 0, 1, 1]);
+  const skull = HEAD_TS.map((t) => HEAD_US.map((u) => hp(headPt(u === 1 ? 0 : u, t, hair, jaw))));
+  // Closed under the chin, where the neck does not reach.
+  const under = v3.scale(skull[0].reduce((a, q) => v3.add(a, q), [0, 0, 0] as V3), 1 / skull[0].length);
+  skin(b, headMat, [skull[0].map(() => under), ...skull], HEAD_US, [0, ...HEAD_TS], [0, 0, 1, 1]);
   // Hair that hangs: a curtain around the back from ear to ear, a tail, a knot.
   const style = HAIRS[face.style] as Hair;
   if (style.ears && style.thick < 0.1) {
