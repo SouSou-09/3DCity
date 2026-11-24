@@ -591,7 +591,8 @@ export function buildPerson(b: MeshBuilder, who: Person): void {
     const R = hand(-1);
     const Lh = hand(1);
     if (item === 'phone') {
-      const m: M3 = [v3.scale(R.Mh[2], 1), R.Mh[1], R.palm];
+      // A right-handed frame: the screen faces out of the palm, its top at the fingertips.
+      const m: M3 = [v3.scale(v3.cross(R.Mh[1], R.palm), -1), v3.scale(R.Mh[1], -1), R.palm];
       crate(b, 'person/gear', [0.26, 0.26, 0.262, 0.262], v3.mad(v3.mad(R.grip, R.Mh[1], -0.02), R.palm, 0.018), m, [0.036, 0.075, 0.004], cellRect(gearCell('phone'), [1, 1]));
     } else if (item === 'cup') {
       const h = pose.l?.curl && pose.l.curl > 1 ? Lh : R;
