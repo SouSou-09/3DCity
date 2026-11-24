@@ -3,8 +3,8 @@ import { MODELS, MODEL_CATEGORIES, ModelCategory } from '../src/assets/mesh/regi
 import { TEXTURES, TextureCategory, TextureData, renderTexture, textureSpec } from '../src/assets/tex';
 import { MeshBuilder } from '../src/assets/mesh/builder';
 import { TRADES, Trade, fitBay } from '../src/assets/mesh/shopfit';
-import { PEOPLE, Person } from '../src/assets/mesh/people';
-import { BOTTOMS, HEADS, TOPS } from '../src/assets/tex';
+import { limb, PEOPLE, Person } from '../src/assets/mesh/people';
+import { BOTTOMS, HAIRS, HEADS, TOPS } from '../src/assets/tex';
 
 const count = <T extends string>(items: readonly { category: T }[]): Map<T, number> => {
   const m = new Map<T, number>();
@@ -322,6 +322,52 @@ describe('people', { timeout: 120_000 }, () => {
       let eye = Infinity;
       for (let du = 0.05; du < 0.08; du += 0.004) for (let v = 0.47; v < 0.53; v += 0.004) eye = Math.min(eye, lum(t, 0.5 + du, v));
       expect(eye, id).toBeLessThan(lum(t, 0.5 + 0.11, 0.36) - 120);
+    }
+  });
+
+  it('is closed where parts meet: cuffs at a bent elbow, the wrists, under the chin', () => {
+    // A cuff asked for inside the fold of a bent joint ends at the fold's edge, not a station short.
+    const frame = (a: number): [[number, number, number], [number, number, number], [number, number, number]] => [[1, 0, 0], [0, Math.cos(a), Math.sin(a)], [0, -Math.sin(a), Math.cos(a)]];
+    const ss = [0, 0.3, 0.6, 0.86];
+    const ends = (bend: number): number[] => limb([0, 1, 0], frame(0), 0.3, frame(bend), 0.25, () => 0.045, ss).map((q) => q.s);
+    expect(ends(0)).toEqual(ss);
+    for (const bend of [1.8, 2.3]) {
+      const got = ends(bend);
+      expect(got.length, `bend ${bend}`).toBe(ss.length);
+      expect(got[3], `bend ${bend}`).toBeGreaterThan(0.6);
+      expect(got[3], `bend ${bend}`).toBeLessThan(0.86);
+    }
+    const key = (p: { positions: number[] }, i: number): string => [0, 1, 2].map((k) => p.positions[i * 3 + k].toFixed(5)).join(',');
+    for (const { id, who, data } of all) {
+      // Skin reaches the wrist under every long sleeve: the hand is not left floating below the cuff.
+      const skin = data.parts.filter((p) => p.material.startsWith('person/skin-'));
+      expect(skin.reduce((n, p) => n + p.indices.length / 3, 0), id).toBeGreaterThanOrEqual(440);
+      // The head has no open edge unless hair hangs from it as a sheet.
+      const head = data.parts.find((p) => p.material === `person/head-${who.head}`)!;
+      const edges = new Map<string, number>();
+      for (let t = 0; t < head.indices.length; t += 3) {
+        for (let e = 0; e < 3; e++) {
+          const [a, c] = [key(head, head.indices[t + e]), key(head, head.indices[t + ((e + 1) % 3)])];
+          if (a !== c) edges.set(a < c ? `${a}|${c}` : `${c}|${a}`, (edges.get(a < c ? `${a}|${c}` : `${c}|${a}`) ?? 0) + 1);
+        }
+      }
+      const open = [...edges.values()].filter((n) => n === 1).length;
+      const style = HAIRS[HEADS[who.head].style] as { ears?: boolean; thick: number };
+      if (!(style.ears && style.thick < 0.1)) expect(open, id).toBe(0);
+      // A phone faces outwards: each triangle winds the way its normals point.
+      if (who.hat || who.carry?.join() !== 'phone') continue;
+      for (const p of data.parts.filter((q) => q.material === 'person/gear')) {
+        for (let t = 0; t < p.indices.length; t += 3) {
+          const [a, c, d] = [0, 1, 2].map((e) => p.indices[t + e] * 3);
+          const at = (i: number, k: number): number => p.positions[i + k];
+          const e1 = [0, 1, 2].map((k) => at(c, k) - at(a, k));
+          const e2 = [0, 1, 2].map((k) => at(d, k) - at(a, k));
+          const g = [e1[1] * e2[2] - e1[2] * e2[1], e1[2] * e2[0] - e1[0] * e2[2], e1[0] * e2[1] - e1[1] * e2[0]];
+          if (Math.hypot(g[0], g[1], g[2]) < 1e-10) continue;
+          const dot = [0, 1, 2].reduce((n, k) => n + g[k] * (p.normals[a + k] + p.normals[c + k] + p.normals[d + k]), 0);
+          expect(dot, id).toBeGreaterThanOrEqual(0);
+        }
+      }
     }
   });
 });
