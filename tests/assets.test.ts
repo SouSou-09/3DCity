@@ -182,7 +182,9 @@ describe('shops and cars you can see into', { timeout: 120_000 }, () => {
 
   it('gives all but the empty shops a room behind real glass, and the room stays inside the building', () => {
     const bare = shops.filter((s) => !by.has(`prop/interior-${s.id.slice(5)}`)).map((s) => s.id);
-    expect(bare.length, bare.join(' ')).toBeLessThanOrEqual(4);
+    expect(bare.length, bare.join(' ')).toBeLessThanOrEqual(2);
+    // A front painted as an empty shop still trades where its sign names a trade: only the units to let stay papered over.
+    expect(bare).not.toContain('shop/mixed-12');
     for (const kind of ['store', 'mixed', 'gas', 'fastfood', 'diner', 'bank', 'bigbox', 'garage'])
       expect(shops.filter((s) => s.id.startsWith(`shop/${kind}-`) && !bare.includes(s.id)).length, kind).toBeGreaterThanOrEqual(3);
     for (const s of shops) {

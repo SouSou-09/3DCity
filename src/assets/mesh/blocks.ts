@@ -154,7 +154,7 @@ export interface ShopUnit { x: number; w: number; v: number; sign: string | null
 /** Frames the glazing comes in, by the painted shop front it stands in for. */
 export const FRAMES: Record<string, string> = {
   'shop-aluminium': 'aluminium', 'shop-aluminium-tile': 'aluminium', 'shop-black': 'black', 'shop-bronze': 'bronze', 'shop-white': 'white', 'shop-green': 'green', 'shop-red': 'red', 'shop-blue': 'blue', 'shop-brick-kick': 'bronze', 'shop-old': 'white',
-  'shop-low-aluminium': 'aluminium', 'shop-low-black': 'black',
+  'shop-low-aluminium': 'aluminium', 'shop-low-black': 'black', 'shop-vacant': 'aluminium', 'shop-vacant-brown': 'bronze',
 };
 /** Divides the ground floor into shops, drawing on `rnd` as the building always has. */
 export function shopUnits(o: BlockOpts, rnd: Rand): ShopUnit[] {
