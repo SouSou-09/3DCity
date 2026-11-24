@@ -46,6 +46,12 @@ export interface CarSpec {
   bed?: boolean;
   /** Rails on the roof. */
   rails?: boolean;
+  /** Cloth of the seats. */
+  trim?: VehiclePart;
+  /** Rows of seats behind the front ones, where there is room for them. */
+  rows?: number;
+  /** A screen between the front seats and the back. */
+  cage?: boolean;
   extra?: (b: MeshBuilder, s: CarSpec) => void;
 }
 
@@ -113,6 +119,67 @@ function wheel(b: MeshBuilder, kind: CarSpec['wheel'], x: number, r: number, zIn
   }
 }
 
+/**
+ * What is seen through the glass: the seats, the dashboard and the wheel, and the linings of the floor, the doors and the roof.
+ * `sill` is the height of the foot of the windows and `roof` that of the shell over the cabin, both along the car.
+ */
+function inside(b: MeshBuilder, s: CarSpec, sill: (x: number) => number, roof: (x: number) => number): void {
+  const [c0, c1, c2, c3] = s.cabin;
+  const [hw, H] = [s.wid / 2, s.hgt];
+  const cloth = s.trim ?? 'seat';
+  const floor = (s.clear ?? 0.17) + 0.1;
+  const zi = hw - 0.07;
+  const hr = hw - (s.tumble ?? 0.14);
+  part(b, 'black', [[c0, floor, -zi], [c3, floor, -zi], [c3, floor, zi], [c0, floor, zi]], 'up');
+  for (const sd of [1, -1]) part(b, cloth, [[c0, floor, sd * zi], [c3, floor, sd * zi], [c3, sill(c3) - 0.01, sd * zi], [c0, sill(c0) - 0.01, sd * zi]], sd > 0 ? 'left' : 'right');
+  part(b, 'dark', [[c3 + 0.03, floor, zi], [c3 + 0.03, floor, -zi], [c3 + 0.03, sill(c3), -zi], [c3 + 0.03, sill(c3), zi]], 'back');
+  part(b, 'dark', [[c0, floor, -zi], [c0, floor, zi], [c0, sill(c0), zi], [c0, sill(c0), -zi]], 'front');
+  part(b, cloth === 'seat-tan' ? 'seat-tan' : 'liner', [[c1 + 0.02, H - 0.025, -hr + 0.03], [c2 - 0.02, H - 0.025, -hr + 0.03], [c2 - 0.02, H - 0.025, hr - 0.03], [c1 + 0.02, H - 0.025, hr - 0.03]], 'down');
+  // A seat with its back at x: the cushion on its box, the back as high as the shell over it allows, and the head restraints.
+  const seat = (x: number, z: number, w: number, heads: number[]): boolean => {
+    const top = sill(x) - 0.26;
+    const bt = Math.min(sill(x) + 0.24, roof(x - 0.14) - 0.3);
+    if (bt < top + 0.15) return false;
+    block(b, cloth, [x + 0.24, (floor + top) / 2, z], [0.25, (top - floor) / 2, w], 'd');
+    block(b, cloth, [x - 0.07, (top + bt) / 2, z], [0.07, (bt - top) / 2, w], 'd');
+    for (const hz of heads) block(b, cloth, [x - 0.06, bt + 0.11, z + hz], [0.045, 0.085, 0.11], 'd');
+    return true;
+  };
+  const xs = Math.max(c0 + 0.2, c3 - 1.1);
+  const [zs, ws] = [hw * 0.46, Math.min(0.25, hw * 0.46 - 0.05)];
+  for (const sd of [1, -1]) seat(xs, sd * zs, ws, [0]);
+  const rows = s.blind !== undefined ? 0 : Math.min(s.rows ?? 1, Math.floor((xs - 0.15 - c0) / 0.78));
+  let last = xs;
+  for (let k = 1; k <= rows; k++) if (seat(xs - 0.8 * k, 0, zi - 0.05, hw > 0.85 ? [-0.5, 0, 0.5] : [-0.36, 0.36])) last = xs - 0.8 * k;
+  if (s.blind !== undefined) part(b, 'black', [[xs - 0.2, floor, -zi], [xs - 0.2, floor, zi], [xs - 0.2, H - 0.04, hr - 0.02], [xs - 0.2, H - 0.04, -hr + 0.02]], 'front');
+  else if (last - 0.14 - c0 > 0.1) {
+    // Behind the last seats: the shelf under the rear window, or the cover over the luggage.
+    const y = sill(c0) - 0.09;
+    part(b, 'dark', [[c0, y, -zi], [last - 0.14, y, -zi], [last - 0.14, y, zi], [c0, y, zi]], 'up');
+  }
+  if (s.cage) part(b, 'grille-mesh', [[xs - 0.17, sill(xs) - 0.3, -hr + 0.04], [xs - 0.17, sill(xs) - 0.3, hr - 0.04], [xs - 0.17, H - 0.05, hr - 0.04], [xs - 0.17, H - 0.05, -hr + 0.04]], 'front');
+  // The dashboard under the windscreen, the instruments in front of the driver, who sits on the left, and the wheel.
+  const yd = sill(c3);
+  block(b, 'black', [c3 - 0.2, yd - 0.16, 0], [0.24, 0.15, zi], 'd');
+  block(b, 'black', [c3 - 0.36, yd + 0.02, -zs], [0.08, 0.035, 0.17], 'd');
+  block(b, 'black', [c3 - 0.44, yd - 0.09, -zs], [0.1, 0.03, 0.03], 'd');
+  const C: V3 = [c3 - 0.55, yd - 0.05, -zs];
+  const n: V3 = [-0.906, 0.423, 0];
+  const W = (r: number, a: number): V3 => [C[0] + 0.423 * r * Math.sin(a), C[1] + 0.906 * r * Math.sin(a), C[2] + r * Math.cos(a)];
+  for (let i = 0; i < 10; i++) {
+    const [a0, a1] = [(i / 10) * Math.PI * 2, ((i + 1) / 10) * Math.PI * 2];
+    part(b, 'black', [W(0.145, a0), W(0.185, a0), W(0.185, a1), W(0.145, a1)], n);
+  }
+  part(b, 'black', [[C[0] - 0.008, C[1] - 0.018, C[2] - 0.15], [C[0] - 0.008, C[1] - 0.018, C[2] + 0.15], [C[0] + 0.008, C[1] + 0.018, C[2] + 0.15], [C[0] + 0.008, C[1] + 0.018, C[2] - 0.15]], n);
+  // Between the seats: the console and the lever on it; and the mirror at the head of the windscreen.
+  const top = sill(xs) - 0.26;
+  if (xs + 0.1 < c3 - 0.46) {
+    block(b, 'black', [(xs + 0.1 + c3 - 0.44) / 2, (floor + top) / 2 + 0.02, 0], [(c3 - 0.44 - xs - 0.1) / 2, (top - floor) / 2 + 0.02, Math.max(0.03, zs - ws - 0.02)], 'd');
+    block(b, 'chrome', [c3 - 0.72, top + 0.09, 0], [0.014, 0.05, 0.014], 'd');
+  }
+  block(b, 'black', [c2 + 0.06, Math.min(H - 0.12, roof(c2 + 0.08) - 0.07), 0], [0.012, 0.03, 0.11], '');
+}
+
 /** Builds a car from its measures. */
 export function car(b: MeshBuilder, s: CarSpec): void {
   const paint = s.paint ?? PAINT;
@@ -164,23 +231,38 @@ export function car(b: MeshBuilder, s: CarSpec): void {
     const S = (x: number, t: number, sd: number, proud = 0): V3 => [x, lerp(base(x), H, t), sd * (lerp(hb, hr, t) + proud)];
     for (const sd of [1, -1]) {
       const dir: V3 = [0, 0.25, sd];
-      skin(b, paint, [S(c0, 0, sd), S(c3, 0, sd), S(c2, 1, sd), S(c1, 1, sd)], dir);
+      // The side is what is left round the windows: a band below them, one above, and the pillars between.
+      const [t0, t1] = [0.08, 0.9];
+      const strip = (ta: number, tb: number, fa: (t: number) => number, fb: (t: number) => number): void => skin(b, paint, [S(fa(ta), ta, sd), S(fb(ta), ta, sd), S(fb(tb), tb, sd), S(fa(tb), tb, sd)], dir);
+      strip(0, t0, rearX, frontX);
+      strip(t1, 1, rearX, frontX);
+      let prev = rearX;
       const cuts = [-Infinity, ...(s.pillars ?? []), Infinity];
       for (let i = 0; i + 1 < cuts.length; i++) {
         const [A, B] = [cuts[i], cuts[i + 1]];
         if (s.blind !== undefined && (Number.isFinite(A) ? A : c0) < s.blind - 0.01) continue;
         const xa = (t: number): number => (Number.isFinite(A) ? A + 0.035 : rearX(t) + 0.075);
         const xb = (t: number): number => (Number.isFinite(B) ? B - 0.035 : frontX(t) - 0.075);
-        const [t0, t1] = [0.08, 0.9];
         if (xb(t1) - xa(t1) < 0.08) continue;
-        skin(b, GLASS, [S(xa(t0), t0, sd, 0.006), S(xb(t0), t0, sd, 0.006), S(xb(t1), t1, sd, 0.006), S(xa(t1), t1, sd, 0.006)], dir);
+        strip(t0, t1, prev, xa);
+        // Glass shows from one side only: a pane has a face for the street and one for the cabin.
+        for (const q of [1, -1]) skin(b, GLASS, [S(xa(t0), t0, sd), S(xb(t0), t0, sd), S(xb(t1), t1, sd), S(xa(t1), t1, sd)], [0, 0.25 * q, sd * q]);
+        prev = xb;
       }
+      strip(t0, t1, prev, frontX);
     }
     // Windscreen, rear window and roof.
     const pane = (xa: number, ya: number, xb: number, dirX: number, glass: boolean): void => {
-      const P = (t: number, z: number, proud = 0): V3 => [lerp(xa, xb, t) + dirX * proud, lerp(ya, H, t) + proud, z];
-      skin(b, paint, [P(0, hb), P(0, -hb), P(1, -hr), P(1, hr)], [dirX, 0.6, 0]);
-      if (glass) skin(b, GLASS, [P(0.06, hb - 0.07, 0.006), P(0.06, -hb + 0.07, 0.006), P(0.94, -hr + 0.06, 0.006), P(0.94, hr - 0.06, 0.006)], [dirX, 0.6, 0]);
+      const P = (t: number, z: number): V3 => [lerp(xa, xb, t), lerp(ya, H, t), z];
+      const d: V3 = [dirX, 0.6, 0];
+      if (!glass) return skin(b, paint, [P(0, hb), P(0, -hb), P(1, -hr), P(1, hr)], d);
+      const [ta, tb] = [0.06, 0.94];
+      const out = (t: number): number => lerp(hb, hr, t);
+      const gz = (t: number): number => lerp(hb - 0.07, hr - 0.06, (t - ta) / (tb - ta));
+      skin(b, paint, [P(0, hb), P(0, -hb), P(ta, -out(ta)), P(ta, out(ta))], d);
+      skin(b, paint, [P(tb, out(tb)), P(tb, -out(tb)), P(1, -hr), P(1, hr)], d);
+      for (const sd of [1, -1]) skin(b, paint, [P(ta, sd * gz(ta)), P(ta, sd * out(ta)), P(tb, sd * out(tb)), P(tb, sd * gz(tb))], d);
+      for (const q of [1, -1]) skin(b, GLASS, [P(ta, gz(ta)), P(ta, -gz(ta)), P(tb, -gz(tb)), P(tb, gz(tb))], [dirX * q, 0.6 * q, 0]);
     };
     pane(c3, y3, c2, 1, true);
     pane(c0, y0, c1, -1, s.blind === undefined);
@@ -188,6 +270,7 @@ export function car(b: MeshBuilder, s: CarSpec): void {
     if (s.rails) for (const sd of [1, -1]) block(b, 'black', [(c1 + c2) / 2, H + 0.035, sd * (hr - 0.08)], [(c2 - c1) / 2 - 0.15, 0.025, 0.02], 'd');
     // Mirrors.
     for (const sd of [1, -1]) shell(b, paint, [c3 - 0.12, y3 + 0.05, sd * (hw + 0.07)], [0.045, 0.055, 0.085]);
+    inside(b, s, base, (x) => (x < c1 ? lerp(y0, H, (x - c0) / Math.max(1e-6, c1 - c0)) : x > c2 ? lerp(H, y3, (x - c2) / Math.max(1e-6, c3 - c2)) : H));
   }
   if (s.bed) part(b, 'dark', [[-L + 0.12, s.tail + 0.003, hw - 0.14], [c0 - 0.1, s.tail + 0.003, hw - 0.14], [c0 - 0.1, s.tail + 0.003, -hw + 0.14], [-L + 0.12, s.tail + 0.003, -hw + 0.14]], 'up');
 
@@ -367,6 +450,14 @@ CARS.push(
 );
 
 /** Length and width of each car on the ground. */
+// What they are trimmed in, and which have a third row.
+const TRIM: VehiclePart[] = ['seat', 'seat-tan', 'seat-black', 'seat-grey', 'seat', 'seat-black'];
+CARS.forEach(([id, , spec], i) => {
+  spec.trim ??= id.startsWith('truck') || id.includes('pickup') || id === 'kei-truck' ? 'seat-black' : TRIM[i % TRIM.length];
+  if (id === 'minivan' || id === 'suv-large' || id === 'van-windows') spec.rows = 2;
+  if (id === 'police') spec.cage = true;
+});
+
 export const CAR_SIZE = new Map(
   CARS.map(([id, , s]) => {
     const box = id.startsWith('truck');

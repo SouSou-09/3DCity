@@ -25,9 +25,14 @@ add('shadow', '車の下の影', [1, 1], (t) => {
 }, { decal: true, density: 32 });
 add('glass', '車の窓ガラス', [1, 1], (t, s) => {
   const a = new Art(t, [0.05, 0.065, 0.08], 0.05);
+  // Tinted, and the sky lies on it: the cabin shows through.
+  t.map((_x, y, k) => {
+    a.L.alpha[k] = 0.36 + 0.22 * sstep(0.45, 1, y);
+    return 0;
+  });
   a.rect([0.32, 0.4, 0.5], 0, 0.55, 1, 1, { rough: 0.05, opacity: 0.22, soft: 0.3 });
   return a.done(s, 0.08);
-}, { tile: 'x', density: 64, reflect: 0.9 });
+}, { tile: 'x', decal: true, density: 64, reflect: 0.9 });
 
 /** Where each small part lies in the sheet of parts, in metres: x0, y0, x1, y1. */
 export const VEHICLE_PARTS = {
@@ -56,6 +61,10 @@ export const VEHICLE_PARTS = {
   chrome: [0.43, 0.03, 0.59, 0.15],
   dark: [0.63, 0.03, 0.79, 0.15],
   seat: [0.83, 0.03, 0.97, 0.15],
+  'seat-tan': [0.36, 0.54, 0.44, 0.595],
+  'seat-grey': [0.45, 0.54, 0.53, 0.595],
+  'seat-black': [0.54, 0.54, 0.62, 0.595],
+  liner: [0.63, 0.54, 0.69, 0.595],
 } as const satisfies Record<string, readonly [number, number, number, number]>;
 export type VehiclePart = keyof typeof VEHICLE_PARTS;
 
@@ -213,7 +222,10 @@ add('parts', '車の部品(灯火・ホイール・グリル・ナンバー)', [
   for (let x = P.rubber[0] - 0.03; x < P.rubber[2] + 0.03; x += 0.016) a.rect([0.012, 0.012, 0.012], x, P.rubber[1] - 0.03, x + 0.005, P.rubber[3] + 0.03, { rough: 0.95, height: -0.004 });
   fill(P.chrome, CHROME, { rough: 0.18, metal: 0.95 });
   fill(P.dark, [0.012, 0.012, 0.013], { rough: 0.95 });
-  fill(P.seat, [0.16, 0.16, 0.18], { rough: 0.9 });
+  fill(P.seat, [0.23, 0.23, 0.26], { rough: 0.9 });
+  // Other trims of the cabin: tan and pale grey cloth, black vinyl, and the lining of the roof.
+  for (const [r, c] of [[P['seat-tan'], [0.6, 0.48, 0.33]], [P['seat-grey'], [0.5, 0.5, 0.52]], [P['seat-black'], [0.075, 0.075, 0.08]], [P.liner, [0.6, 0.59, 0.56]]] as [readonly [number, number, number, number], RGB][])
+    a.rect(c, r[0], r[1], r[2], r[3], { rough: 0.92 });
   return a.done(s, 0.05);
 }, { density: 512 });
 

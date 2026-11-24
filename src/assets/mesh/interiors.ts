@@ -2,7 +2,8 @@ import { MeshBuilder } from './builder';
 import { Opening, sides, slab, wall, weathering } from './buildkit';
 import { at, box, face, move, stand, turn } from './kit';
 import { PROP_PARTS } from '../tex';
-import { CHAIR, Machine, Setting, booth, counter, dineSet, highChair, machine, mat, menuBoard, pendant, stool, trayBin, wetFloor } from './props';
+import { CHAIR, Machine, Setting, booth, chair, counter, dineSet, highChair, machine, mat, menuBoard, pendant, register, stool, trayBin, wetFloor } from './props';
+import { atm, desk, notice, plant, sofa, stanchions, wicket } from './shopfit';
 
 /** How a restaurant is fitted out inside. */
 export interface Inside {
@@ -26,6 +27,8 @@ export interface Inside {
   bin: string;
   /** Along the walls: 0 booths both sides, 1 booths and a bar at the window, 2 small tables. */
   seating: 0 | 1 | 2;
+  /** A bank rather than a restaurant: tellers behind glass, desks and a queue. */
+  fit?: 'bank';
 }
 export interface Room { seed: number; w: number; d: number; h: number; lift: number; dw: number; in: Inside }
 
@@ -104,6 +107,28 @@ export function furnish(b: MeshBuilder, r: Room): void {
     }
   };
   mat(b, move(F, 0, 0, p.zf - 0.75), n % 2 ? 'prop/mat-rubber' : 'prop/mat-welcome');
+  if (s.fit === 'bank') {
+    // The tellers across the back behind their glass, and the rope that people queue along.
+    wicket(b, move(F, 0, 0, p.zc), 2 * p.X - 0.02, s.counter, s.counterTop);
+    for (let x = -p.X + 1.2, i = 0; x < p.X - 0.6; x += 1.9, i++) {
+      register(b, move(F, x, 1.09, p.zc - 0.08));
+      chair(b, turn(move(F, x + 0.1, 0, p.zc - 0.9), 180 + ((i * 7 + n) % 5) * 8 - 16), CHAIR[s.chair]);
+    }
+    const deep = p.zf - p.zc;
+    stanchions(b, F, deep > 7 ? [[-1.7, p.zc + 1.5], [1.7, p.zc + 1.5], [1.7, p.zc + 2.6], [-1.7, p.zc + 2.6], [-1.7, p.zc + 3.7]] : [[-1.7, p.zc + 1.5], [1.7, p.zc + 1.5], [1.7, p.zc + 2.6]]);
+    // Desks down one side for the business that takes longer, somewhere to wait down the other, and the machines by the door.
+    for (let z = p.zc + 2.4, i = 0; z < p.zf - 2.4; z += 2.7, i++) {
+      const d = turn(move(F, -p.X + 1.1, 0, z), 90);
+      desk(b, d, 1.5, s.top, CHAIR[s.chair], n + i);
+      for (const sx of [-0.35, 0.35]) if ((i + n + (sx > 0 ? 1 : 0)) % 3) chair(b, turn(move(d, sx, 0, 0.95), 180 + sx * 30), CHAIR[s.chair]);
+    }
+    for (let z = p.zc + 2.6, i = 0; z < p.zf - 3.6; z += 2.5, i++) sofa(b, turn(move(F, p.X - 0.45, 0, z), -90), 1.9, s.vinyl);
+    for (let i = 0; i < 2; i++) atm(b, turn(move(F, p.X, 0, p.zf - 1.4 - i * 0.85), -90));
+    for (const sx of [-1, 1]) plant(b, move(F, sx * (p.X - 0.45), 0, p.zf - 0.5 - (sx > 0 ? 2.4 : 0)));
+    s.posters.forEach((t, i) => notice(b, move(turn(move(F, -p.X, 0, p.zf - 1.6 - i * 1.1), 90), 0, 1.75, 0.01), t.slice(5)));
+    void lamp;
+    return;
+  }
   if (s.plan === 'deep') {
     const hw = p.cw / 2;
     line(-hw + 0.7, hw - 0.7, p.zk, s.machines);

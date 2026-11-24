@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { MODELS, MODEL_CATEGORIES, ModelCategory } from '../src/assets/mesh/registry';
 import { TEXTURES, TextureCategory, TextureData, renderTexture, textureSpec } from '../src/assets/tex';
+import { MeshBuilder } from '../src/assets/mesh/builder';
+import { TRADES, Trade, fitBay } from '../src/assets/mesh/shopfit';
 
 const count = <T extends string>(items: readonly { category: T }[]): Map<T, number> => {
   const m = new Map<T, number>();
@@ -170,6 +172,78 @@ describe('model registry', { timeout: 120_000 }, () => {
       const key = `${data.triangles}|${data.min.map((v) => v.toFixed(2))}|${data.max.map((v) => v.toFixed(2))}|${data.parts.map((p) => `${p.material}:${p.indices.length}`).join(',')}`;
       expect(seen.get(key), `${spec.id} duplicates ${seen.get(key)}`).toBeUndefined();
       seen.set(key, spec.id);
+    }
+  });
+});
+
+describe('shops and cars you can see into', { timeout: 120_000 }, () => {
+  const by = new Map(MODELS.map((m) => [m.id, m]));
+  const shops = MODELS.filter((m) => m.category === 'shop');
+
+  it('gives all but the empty shops a room behind real glass, and the room stays inside the building', () => {
+    const bare = shops.filter((s) => !by.has(`prop/interior-${s.id.slice(5)}`)).map((s) => s.id);
+    expect(bare.length, bare.join(' ')).toBeLessThanOrEqual(2);
+    // A front painted as an empty shop still trades where its sign names a trade: only the units to let stay papered over.
+    expect(bare).not.toContain('shop/mixed-12');
+    for (const kind of ['store', 'mixed', 'gas', 'fastfood', 'diner', 'bank', 'bigbox', 'garage'])
+      expect(shops.filter((s) => s.id.startsWith(`shop/${kind}-`) && !bare.includes(s.id)).length, kind).toBeGreaterThanOrEqual(3);
+    for (const s of shops) {
+      const room = by.get(`prop/interior-${s.id.slice(5)}`);
+      if (!room) continue;
+      const [a, r] = [s.build(), room.build()];
+      expect(r.triangles, room.id).toBeGreaterThan(100);
+      for (let i = 0; i < 3; i++) {
+        expect(r.min[i], `${room.id} axis ${i}`).toBeGreaterThanOrEqual(a.min[i] - 0.02);
+        expect(r.max[i], `${room.id} axis ${i}`).toBeLessThanOrEqual(a.max[i] + 0.02);
+      }
+      // The front is glass you can see through, or a door standing open.
+      const clear = a.parts.filter((p) => /^prop\/(front-|glass-|open$)/.test(p.material));
+      expect(clear.length, s.id).toBeGreaterThan(0);
+      for (const p of clear) expect(textureSpec(p.material).decal, p.material).toBe(true);
+    }
+  });
+
+  it('fits out every trade inside its room, whatever the size of the room and wherever the door', () => {
+    const trades = [...new Set<Trade>([...Object.values(TRADES), 'convenience', 'garage', 'hall-discount', 'hall-market', 'hall-hardware', 'hall-furniture'])];
+    expect(trades.length).toBeGreaterThanOrEqual(30);
+    const sizes = new Map<string, number>();
+    for (const trade of trades)
+      for (const [w, d] of [[3.6, 7], [4.4, 9], [5.6, 8], [7.6, 10], [11.6, 6.7], [24, 14]])
+        for (const door of [-1, 0, 1])
+          for (const n of [1, 2]) {
+            const b = new MeshBuilder();
+            fitBay(b, { x: 0, y: 0, z: 0, w, d, h: 3.1, door: door * (w / 2 - 1.2), trade, n });
+            const m = b.build();
+            const at = `${trade} ${w}x${d} door ${door} n ${n}`;
+            expect(m.triangles, at).toBeGreaterThan(40);
+            expect(m.min[0], at).toBeGreaterThanOrEqual(-w / 2 - 0.02);
+            expect(m.max[0], at).toBeLessThanOrEqual(w / 2 + 0.02);
+            expect(m.min[1], at).toBeGreaterThanOrEqual(0);
+            expect(m.max[1], at).toBeLessThanOrEqual(3.1);
+            expect(m.min[2], at).toBeGreaterThanOrEqual(-d - 0.02);
+            expect(m.max[2], at).toBeLessThanOrEqual(0);
+            if (w === 5.6 && door === 0 && n === 1) sizes.set(trade, m.parts.length * 100000 + m.triangles);
+          }
+    // Trades do not all come out as the same room.
+    expect(new Set(sizes.values()).size).toBeGreaterThanOrEqual(18);
+  });
+
+  it('puts seats, a dashboard and a wheel behind the glass of every car', () => {
+    const cars = MODELS.filter((m) => m.category === 'vehicle');
+    expect(cars.length).toBeGreaterThanOrEqual(26);
+    expect(textureSpec('vehicle/glass').decal).toBe(true);
+    for (const c of cars) {
+      const d = c.build();
+      expect(d.parts.some((p) => p.material === 'vehicle/glass'), c.id).toBe(true);
+      const parts = d.parts.find((p) => p.material === 'vehicle/parts')!;
+      const [x0, x1, hw, top] = [d.min[0], d.max[0], Math.min(-d.min[2], d.max[2]), d.max[1]];
+      let inside = 0;
+      for (let i = 0; i < parts.positions.length; i += 3) {
+        const [x, y, z] = [parts.positions[i], parts.positions[i + 1], parts.positions[i + 2]];
+        if (x > x0 + 0.2 * (x1 - x0) && x < x1 - 0.2 * (x1 - x0) && Math.abs(z) < 0.7 * hw && y > 0.4 && y < top - 0.3) inside++;
+      }
+      expect(inside, c.id).toBeGreaterThanOrEqual(60);
+      expect(d.triangles, c.id).toBeLessThan(900);
     }
   });
 });

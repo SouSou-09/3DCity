@@ -1,4 +1,4 @@
-import { RGB, TextureData, TextureSpec, Tex, clamp01, hex, sstep } from './core';
+import { RGB, TextureData, TextureSpec, Tex, clamp01, hash2, hex, sstep } from './core';
 import * as S from './surfaces';
 import { Art, paint } from './trims';
 
@@ -407,5 +407,309 @@ for (const [id, label, bg, fg, word] of [['welcome', '茶 WELCOME', 0x5c4630, 0x
     if (word) a.text(hex(fg), word, 0.45, 0.25, 0.1, { weight: 0.14, fit: 0.66 });
     return a.done(s, 0.45);
   }, { density: 128 });
+
+// --- Shop fronts you can see through: a bay of glass over a kick plate, and the same with the door in it. ---
+const FRONTS: [string, string, number][] = [...GLAZING, ['blue', '青', 0x2c4c8c]];
+for (const [id, label, c] of FRONTS)
+  for (const [kind, h] of [['', 3], ['-low', 2.4]] as const)
+    for (const door of [false, true])
+      add(`front-${id}${kind}${door ? '-door' : ''}`, `透ける店の正面 ${label}${kind ? '・低' : ''}${door ? '・扉' : ''}`, [2, h], (t, s) => {
+        const a = new Art(t, [0.05, 0.075, 0.09], 0.05, 0.2);
+        t.map((x, y, k) => {
+          a.L.alpha[k] = 0.13 + 0.2 * sstep(h * 0.5, h, y) + 0.05 * sstep(0.35, 0, Math.abs(x - 1 - (y - h / 2) * 0.35));
+          return 0;
+        });
+        a.rect([0.5, 0.62, 0.75], 0, h * 0.55, 2, h, { rough: 0.05, opacity: 0.3, soft: h * 0.3 });
+        const f = hex(c);
+        const bar = { alpha: true, rough: 0.4, height: 0.005 };
+        const kick = kind ? 0.22 : 0.32;
+        const plate = (x0: number, x1: number): void => {
+          a.rect(shade(f, 0.8), x0, 0, x1, kick, { alpha: true, rough: 0.5 });
+          a.rect(f, x0, kick - 0.045, x1, kick, bar);
+        };
+        if (door) {
+          // The leaf in the middle with a light on each side, and a light over it.
+          plate(0, 0.48);
+          plate(1.52, 2);
+          a.rect(f, 0.45, 0, 0.5, 2.24, bar);
+          a.rect(f, 1.5, 0, 1.55, 2.24, bar);
+          a.rect(f, 0.45, 2.19, 1.55, 2.25, bar);
+          a.rect(f, 0.5, 0, 1.5, 0.26, bar);
+          a.rect(f, 0.5, 2.1, 1.5, 2.19, bar);
+          a.rect(f, 0.5, 0, 0.57, 2.19, bar);
+          a.rect(f, 1.43, 0, 1.5, 2.19, bar);
+          a.rect([0.75, 0.76, 0.78], 0.6, 1.02, 1.4, 1.07, { alpha: true, rough: 0.2, metal: 0.9, height: 0.01 });
+          a.rect([0.92, 0.92, 0.9], 0.82, 1.42, 1.18, 1.56, { alpha: true, rough: 0.5 });
+          a.text([0.75, 0.1, 0.08], 'OPEN', 1, 1.455, 0.075, { weight: 0.16, fit: 0.32 }, { alpha: true });
+        } else {
+          plate(0, 2);
+          if (!kind) a.rect(f, 0, 2.3, 2, 2.35, bar);
+        }
+        a.rect(f, 0, h - 0.06, 2, h, bar);
+        a.rect(f, 0, 0, 0.03, h, bar);
+        a.rect(f, 1.97, 0, 2, h, bar);
+        return a.done(s, 0.06);
+      }, { tile: 'x', decal: true, density: 128, reflect: 0.8 });
+
+// --- What a shop is fitted with. ---
+// Plain walls and floors.
+for (const [id, label, c, lo] of [['white', '白', 0xeceae4, 0xb8b6b0], ['cream', 'クリーム', 0xe8dcc0, 0x8c7c5c], ['grey', '灰', 0xc4c4c0, 0x4c4c50], ['blue', '淡い青', 0xc8d8e0, 0x4c6478], ['sage', '淡い緑', 0xcdd8c4, 0x5c6c54], ['dark', '濃い茶', 0x4c3c34, 0x2c2420], ['pink', '淡いピンク', 0xecd4d4, 0xa87c84], ['yellow', '淡い黄', 0xecdfa8, 0x9c8440]] as const)
+  add(`wall-plain-${id}`, `店内の壁 無地 ${label}`, [1.2, 3], (t, s) => {
+    const a = new Art(t, hex(c), 0.75);
+    a.rect(hex(lo), 0, 0, 1.2, 0.1, { rough: 0.6, height: 0.008 });
+    return a.done(s, 0.08);
+  }, { tile: 'x', density: 64 });
+for (const [id, label, c, rough] of [['carpet-grey', 'カーペット 灰', 0x6c6c70, 0.97], ['carpet-blue', 'カーペット 青', 0x34486c, 0.97], ['carpet-red', 'カーペット 赤', 0x7c2c2c, 0.97], ['carpet-green', 'カーペット 緑', 0x3c5c48, 0.97], ['concrete', '磨いたコンクリート', 0x9c9a94, 0.45], ['rubber', '黒いゴム', 0x242426, 0.85], ['lino-speckle', '斑のリノリウム', 0xc8c4b4, 0.5]] as const)
+  add(`floor-${id}`, `店内の床 ${label}`, [1.2, 1.2], (t, s) => {
+    const a = new Art(t, hex(c), rough);
+    const n = t.noise(0.012, 0.012, s, 2);
+    a.put(shade(hex(c), id.startsWith('carpet') ? 0.8 : 0.86), (m) => t.map((x, y, k) => ((m[k] = sstep(0.42, 0.6, n(x, y))), 0)), { opacity: 0.55 });
+    if (id === 'concrete') for (const x of [0, 1.2]) a.rect(shade(hex(c), 0.7), x - 0.004, 0, x + 0.004, 1.2, { height: -0.003 });
+    return a.done(s, 0);
+  }, { tile: 'xy', density: 96 });
+
+/** Goods on shelves, 2.4 m of them to tile along a wall: how many shelves high each kind is. */
+export const GOODS_ROWS = {
+  grocery: 6, cans: 6, snacks: 5, bottles: 5, pharmacy: 6, tools: 4, parts: 5, books: 6, records: 5, phones: 4, tobacco: 8, discount: 5, electronics: 4, jewel: 2, pastry: 3, cooler: 5, fold: 5, magazines: 5, tyres: 3, paint: 5,
+} as const;
+export type Goods = keyof typeof GOODS_ROWS;
+const BRIGHT = [0xd82c20, 0xf0c020, 0x2060c0, 0x2c9c4c, 0xf07820, 0xf4f0e8, 0x8c2c9c, 0x20a0b0, 0xe85c8c, 0x1c1c20];
+const MUTED = [0x7c2c24, 0x2c4c6c, 0x3c5c3c, 0x8c6c3c, 0x4c3c5c, 0x1c1c20, 0xc8b890, 0x6c2c3c, 0x2c5c5c, 0xb04c20];
+const PALE = [0xf4f4f0, 0xd0e4f0, 0xc8e8d0, 0xf0f0c0, 0x4c8cc8, 0x2c9c7c, 0xe8c8d0, 0xf4f4f0];
+const GLASSY = [0x5c3414, 0x1c4c24, 0xd8d8c8, 0x141414, 0x7c1c1c, 0xc89c2c, 0x2c5c2c, 0xe8e0c0];
+for (const kind of Object.keys(GOODS_ROWS) as Goods[])
+  add(`goods-${kind}`, `棚の商品 ${kind}`, [2.4, 2], (t, s) => {
+    const rows = GOODS_ROWS[kind];
+    const ph = 2 / rows;
+    const back: RGB = kind === 'tools' ? [0.62, 0.5, 0.36] : kind === 'jewel' ? [0.1, 0.06, 0.14] : kind === 'cooler' ? [0.75, 0.8, 0.82] : kind === 'phones' ? [0.9, 0.9, 0.9] : kind === 'tyres' ? [0.3, 0.3, 0.32] : [0.34, 0.33, 0.32];
+    const a = new Art(t, back, 0.7);
+    const R = (i: number, j: number, q = 0): number => hash2(i * 7 + q, j * 13 + q * 3, s);
+    const col = (pal: number[], i: number, j: number, q = 1): RGB => hex(pal[Math.floor(R(i, j, q) * pal.length) % pal.length]);
+    if (kind === 'tools') for (let y = 0.04; y < 2; y += 0.05) for (let x = 0.025; x < 2.4; x += 0.05) a.disc([0.3, 0.24, 0.18], x, y, 0.006);
+    for (let j = 0; j < rows; j++) {
+      const y0 = j * ph;
+      const [lo, hi] = [y0 + 0.035, y0 + ph - 0.03];
+      const H = hi - lo;
+      let i = 0;
+      const run = (wMin: number, wMax: number, gap: number, draw: (x: number, w: number, h: number, i: number) => void, hMin = 0.6): void => {
+        for (let x = 0.02; x < 2.38; i++) {
+          const w = Math.min(2.38 - x, wMin + (wMax - wMin) * R(i, j, 2));
+          if (w < wMin * 0.7) break;
+          draw(x, w, H * (hMin + (1 - hMin) * R(i, j, 3)), i);
+          x += w + gap;
+        }
+      };
+      const label = (x: number, w: number, y: number, h: number, i: number): void => a.rect(R(i, j, 5) < 0.5 ? [0.95, 0.94, 0.9] : col(BRIGHT, i, j, 6), x + w * 0.12, y, x + w * 0.88, y + h, { rough: 0.6 });
+      if (kind === 'grocery' || kind === 'discount' || kind === 'parts' || kind === 'pharmacy' || kind === 'snacks' || kind === 'paint')
+        run(kind === 'pharmacy' ? 0.05 : 0.08, kind === 'pharmacy' ? 0.11 : kind === 'snacks' ? 0.2 : 0.17, 0.006, (x, w, h, i) => {
+          const c = col(kind === 'pharmacy' ? PALE : kind === 'parts' ? MUTED : BRIGHT, i, j);
+          a.rect(c, x, lo, x + w, lo + h, { rough: kind === 'snacks' ? 0.3 : 0.55, height: 0.004 });
+          if (kind === 'paint') { a.rect([0.8, 0.8, 0.8], x, lo + h - 0.02, x + w, lo + h, { rough: 0.3, metal: 0.8 }); label(x, w, lo + h * 0.25, h * 0.4, i); }
+          else if (kind === 'pharmacy') a.rect(R(i, j, 7) < 0.4 ? [0.8, 0.15, 0.12] : [0.15, 0.4, 0.7], x + w * 0.2, lo + h * 0.55, x + w * 0.8, lo + h * 0.75, { rough: 0.5 });
+          else label(x, w, lo + h * 0.3, h * 0.35, i);
+        }, kind === 'discount' ? 0.35 : 0.6);
+      else if (kind === 'cans' || kind === 'tobacco')
+        run(kind === 'tobacco' ? 0.05 : 0.065, kind === 'tobacco' ? 0.055 : 0.07, 0.004, (x, w, _h, i) => {
+          const c = col(kind === 'tobacco' ? [0xf4f0e8, 0xb81c18, 0x1c4c2c, 0x1c2c6c, 0xc8a040, 0x1c1c1c, 0xf4f0e8] : BRIGHT, Math.floor(i / (2 + Math.floor(R(j, 1, 8) * 4))), j);
+          const h = kind === 'tobacco' ? H * 0.8 : Math.min(H, 0.12);
+          for (let y = lo; y + h <= hi + 1e-6; y += h + 0.003) {
+            a.rect(c, x, y, x + w, y + h, { rough: 0.35, metal: kind === 'cans' ? 0.5 : 0, height: 0.004 });
+            a.rect([0.95, 0.94, 0.9], x, y + h * 0.35, x + w, y + h * 0.6, { rough: 0.5, opacity: 0.8 });
+          }
+        });
+      else if (kind === 'bottles' || kind === 'cooler')
+        run(0.07, 0.09, 0.012, (x, w, h, i) => {
+          const c = col(kind === 'cooler' ? [0x1c6c2c, 0xb81c18, 0x2060c0, 0xf0c020, 0xd8d8c8, 0x5c3414, 0xf07820] : GLASSY, Math.floor(i / (1 + Math.floor(R(j, 2, 8) * 3))), j);
+          const body = h * 0.62;
+          a.rect(c, x, lo, x + w, lo + body, { rough: 0.12, height: 0.006 });
+          a.rect(c, x + w * 0.32, lo + body, x + w * 0.68, lo + h * 0.94, { rough: 0.12, height: 0.004 });
+          a.rect(R(i, j, 9) < 0.5 ? [0.75, 0.6, 0.2] : [0.7, 0.1, 0.1], x + w * 0.3, lo + h * 0.94, x + w * 0.7, lo + h, { rough: 0.3, metal: 0.6 });
+          label(x, w, lo + body * 0.25, body * 0.45, i);
+        }, 0.75);
+      else if (kind === 'books')
+        run(0.022, 0.06, 0.002, (x, w, h, i) => {
+          const c = col(MUTED, i, j);
+          a.rect(c, x, lo, x + w, lo + h, { rough: 0.7, height: 0.003 });
+          a.rect(R(i, j, 5) < 0.5 ? [0.85, 0.75, 0.4] : [0.9, 0.88, 0.8], x + w * 0.2, lo + h * 0.72, x + w * 0.8, lo + h * 0.8, { rough: 0.6 });
+        }, 0.72);
+      else if (kind === 'records' || kind === 'magazines')
+        run(kind === 'records' ? Math.min(H, 0.31) : 0.2, kind === 'records' ? Math.min(H, 0.31) : 0.23, 0.02, (x, w, _h, i) => {
+          const h = kind === 'records' ? w : H * 0.92;
+          const c = col(BRIGHT, i, j);
+          a.rect(c, x, lo, x + w, lo + h, { rough: 0.45, height: 0.003 });
+          if (kind === 'records') { a.disc(col(MUTED, i, j, 4), x + w / 2, lo + h / 2, w * (0.2 + 0.2 * R(i, j, 7)), { rough: 0.4 }); a.rect(col(PALE, i, j, 9), x + w * 0.1, lo + h * 0.8, x + w * 0.9, lo + h * 0.9); }
+          else { a.rect([0.95, 0.94, 0.9], x + w * 0.08, lo + h * 0.78, x + w * 0.92, lo + h * 0.93); a.rect(col(MUTED, i, j, 4), x + w * 0.15, lo + h * 0.12, x + w * 0.85, lo + h * 0.68); }
+        });
+      else if (kind === 'phones')
+        run(0.14, 0.2, 0.05, (x, w, _h, i) => {
+          if (j === 0 || R(i, j, 7) < 0.35) { a.rect(col(BRIGHT, i, j), x, lo + H * 0.1, x + w, lo + H * 0.9, { rough: 0.4, height: 0.003 }); a.rect([0.92, 0.92, 0.9], x + w * 0.2, lo + H * 0.2, x + w * 0.8, lo + H * 0.6, { rough: 0.2 }); }
+          else { a.rect([0.06, 0.06, 0.07], x + w * 0.25, lo + H * 0.12, x + w * 0.75, lo + H * 0.88, { rough: 0.15, height: 0.004 }); a.rect(col([0x2c4c8c, 0x4c8cc8, 0x2c2c30, 0x8c4c9c], i, j), x + w * 0.29, lo + H * 0.18, x + w * 0.71, lo + H * 0.84, { rough: 0.08 }); }
+        });
+      else if (kind === 'tools')
+        run(0.07, 0.16, 0.05, (x, w, h, i) => {
+          const c = col([0xb81c18, 0xf0c020, 0x1c1c20, 0x2060c0, 0xf07820], i, j);
+          if (R(i, j, 7) < 0.5) { a.rect([0.7, 0.71, 0.73], x + w * 0.35, lo + h * 0.4, x + w * 0.65, lo + h, { rough: 0.3, metal: 0.9, height: 0.004 }); a.rect(c, x + w * 0.25, lo + h * 0.05, x + w * 0.75, lo + h * 0.42, { rough: 0.6, height: 0.006 }); }
+          else { a.rect([0.9, 0.9, 0.86], x, lo + h * 0.1, x + w, lo + h, { rough: 0.6 }); a.rect(c, x + w * 0.15, lo + h * 0.2, x + w * 0.85, lo + h * 0.7, { rough: 0.5, height: 0.004 }); }
+        }, 0.7);
+      else if (kind === 'electronics')
+        run(0.3, 0.62, 0.06, (x, w, _h, i) => {
+          const h = Math.min(H * 0.9, w * 0.62);
+          a.rect([0.05, 0.05, 0.055], x, lo, x + w, lo + h, { rough: 0.3, height: 0.006 });
+          if (R(i, j, 7) < 0.6) a.rect(col([0x2c3c5c, 0x3c5c4c, 0x1c1c24, 0x5c4c6c], i, j), x + 0.02, lo + 0.03, x + w - 0.02, lo + h - 0.02, { rough: 0.08 });
+          else for (const k of [0.28, 0.72]) a.disc([0.16, 0.16, 0.17], x + w * k, lo + h / 2, Math.min(h, w / 2) * 0.36, { rough: 0.6, height: -0.004 });
+        });
+      else if (kind === 'jewel')
+        run(0.12, 0.2, 0.06, (x, w, _h, i) => {
+          a.rect([0.16, 0.1, 0.22], x, lo + H * 0.1, x + w, lo + H * 0.9, { rough: 0.9 });
+          for (let q = 0; q < 6; q++) a.disc(R(i, j, 10 + q) < 0.5 ? [0.9, 0.75, 0.3] : [0.85, 0.86, 0.9], x + w * (0.2 + 0.3 * (q % 3)), lo + H * (0.3 + 0.4 * Math.floor(q / 3)), 0.012, { rough: 0.15, metal: 0.95, height: 0.004 });
+        });
+      else if (kind === 'pastry')
+        run(0.42, 0.55, 0.03, (x, w, _h, i) => {
+          a.rect([0.78, 0.78, 0.76], x, lo, x + w, lo + 0.03, { rough: 0.3, metal: 0.7 });
+          const c = ([[0.72, 0.48, 0.22], [0.82, 0.62, 0.34], [0.5, 0.3, 0.16], [0.9, 0.7, 0.75]] as RGB[])[Math.floor(R(i, j, 4) * 4) % 4];
+          for (let q = 0; q * 0.085 + 0.09 < w; q++) for (let k = 0; k < 2 && 0.05 + k * 0.08 < H - 0.04; k++) a.disc(c, x + 0.05 + q * 0.085, lo + 0.07 + k * 0.08, 0.036, { rough: 0.6, height: 0.008 });
+        });
+      else if (kind === 'fold')
+        run(0.26, 0.34, 0.04, (x, w, h, i) => {
+          for (let y = lo, q = 0; y + 0.04 < lo + h; y += 0.045, q++) a.rect(col(R(j, i, 8) < 0.5 ? MUTED : BRIGHT, i * 5 + q, j), x, y, x + w, y + 0.04, { rough: 0.9, height: 0.004 });
+        }, 0.4);
+      else if (kind === 'tyres')
+        run(Math.min(H, 0.6), Math.min(H, 0.6), 0.03, (x, w) => {
+          a.disc([0.04, 0.04, 0.045], x + w / 2, lo + w / 2, w / 2, { rough: 0.9, height: 0.01 });
+          a.disc([0.02, 0.02, 0.02], x + w / 2, lo + w / 2, w * 0.3, { rough: 0.95, height: -0.01 });
+        });
+      // The shelf itself, and its price strip.
+      if (kind !== 'tyres') {
+        a.rect(kind === 'cooler' ? [0.8, 0.82, 0.84] : [0.82, 0.81, 0.78], 0, y0, 2.4, y0 + 0.03, { rough: 0.5, height: 0.008 });
+        if (kind !== 'jewel' && kind !== 'books' && kind !== 'tools') for (let x = 0.06; x < 2.36; x += 0.19) a.rect(R(Math.round(x * 50), j, 11) < 0.25 ? [0.95, 0.8, 0.1] : [0.96, 0.96, 0.94], x, y0 + 0.004, x + 0.07, y0 + 0.026, { rough: 0.6 });
+      }
+    }
+    if (kind === 'cooler') {
+      // Glass doors in black frames, with the light on the goods.
+      for (let x = 0; x < 2.4; x += 0.8) {
+        a.rect([0.08, 0.08, 0.09], x - 0.025, 0, x + 0.025, 2, { rough: 0.4, height: 0.01 });
+        a.rect([0.7, 0.72, 0.74], x + 0.05, 0.75, x + 0.075, 1.25, { rough: 0.2, metal: 0.9, height: 0.014 });
+      }
+      a.rect([0.08, 0.08, 0.09], 0, 1.94, 2.4, 2, { rough: 0.4, height: 0.01 });
+      a.rect([0.6, 0.75, 0.9], 0, 0, 2.4, 2, { opacity: 0.12, rough: 0.05 });
+    }
+    return a.done(s, 0.04);
+  }, { tile: 'x', density: 160, ...(kind === 'cooler' ? { emissive: 0.25 } : {}) });
+
+// Clothes on a rail and flowers in their buckets: cut out, to hang and stand free.
+add('goods-clothes', '棚の商品 吊るした服', [2.4, 1.2], (t, s) => {
+  const a = new Art(t, [0.3, 0.3, 0.3], 0.9, 0);
+  for (let i = 0, x = 0.03; x < 2.3; i++) {
+    const w = 0.07 + 0.05 * hash2(i, 3, s);
+    const h = 0.55 + 0.5 * hash2(i, 4, s);
+    const c = hex([...MUTED, ...BRIGHT][Math.floor(hash2(i, 5, s) * 20) % 20]);
+    a.rect(c, x, 1.1 - h, x + w, 1.1, { alpha: true, rough: 0.9 });
+    a.rect(shade(c, 0.7), x + w - 0.012, 1.1 - h, x + w, 1.1, { alpha: true, rough: 0.9 });
+    a.rect([0.7, 0.7, 0.72], x + w * 0.4, 1.1, x + w * 0.6, 1.17, { alpha: true, rough: 0.3, metal: 0.8 });
+    x += w + 0.012;
+  }
+  a.rect([0.75, 0.76, 0.78], 0, 1.16, 2.4, 1.19, { alpha: true, rough: 0.2, metal: 0.9 });
+  return a.done(s, 0.03);
+}, { tile: 'x', density: 128, cutout: true });
+add('goods-flowers', '棚の商品 切り花', [2.4, 0.9], (t, s) => {
+  const a = new Art(t, [0.2, 0.4, 0.2], 0.8, 0);
+  const FL = [0xe83c5c, 0xf4d020, 0xf4f0e8, 0x9c4cc8, 0xf07828, 0xe880a8, 0xc81c2c];
+  for (let i = 0; i < 8; i++) {
+    const x = 0.15 + i * 0.3;
+    const pot: RGB = i % 3 === 0 ? [0.7, 0.72, 0.74] : i % 3 === 1 ? [0.12, 0.3, 0.2] : [0.15, 0.15, 0.16];
+    a.rect(pot, x - 0.1, 0, x + 0.1, 0.32, { alpha: true, rough: 0.5, metal: i % 3 === 0 ? 0.7 : 0 });
+    for (let q = 0; q < 16; q++) a.disc([0.16, 0.42, 0.18], x + (hash2(i, q, s) - 0.5) * 0.24, 0.36 + hash2(q, i, s) * 0.34, 0.05, { alpha: true, rough: 0.8 });
+    const c = hex(FL[Math.floor(hash2(i, 99, s) * FL.length) % FL.length]);
+    for (let q = 0; q < 11; q++) a.disc(q % 4 === 3 ? shade(c, 0.75) : c, x + (hash2(i, q + 20, s) - 0.5) * 0.26, 0.52 + hash2(q + 20, i, s) * 0.3, 0.035, { alpha: true, rough: 0.6, height: 0.004 });
+  }
+  return a.done(s, 0.02);
+}, { tile: 'x', density: 160, cutout: true });
+
+// Machines and fittings seen from the front.
+add('washer', '洗濯機の正面', [0.7, 0.9], (t, s) => {
+  const a = new Art(t, [0.9, 0.9, 0.88], 0.35);
+  a.rect([0.6, 0.6, 0.6], 0, 0, 0.012, 0.9);
+  a.rect([0.6, 0.6, 0.6], 0.688, 0, 0.7, 0.9);
+  a.rect([0.78, 0.78, 0.78], 0.03, 0.72, 0.67, 0.87, { rough: 0.3, height: 0.004 });
+  a.rect([0.1, 0.12, 0.14], 0.06, 0.76, 0.3, 0.84, { rough: 0.1 });
+  for (let i = 0; i < 4; i++) a.disc([0.2, 0.2, 0.22], 0.4 + i * 0.07, 0.8, 0.02, { height: 0.004 });
+  a.disc([0.75, 0.76, 0.78], 0.35, 0.38, 0.25, { rough: 0.2, metal: 0.9, height: 0.008 });
+  a.disc([0.08, 0.1, 0.13], 0.35, 0.38, 0.19, { rough: 0.06 });
+  a.disc([0.3, 0.4, 0.5], 0.3, 0.44, 0.07, { rough: 0.06, opacity: 0.4 });
+  return a.done(s, 0.06);
+}, { tile: 'x', density: 160 });
+add('dryer', '重ねた乾燥機の正面', [0.8, 1.9], (t, s) => {
+  const a = new Art(t, [0.8, 0.8, 0.8], 0.3, 1);
+  for (const y of [0.08, 1.0]) {
+    a.rect([0.6, 0.6, 0.62], 0.02, y, 0.78, y + 0.86, { rough: 0.3, metal: 0.7, height: 0.004 });
+    a.disc([0.85, 0.85, 0.86], 0.4, y + 0.42, 0.33, { rough: 0.2, metal: 0.9, height: 0.008 });
+    a.disc([0.07, 0.08, 0.1], 0.4, y + 0.42, 0.27, { rough: 0.06 });
+    a.rect([0.1, 0.12, 0.14], 0.55, y + 0.76, 0.75, y + 0.83, { rough: 0.1 });
+  }
+  return a.done(s, 0.06);
+}, { tile: 'x', density: 128 });
+add('mirror', '壁の鏡', [0.8, 1.2], (t, s) => {
+  const a = new Art(t, [0.62, 0.68, 0.72], 0.04);
+  a.rect([0.8, 0.86, 0.9], 0, 0.6, 0.8, 1.2, { opacity: 0.5, soft: 0.4, rough: 0.04 });
+  for (const [x0, y0, x1, y1] of [[0, 0, 0.8, 0.025], [0, 1.175, 0.8, 1.2], [0, 0, 0.025, 1.2], [0.775, 0, 0.8, 1.2]]) a.rect([0.2, 0.2, 0.21], x0, y0, x1, y1, { rough: 0.4, height: 0.006 });
+  return a.done(s, 0.02);
+}, { tile: 'x', density: 64, reflect: 1 });
+add('atm', '現金自動預払機の正面', [0.6, 1.7], (t, s) => {
+  const a = new Art(t, [0.7, 0.71, 0.73], 0.4);
+  a.rect([0.12, 0.3, 0.6], 0, 1.25, 0.6, 1.7, { rough: 0.4 });
+  a.text([0.95, 0.95, 0.95], 'ATM', 0.3, 1.5, 0.16, { weight: 0.18, fit: 0.45 });
+  a.rect([0.05, 0.05, 0.06], 0.1, 0.85, 0.5, 1.18, { rough: 0.2, height: -0.006 });
+  a.rect([0.2, 0.45, 0.75], 0.12, 0.87, 0.48, 1.16, { rough: 0.08 });
+  a.rect([0.3, 0.3, 0.32], 0.14, 0.55, 0.4, 0.78, { rough: 0.5, height: -0.004 });
+  for (let i = 0; i < 12; i++) a.rect([0.8, 0.8, 0.8], 0.16 + (i % 3) * 0.075, 0.57 + Math.floor(i / 3) * 0.05, 0.22 + (i % 3) * 0.075, 0.61 + Math.floor(i / 3) * 0.05, { height: 0.003 });
+  a.rect([0.03, 0.03, 0.03], 0.42, 0.68, 0.54, 0.7);
+  a.rect([0.03, 0.03, 0.03], 0.12, 0.42, 0.48, 0.45);
+  return a.done(s, 0.05);
+}, { density: 200 });
+add('tv', '点いたテレビ', [1, 0.6], (t, s) => {
+  const a = new Art(t, [0.03, 0.03, 0.035], 0.3);
+  a.rect([0.16, 0.5, 0.22], 0.03, 0.03, 0.97, 0.57, { rough: 0.1 });
+  a.rect([0.85, 0.9, 0.85], 0.495, 0.03, 0.505, 0.57);
+  a.disc([0.85, 0.9, 0.85], 0.5, 0.3, 0.09, { opacity: 0.5 });
+  a.disc([0.16, 0.5, 0.22], 0.5, 0.3, 0.08);
+  a.rect([0.1, 0.12, 0.3], 0.03, 0.03, 0.97, 0.1, { rough: 0.1 });
+  a.text([0.95, 0.95, 0.95], 'LIVE  2 - 1', 0.5, 0.045, 0.045, { weight: 0.14, fit: 0.7 });
+  return a.done(s, 0);
+}, { density: 128, emissive: 0.7 });
+add('toolchest', '工具箱の正面', [0.9, 1], (t, s) => {
+  const a = new Art(t, [0.7, 0.1, 0.08], 0.35);
+  for (let i = 0; i < 7; i++) {
+    const y = 0.06 + i * 0.132;
+    a.rect([0.6, 0.08, 0.06], 0.03, y, 0.87, y + 0.118, { rough: 0.35, height: 0.004 });
+    a.rect([0.78, 0.78, 0.8], 0.1, y + 0.085, 0.8, y + 0.105, { rough: 0.2, metal: 0.9, height: 0.008 });
+  }
+  return a.done(s, 0.12);
+}, { density: 128 });
+const NOTICES: [string, string, number, number, string[], 'scissors' | 'tooth' | 'weight' | 'star' | 'phone' | 'none'][] = [
+  ['hair', '散髪', 0xf0ece0, 0x243c8c, ['CUT 15', 'SHAVE 10'], 'scissors'], ['smile', '歯科', 0x2c9c9c, 0xf8f8f4, ['SMILE', 'CHECK UP'], 'tooth'], ['fit', 'ジム', 0x1c1c1e, 0xf0c020, ['NO PAIN', 'NO GAIN'], 'weight'],
+  ['flash', 'タトゥーの図案', 0xe8dcc0, 0x1c1c1e, ['FLASH'], 'star'], ['rates', '手数料', 0xf8f4ec, 0x1c6c3c, ['CASH NOW', 'LOW FEES', '1.5%'], 'none'], ['sale', '特売', 0xd82c20, 0xf8f0d0, ['SALE', '50% OFF'], 'none'],
+  ['phone', '新機種', 0x1c2c5c, 0xf4f4f4, ['NEW', 'UNLIMITED'], 'phone'], ['bail', '保釈', 0xf0c820, 0x1c1c1e, ['BAIL', '24 HOURS'], 'none'],
+];
+for (const [id, label, bg, fg, lines, pic] of NOTICES)
+  add(`notice-${id}`, `店内の貼り紙 ${label}`, [0.6, 0.9], (t, s) => {
+    const a = new Art(t, hex(bg), 0.5);
+    const f = hex(fg);
+    for (const [x0, y0, x1, y1] of [[0, 0, 0.6, 0.012], [0, 0.888, 0.6, 0.9], [0, 0, 0.012, 0.9], [0.588, 0, 0.6, 0.9]]) a.rect(f, x0, y0, x1, y1);
+    const top = pic === 'none' ? 0.72 : 0.36;
+    lines.forEach((l, i) => a.text(f, l, 0.3, top - i * (pic === 'none' ? 0.22 : 0.13), pic === 'none' ? 0.15 : 0.085, { weight: 0.15, fit: 0.5 }));
+    if (pic === 'scissors') { a.line(f, [[0.18, 0.5], [0.44, 0.78]], 0.012); a.line(f, [[0.42, 0.5], [0.16, 0.78]], 0.012); a.disc(f, 0.16, 0.47, 0.04); a.disc(f, 0.44, 0.47, 0.04); a.disc(hex(bg), 0.16, 0.47, 0.022); a.disc(hex(bg), 0.44, 0.47, 0.022); }
+    if (pic === 'tooth') { a.disc(f, 0.24, 0.68, 0.085); a.disc(f, 0.36, 0.68, 0.085); a.rect(f, 0.17, 0.52, 0.27, 0.68); a.rect(f, 0.33, 0.52, 0.43, 0.68); }
+    if (pic === 'weight') { a.rect(f, 0.14, 0.62, 0.46, 0.65); for (const x of [0.13, 0.19, 0.41, 0.47]) a.rect(f, x - 0.02, 0.63 - (x < 0.16 || x > 0.44 ? 0.07 : 0.1), x + 0.02, 0.64 + (x < 0.16 || x > 0.44 ? 0.07 : 0.1)); }
+    if (pic === 'star') for (let i = 0; i < 9; i++) { const [x, y] = [0.13 + (i % 3) * 0.17, 0.46 + Math.floor(i / 3) * 0.14]; if (i % 3 === 0) a.disc(f, x, y, 0.04); else if (i % 3 === 1) { a.line(f, [[x - 0.05, y], [x + 0.05, y]], 0.008); a.line(f, [[x, y - 0.05], [x, y + 0.05]], 0.008); } else { a.disc(hex(0xb81c18), x - 0.02, y + 0.012, 0.026); a.disc(hex(0xb81c18), x + 0.02, y + 0.012, 0.026); a.line(hex(0xb81c18), [[x - 0.035, y], [x, y - 0.045], [x + 0.035, y]], 0.012); } }
+    if (pic === 'phone') { a.rect([0.05, 0.05, 0.06], 0.2, 0.44, 0.4, 0.82); a.rect([0.3, 0.6, 0.9], 0.215, 0.47, 0.385, 0.8, { rough: 0.1 }); }
+    return a.done(s, 0.05);
+  }, { density: 200 });
+// A roll-up door standing open: the last slats of the curtain under the lintel, and nothing below them.
+add('open', '開いた戸口', [1, 1], (t, s) => {
+  const a = new Art(t, [0.1, 0.1, 0.1], 0.6, 0);
+  a.rect([0.62, 0.63, 0.64], 0, 0.9, 1, 1, { alpha: true, rough: 0.45 });
+  for (const y of [0.9, 0.933, 0.966]) a.rect([0.4, 0.41, 0.42], 0, y, 1, y + 0.008, { alpha: true, rough: 0.5 });
+  return a.done(s, 0);
+}, { tile: 'none', decal: true, density: 64 });
 
 export const PROP_TEXTURES: readonly TextureSpec[] = list;
