@@ -3,6 +3,8 @@ import { MODELS, MODEL_CATEGORIES, ModelCategory } from '../src/assets/mesh/regi
 import { TEXTURES, TextureCategory, TextureData, renderTexture, textureSpec } from '../src/assets/tex';
 import { MeshBuilder } from '../src/assets/mesh/builder';
 import { TRADES, Trade, fitBay } from '../src/assets/mesh/shopfit';
+import { PEOPLE, Person } from '../src/assets/mesh/people';
+import { BOTTOMS, HEADS, TOPS } from '../src/assets/tex';
 
 const count = <T extends string>(items: readonly { category: T }[]): Map<T, number> => {
   const m = new Map<T, number>();
@@ -23,7 +25,7 @@ describe('texture registry', { timeout: 120_000 }, () => {
   });
 
   it('offers many patterns in every category', () => {
-    const min: Record<TextureCategory, number> = { asphalt: 40, concrete: 12, paving: 30, curb: 8, ground: 10, structure: 20, line: 30, crosswalk: 15, symbol: 60, cover: 25, sign: 100, signal: 30, furniture: 80, plant: 50, wall: 100, roof: 40, window: 110, door: 70, trim: 100, rail: 100, site: 150, vehicle: 10, prop: 60 };
+    const min: Record<TextureCategory, number> = { asphalt: 40, concrete: 12, paving: 30, curb: 8, ground: 10, structure: 20, line: 30, crosswalk: 15, symbol: 60, cover: 25, sign: 100, signal: 30, furniture: 80, plant: 50, wall: 100, roof: 40, window: 110, door: 70, trim: 100, rail: 100, site: 150, vehicle: 10, prop: 60, person: 100 };
     const n = count(TEXTURES);
     for (const [cat, least] of Object.entries(min)) expect(n.get(cat as TextureCategory) ?? 0, cat).toBeGreaterThanOrEqual(least);
     expect(TEXTURES.length).toBeGreaterThanOrEqual(350);
@@ -104,7 +106,7 @@ describe('model registry', { timeout: 120_000 }, () => {
   });
 
   it('offers many patterns in every category', () => {
-    const min: Record<ModelCategory, number> = { segment: 40, highway: 10, slope: 12, curve: 8, junction: 25, roundabout: 8, sidewalk: 30, bridge: 25, elevated: 15, signal: 90, sign: 150, furniture: 250, plant: 70, house: 50, apartment: 35, shop: 45, office: 40, industrial: 30, buildpart: 70, track: 50, crossing: 25, station: 30, railpart: 60, boundary: 100, waterfront: 150, park: 60, infra: 60, civic: 70, vehicle: 20, prop: 90 };
+    const min: Record<ModelCategory, number> = { segment: 40, highway: 10, slope: 12, curve: 8, junction: 25, roundabout: 8, sidewalk: 30, bridge: 25, elevated: 15, signal: 90, sign: 150, furniture: 250, plant: 70, house: 50, apartment: 35, shop: 45, office: 40, industrial: 30, buildpart: 70, track: 50, crossing: 25, station: 30, railpart: 60, boundary: 100, waterfront: 150, park: 60, infra: 60, civic: 70, vehicle: 20, prop: 90, person: 40 };
     const n = count(MODELS);
     for (const [cat] of MODEL_CATEGORIES) expect(n.get(cat) ?? 0, cat).toBeGreaterThanOrEqual(min[cat]);
     expect(MODELS.length).toBeGreaterThanOrEqual(200);
@@ -244,6 +246,82 @@ describe('shops and cars you can see into', { timeout: 120_000 }, () => {
       }
       expect(inside, c.id).toBeGreaterThanOrEqual(60);
       expect(d.triangles, c.id).toBeLessThan(900);
+    }
+  });
+});
+
+describe('people', { timeout: 120_000 }, () => {
+  const all = Object.entries(PEOPLE).map(([id, who]) => ({ id, who: who as Person, data: MODELS.find((m) => m.id === `person/${id}`)!.build() }));
+  const upright = new Set(['stand', 'relaxed', 'hips', 'pockets', 'phone', 'call', 'hold', 'wave', 'point']);
+
+  it('stand on the ground at their own height, in a body, clothes and shoes', () => {
+    expect(all.length).toBeGreaterThanOrEqual(40);
+    for (const { id, who, data } of all) {
+      for (const p of data.parts) for (const v of p.positions) expect(Number.isFinite(v), id).toBe(true);
+      expect(Math.abs(data.min[1]), id).toBeLessThan(0.002);
+      const used = new Set(data.parts.map((p) => p.material));
+      for (const m of [`person/head-${who.head}`, `person/skin-${HEADS[who.head].tone + 1}`, `person/top-${who.top}`, 'person/shoes']) expect(used.has(m), `${id} ${m}`).toBe(true);
+      const head = data.parts.find((p) => p.material === `person/head-${who.head}`)!;
+      let top = 0;
+      for (let i = 1; i < head.positions.length; i += 3) top = Math.max(top, head.positions[i]);
+      // Hair stands a little above the skull; nobody is taller than that, and only those who sit, stoop or run are shorter.
+      expect(top, id).toBeLessThan(who.height + 0.09);
+      if (upright.has(who.pose) && HEADS[who.head].age <= 0.8) expect(top, id).toBeGreaterThan(who.height - 0.03);
+      else expect(top, id).toBeGreaterThan(who.height * 0.62);
+      // Narrow enough for a pavement, and nothing but an arm or a stride reaches far.
+      expect(data.max[0] - data.min[0], id).toBeLessThan(1.0);
+      expect(data.max[2] - data.min[2], id).toBeLessThan(1.3);
+      expect(data.triangles, id).toBeGreaterThan(3000);
+      expect(data.triangles, id).toBeLessThan(6000);
+    }
+  });
+
+  it('differ in build, age, face, clothes and what they are doing', () => {
+    const of = <T>(f: (w: Person) => T): Set<T> => new Set(all.map((a) => f(a.who)));
+    expect(of((w) => w.head).size).toBeGreaterThanOrEqual(24);
+    expect(of((w) => w.top).size).toBeGreaterThanOrEqual(36);
+    expect(of((w) => w.bottom).size).toBeGreaterThanOrEqual(18);
+    expect(of((w) => w.pose).size).toBeGreaterThanOrEqual(18);
+    expect(of((w) => HEADS[w.head].tone).size).toBe(5);
+    expect(of((w) => HEADS[w.head].style).size).toBeGreaterThanOrEqual(12);
+    const n = (f: (w: Person) => boolean): number => all.filter((a) => f(a.who)).length;
+    expect(n((w) => w.sex === 'f')).toBeGreaterThanOrEqual(18);
+    expect(n((w) => w.sex === 'm')).toBeGreaterThanOrEqual(18);
+    expect(n((w) => HEADS[w.head].age < 0.15)).toBeGreaterThanOrEqual(4);
+    expect(n((w) => HEADS[w.head].age > 0.8)).toBeGreaterThanOrEqual(3);
+    expect(n((w) => (w.girth ?? 1) > 1.3)).toBeGreaterThanOrEqual(3);
+    expect(n((w) => (w.girth ?? 1) < 0.95)).toBeGreaterThanOrEqual(4);
+    expect(n((w) => !!w.carry?.length)).toBeGreaterThanOrEqual(15);
+    expect(n((w) => !!w.hat)).toBeGreaterThanOrEqual(6);
+    // A child is shorter than every adult, with a larger head for the body.
+    const kids = all.filter((a) => HEADS[a.who.head].age < 0.15);
+    for (const k of kids) expect(k.who.height, k.id).toBeLessThan(1.45);
+    // A heavy body is wider and deeper at the belly than a slim one of the same pose.
+    const belly = (id: string): number => {
+      const a = all.find((x) => x.id === id)!;
+      const part = a.data.parts.find((p) => p.material === `person/top-${a.who.top}`)!;
+      let z = 0;
+      for (let i = 0; i < part.positions.length; i += 3) if (Math.abs(part.positions[i]) < 0.1 && part.positions[i + 1] > a.who.height * 0.5 && part.positions[i + 1] < a.who.height * 0.66) z = Math.max(z, part.positions[i + 2]);
+      return z;
+    };
+    expect(belly('heavy-man')).toBeGreaterThan(belly('medic') + 0.05);
+  });
+
+  it('has a face, hair, clothes and shoes drawn for every look', () => {
+    for (const id of Object.keys(HEADS)) expect(TEXTURES.some((t) => t.id === `person/head-${id}`), id).toBe(true);
+    for (const id of Object.keys(TOPS)) expect(TEXTURES.some((t) => t.id === `person/top-${id}`), id).toBe(true);
+    for (const id of Object.keys(BOTTOMS)) expect(TEXTURES.some((t) => t.id === `person/bottom-${id}`), id).toBe(true);
+    // The eyes are darker than the cheeks beside them, and the hair differs from the forehead.
+    const lum = (t: TextureData, u: number, v: number): number => {
+      const [x, y] = [Math.floor(u * t.w), Math.floor(v * t.h)];
+      const i = (Math.min(t.h - 1, y) * t.w + Math.min(t.w - 1, x)) * 4;
+      return t.albedo[i] + t.albedo[i + 1] + t.albedo[i + 2];
+    };
+    for (const id of ['m-1', 'f-1', 'm-9', 'boy-1']) {
+      const t = renderTexture(textureSpec(`person/head-${id}`), 0.5);
+      let eye = Infinity;
+      for (let du = 0.05; du < 0.08; du += 0.004) for (let v = 0.47; v < 0.53; v += 0.004) eye = Math.min(eye, lum(t, 0.5 + du, v));
+      expect(eye, id).toBeLessThan(lum(t, 0.5 + 0.11, 0.36) - 120);
     }
   });
 });
