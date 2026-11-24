@@ -9,7 +9,7 @@ import './catalog.css';
 const TEX_CATEGORIES: [string, string][] = [
   ['asphalt', 'アスファルト'], ['concrete', 'コンクリート'], ['paving', '舗装材'], ['curb', '縁石'], ['ground', '地面'],
   ['structure', '構造物'], ['line', '区画線'], ['crosswalk', '横断歩道・停止線'], ['symbol', '路面標示'], ['cover', '蓋・汚れ'],
-  ['sign', '標識面'], ['signal', '信号灯器・支柱'], ['furniture', '歩道設備'], ['plant', '樹皮・葉・花'], ['wall', '外壁'], ['roof', '屋根'], ['window', '窓・ガラス'], ['door', '扉・シャッター'], ['trim', '塗装・看板・手すり'], ['rail', '鉄道'], ['site', '外構・水辺・公園'], ['vehicle', '車両'], ['prop', '店内・店先の小物'],
+  ['sign', '標識面'], ['signal', '信号灯器・支柱'], ['furniture', '歩道設備'], ['plant', '樹皮・葉・花'], ['wall', '外壁'], ['roof', '屋根'], ['window', '窓・ガラス'], ['door', '扉・シャッター'], ['trim', '塗装・看板・手すり'], ['rail', '鉄道'], ['site', '外構・水辺・公園'], ['vehicle', '車両'], ['prop', '店内・店先の小物'], ['person', '人'],
 ];
 const params = new URLSearchParams(location.search);
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -18,6 +18,8 @@ let cat = params.get('cat') ?? 'all';
 /** Optional camera direction ("x,y,z") and zoom for the model viewer, for reproducible screenshots. */
 const viewDir = params.get('dir')?.split(',').map(Number) as [number, number, number] | undefined;
 const viewZoom = Number(params.get('zoom')) || 1;
+/** Optional height to look at, as a share of the model's height (for close-ups). */
+const viewAt = params.get('at') === null ? undefined : Number(params.get('at'));
 /** Texture detail used in the 3D views (1 = full). */
 const quality = Number(params.get('q')) || 0.5;
 
@@ -61,7 +63,7 @@ class Stage {
     this.sun.shadow.bias = -0.0005;
     this.sun.shadow.normalBias = 0.05;
   }
-  show(obj: THREE.Object3D, min: number[], max: number[], dir: [number, number, number] = [0.55, 0.5, 0.75], zoom = 1, points = true): THREE.Vector3 {
+  show(obj: THREE.Object3D, min: number[], max: number[], dir: [number, number, number] = [0.55, 0.5, 0.75], zoom = 1, points = true, at?: number): THREE.Vector3 {
     if (this.current) {
       this.scene.remove(this.current);
       this.current.traverse((o) => (o as THREE.Mesh).geometry?.dispose());
@@ -94,6 +96,7 @@ class Stage {
       for (let k = 0; k < pos.count; k += step) fit(pos.getX(k), pos.getY(k), pos.getZ(k));
     });
     if (!meshes) for (let k = 0; k < 8; k++) fit(k & 1 ? max[0] : min[0], k & 2 ? max[1] : min[1], k & 4 ? max[2] : min[2]);
+    if (at !== undefined) c.y = min[1] + (max[1] - min[1]) * at;
     this.camera.position.copy(c).addScaledVector(d, (dist * 1.06) / zoom);
     this.camera.near = r / 100;
     this.camera.far = r * 20;
@@ -164,7 +167,7 @@ function open(kind: 'tex' | 'model', id: string): void {
     const size = data.max.map((v, i) => (v - data.min[i]).toFixed(1));
     $('title').textContent = spec.label;
     $('info').textContent = `${spec.id} ・ ${size[0]} × ${size[2]} m(高さ ${size[1]} m)・ ${data.triangles.toLocaleString()} 三角形 ・ ${data.parts.length} マテリアル`;
-    target = viewStage.show(modelGroup(data), data.min, data.max, viewDir ?? defaultDir(spec), viewZoom);
+    target = viewStage.show(modelGroup(data), data.min, data.max, viewDir ?? defaultDir(spec), viewZoom, true, viewAt);
   } else {
     const spec = textureSpec(id);
     const d = texData(id, 1);
