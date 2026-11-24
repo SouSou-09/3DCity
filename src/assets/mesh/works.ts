@@ -331,7 +331,8 @@ function bigBox(b: MeshBuilder, o: { seed: number; w: number; d: number; wall: s
   flatRoof(b, 0, 0, w, d, h, { mat: 'roof/flat-membrane-white', parapet: 0.9, inner: o.wall, coping: o.trim });
   roofPlant(b, rnd, 0, 0, w - 6, d - 6, h, 1.4, { wall: o.wall, big: true });
   const ez = d / 2 + ed / 2;
-  shell(b, 0, ez, ew, ed, eh, o.feature, [hall.doors(2, 0.25).map((q) => ({ ...q, reveal: o.trim }))]);
+  // The tall front has no wall of its own against the hall below the roof, or it would stand across the inner doors.
+  sides(0, ez, ew, ed).forEach((q, i) => (i === 2 ? wall(b, o.feature, sides(0, ez, ew, ed, h)[2].f, q.w, eh - h) : wall(b, o.feature, q.f, q.w, eh, i ? [] : hall.doors(2, 0.25).map((c) => ({ ...c, reveal: o.trim })))));
   // Between the two lines of doors: a floor, and a ceiling under the tall front.
   slab(b, 'prop/floor-tile-grey', 0.012, -ew / 2, d / 2, ew / 2, d / 2 + ed);
   b.quad('prop/ceiling', [-ew / 2, 3.4, d / 2], [ew / 2, 3.4, d / 2], [ew / 2, 3.4, d / 2 + ed], [-ew / 2, 3.4, d / 2 + ed], [[0, 0], [ew, 0], [ew, ed], [0, ed]]);

@@ -224,7 +224,7 @@ export function fitBay(b: MeshBuilder, r: Bay): void {
   const cs = ds !== 0 ? -ds : n % 2 ? 1 : -1;
   const wide = r.w >= 5.4;
   const way = (x: number, z: number, m = 0.9): boolean => Math.abs(x - r.door) < m && z > -2.4;
-  mat(b, move(F, r.door, 0, -0.75), n % 2 ? 'prop/mat-rubber' : 'prop/mat-welcome');
+  if (t !== 'garage') mat(b, move(F, r.door, 0, -0.75), n % 2 ? 'prop/mat-rubber' : 'prop/mat-welcome');
   const chairs = (f: Pose, k: number, o: ChairOpts, pitch = 0.56): void => {
     for (let i = 0; i < k; i++) chair(b, move(f, (i - (k - 1) / 2) * pitch, 0, 0.3), o);
   };

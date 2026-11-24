@@ -465,7 +465,7 @@ for (const [id, label, c, rough] of [['carpet-grey', 'カーペット 灰', 0x6c
     const n = t.noise(0.012, 0.012, s, 2);
     a.put(shade(hex(c), id.startsWith('carpet') ? 0.8 : 0.86), (m) => t.map((x, y, k) => ((m[k] = sstep(0.42, 0.6, n(x, y))), 0)), { opacity: 0.55 });
     if (id === 'concrete') for (const x of [0, 1.2]) a.rect(shade(hex(c), 0.7), x - 0.004, 0, x + 0.004, 1.2, { height: -0.003 });
-    return a.done(s, id.startsWith('carpet') ? 0.04 : 0.12);
+    return a.done(s, 0);
   }, { tile: 'xy', density: 96 });
 
 /** Goods on shelves, 2.4 m of them to tile along a wall: how many shelves high each kind is. */
@@ -704,7 +704,12 @@ for (const [id, label, bg, fg, lines, pic] of NOTICES)
     if (pic === 'phone') { a.rect([0.05, 0.05, 0.06], 0.2, 0.44, 0.4, 0.82); a.rect([0.3, 0.6, 0.9], 0.215, 0.47, 0.385, 0.8, { rough: 0.1 }); }
     return a.done(s, 0.05);
   }, { density: 200 });
-// A door standing open: nothing, where a wall is cut to show the room.
-add('open', '開いた戸口', [1, 1], (t, s) => new Art(t, [0.1, 0.1, 0.1], 0.6, 0).done(s, 0), { tile: 'xy', decal: true, density: 8 });
+// A roll-up door standing open: the last slats of the curtain under the lintel, and nothing below them.
+add('open', '開いた戸口', [1, 1], (t, s) => {
+  const a = new Art(t, [0.1, 0.1, 0.1], 0.6, 0);
+  a.rect([0.62, 0.63, 0.64], 0, 0.9, 1, 1, { alpha: true, rough: 0.45 });
+  for (const y of [0.9, 0.933, 0.966]) a.rect([0.4, 0.41, 0.42], 0, y, 1, y + 0.008, { alpha: true, rough: 0.5 });
+  return a.done(s, 0);
+}, { tile: 'none', decal: true, density: 64 });
 
 export const PROP_TEXTURES: readonly TextureSpec[] = list;
