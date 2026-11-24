@@ -89,7 +89,7 @@ function ring(c: V3, m: M3, wx: number, wf: number, wb: number, n: number, e = 1
   }
   return out;
 }
-interface Station {
+export interface Station {
   c: V3;
   m: M3;
   /** Radius, and how much deeper than wide. */
@@ -98,23 +98,28 @@ interface Station {
   s: number;
 }
 /** Stations down two bones that meet at a hinge about their shared left axis. s runs 0..1 down the first and 1..2 down the second; below 0 it rounds off the top. */
-function limb(p0: V3, ma: M3, la: number, mb: M3, lb: number, rad: (s: number) => number, ss: number[]): Station[] {
+export function limb(p0: V3, ma: M3, la: number, mb: M3, lb: number, rad: (s: number) => number, ss: number[]): Station[] {
   const half = Math.acos(clamp(v3.dot(ma[1], mb[1]), -1, 1)) / 2;
   const y = v3.norm(v3.add(ma[1], mb[1]));
   const mj: M3 = [ma[0], y, v3.cross(ma[0], y)];
   const p1 = v3.mad(p0, ma[1], -la);
   const gap = rad(1) * Math.tan(Math.min(half, 1.2)) * 0.95;
   const out: Station[] = [];
-  for (const s of ss) {
+  // An end that falls in the fold of the joint moves to the fold's edge instead of being dropped, so a cuff still ends the sleeve.
+  const [lo, hi] = [1 - gap / la, 1 + gap / lb];
+  const inFold = (s: number) => s > lo && s < hi && s !== 1 && s > 0 && s < 2;
+  const last = ss.length - 1;
+  const moved = ss.map((s, i) => (!inFold(s) ? s : i === last ? (s < 1 ? lo : hi) : i === 0 ? (s < 1 ? lo : 1) : s));
+  for (const s of moved) {
     if (s < 0) {
       const r0 = rad(0);
       out.push({ c: v3.mad(p0, ma[1], -s * r0 * 0.62), m: ma, r: r0 * Math.sqrt(Math.max(0, 1 - s * s)), q: 1, s });
     } else if (s < 1) {
-      if ((1 - s) * la < gap && s > 0) continue;
+      if (inFold(s)) continue;
       out.push({ c: v3.mad(p0, ma[1], -la * s), m: ma, r: rad(s), q: 1, s });
     } else if (s === 1) out.push({ c: p1, m: mj, r: rad(1), q: Math.min(1.7, 1 / Math.cos(half)), s });
     else {
-      if ((s - 1) * lb < gap && s < 2) continue;
+      if (inFold(s)) continue;
       out.push({ c: v3.mad(p1, mb[1], -lb * (s - 1)), m: mb, r: rad(s), q: 1, s });
     }
   }
@@ -382,8 +387,10 @@ export function buildPerson(b: MeshBuilder, who: Person): void {
   const LEG_S = [-0.9, -0.55, 0, 0.18, 0.4, 0.62, 0.8, 0.92, 1, 1.08, 1.22, 1.4, 1.6, 1.8, 1.94, 2];
   for (const L of limbs) {
     const st = (rad: (s: number) => number, from: number, to: number) => limb(W(L.hip), L.Mt, Lt, L.Ms, Ls, rad, [...LEG_S.filter((s) => s > from && s < to), from, to].sort((a, c) => a - c));
-    if (hemS > 0) tubeOf(b, botMat, st(clothRad, -0.9, hemS), 12, [0.004, 0, 0.596, 1], (s) => 1 - clamp(s / hemS), 'a');
-    if (hemS < 1.9) tubeOf(b, skinMat, st(legRad, hemS > 0 ? hemS - 0.06 : -0.9, 2), 10, SKIN_LIMB, (s) => s / 2, hemS > 0 ? '' : 'a');
+    const cloth = hemS > 0 ? st(clothRad, -0.9, hemS) : [];
+    const hem = cloth.length ? cloth[cloth.length - 1].s : 0;
+    if (hem > 0) tubeOf(b, botMat, cloth, 12, [0.004, 0, 0.596, 1], (s) => 1 - clamp(s / hem), 'a');
+    if (hemS < 1.9) tubeOf(b, skinMat, st(legRad, hem > 0 ? hem - 0.06 : -0.9, 2), 10, SKIN_LIMB, (s) => s / 2, hem > 0 ? '' : 'a');
     shoe(b, who.shoes, W(L.ankle), L.Mfoot, Lf, aH, k * (fem ? 0.92 : 1), hemS < 1.9 || botSpec.kind === 'leggings');
   }
   const NT = 22;
@@ -467,8 +474,11 @@ export function buildPerson(b: MeshBuilder, who: Person): void {
   const hands: { grip: V3; Mh: M3; palm: V3; s: number }[] = [];
   for (const L of limbs) {
     const st = (rad: (s: number) => number, from: number, to: number) => limb(W(L.sh), L.Mu, LEN.upper * Hb, L.Mo, LEN.fore * Hb, rad, [...ARM_S.filter((s) => s > from && s < to), from, to].sort((a, c) => a - c));
-    if (sleeveS > 0) tubeOf(b, topMat, st(sleeveRad, -0.9, sleeveS), 10, [0.684, 0.004, 0.856, 0.996], (s) => 1 - clamp(s / sleeveS), 'a');
-    if (sleeveS < 1.9) tubeOf(b, skinMat, st(armRad, sleeveS > 0 ? sleeveS - 0.08 : -0.9, 2), 10, SKIN_LIMB, (s) => s / 2, sleeveS > 0 ? '' : 'a');
+    // The arm starts under the cuff the sleeve really has: a bent elbow pulls the cuff back out of the fold.
+    const sleeve = sleeveS > 0 ? st(sleeveRad, -0.9, sleeveS) : [];
+    const cuff = sleeve.length ? sleeve[sleeve.length - 1].s : 0;
+    if (cuff > 0) tubeOf(b, topMat, sleeve, 10, [0.684, 0.004, 0.856, 0.996], (s) => 1 - clamp(s / cuff), 'a');
+    tubeOf(b, skinMat, st(armRad, cuff > 0 ? cuff - 0.08 : -0.9, 2), 10, SKIN_LIMB, (s) => s / 2, cuff > 0 ? '' : 'a');
     // The hand: flat, its back outwards, the fingers curling towards the palm at two joints.
     const { s, Mh } = L;
     const hl = LEN.hand * Hb;
